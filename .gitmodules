@@ -1,0 +1,6 @@
+[submodule "lib/fluidsynth"]
+	path = lib/fluidsynth
+	url = https://github.com/FluidSynth/fluidsynth.git
+[submodule "lib/sfizz"]
+	path = lib/sfizz
+	url = https://github.com/sfztools/sfizz.git

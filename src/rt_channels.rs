@@ -3,6 +3,8 @@ use tokio::sync::Mutex;
 
 pub type RtConsumer<T> = rtrb::Consumer<T>;
 pub type RtProducer<T> = rtrb::Producer<T>;
+pub type PushError<T> = rtrb::PushError<T>;
+pub type PopError = rtrb::PopError;
 
 pub struct RtSharedProducer<T> {
     inner: Arc<Mutex<rtrb::Producer<T>>>,

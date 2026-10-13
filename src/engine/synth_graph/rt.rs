@@ -1,232 +1,253 @@
 use crate::{
-    midi::{ChannelMask, MidiEvent, MidiEventKind},
-    rt_channels,
+    engine::{graph::SynthId, synth_graph::SlotId},
+    memory::Siv,
+    midi::{CompiledMidiKeyTransform, MidiEvent, MidiEventKind, MidiFilter, MidiKeyTransform},
 };
-use tracing::error;
-
-pub enum Command {
-    SetGlobalTransposition { transposition: i8 },
-    RemoveSource { source_id: u8 },
-    PushSlot,
-    RemoveSlot { slot_id: u8 },
-    SetSource { slot_id: u8, source_id: Option<u8> },
-    SetEnabled { slot_id: u8, flag: bool },
-    SetChannelMask { slot_id: u8, mask: ChannelMask },
-    SetTransposition { slot_id: u8, transposition: i8 },
-    SetUseGlobalTransposition { slot_id: u8, flag: bool },
-}
 
 pub struct Slot {
-    pub source_id: Option<u8>,
+    pub synth_id: Option<SynthId>,
     pub enabled: bool,
-    pub channel_mask: ChannelMask,
-    pub transposition: i8,
+    pub key_transform: CompiledMidiKeyTransform,
+    pub channel_mask: u16,
+    pub cc_mask: u128,
     pub use_global_transposition: bool,
 }
 
 impl Default for Slot {
     fn default() -> Self {
         Self {
-            source_id: None,
+            synth_id: None,
             enabled: true,
-            channel_mask: ChannelMask::ALL,
-            transposition: 0,
+            key_transform: CompiledMidiKeyTransform::from(&MidiKeyTransform::default()),
+            channel_mask: u16::MAX,
+            cc_mask: u128::MAX,
             use_global_transposition: true,
         }
     }
 }
 
-pub struct MidiIter<'a> {
-    graph: &'a Graph,
-    next_id: u8,
+pub struct MidiHandlerIter<'a> {
+    slots: std::slice::Iter<'a, Slot>,
+    global_transposition: i8,
     event: MidiEvent,
 }
 
-impl<'a> MidiIter<'a> {
+impl<'a> MidiHandlerIter<'a> {
     fn new(graph: &'a Graph, event: MidiEvent) -> Self {
         Self {
-            graph,
-            next_id: 0,
+            slots: graph.slots.iter_values(),
+            global_transposition: graph.global_transposition,
             event,
         }
     }
 }
 
-impl<'a> Iterator for MidiIter<'a> {
-    type Item = (u8, MidiEvent);
+impl<'a> Iterator for MidiHandlerIter<'a> {
+    type Item = (SynthId, MidiEvent);
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            let next_id = self.next_id as usize;
-            self.next_id += 1;
+            let slot = self.slots.next()?;
 
-            if next_id >= self.graph.slots.len() {
-                return None;
-            }
+            let Some(synth_id) = slot.synth_id else {
+                continue;
+            };
 
-            let slot = &self.graph.slots[next_id];
-            let source_id = slot.source_id?;
-
-            if !slot.channel_mask.contains(self.event.channel) {
+            if slot.channel_mask & (1u16 << self.event.channel) == 0 {
                 continue;
             }
 
-            if !slot.enabled
-                && let MidiEventKind::NoteOn {
-                    key: _,
-                    velocity: _,
-                } = self.event.kind
+            if !slot.enabled && matches!(self.event.kind, MidiEventKind::NoteOn { .. }) {
+                continue;
+            }
+
+            if let MidiEventKind::ControlChange { controller, .. } = &self.event.kind
+                && slot.cc_mask & (1u128 << controller) == 0
             {
                 continue;
             }
 
-            let Some(event) = self.event.transpose(slot.transposition) else {
+            let transposition =
+                if slot.use_global_transposition { self.global_transposition } else { 0 };
+
+            let Some(event) = self.event.transformed(&slot.key_transform, transposition) else {
                 continue;
             };
 
-            let Some(event) = (if slot.use_global_transposition {
-                event.transpose(self.graph.global_transposition)
-            } else {
-                Some(event)
-            }) else {
-                continue;
-            };
-
-            return Some((source_id, event));
+            return Some((synth_id, event));
         }
     }
 }
 
-pub struct AudioIter<'a> {
-    graph: &'a Graph,
-    next_id: u8,
+pub struct AudioRendererIter<'a> {
+    slots: std::slice::Iter<'a, Slot>,
 }
 
-impl<'a> AudioIter<'a> {
+impl<'a> AudioRendererIter<'a> {
     fn new(graph: &'a Graph) -> Self {
-        Self { graph, next_id: 0 }
+        Self { slots: graph.slots.iter_values() }
     }
 }
 
-impl<'a> Iterator for AudioIter<'a> {
-    type Item = u8;
+impl<'a> Iterator for AudioRendererIter<'a> {
+    type Item = SynthId;
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            let next_id = self.next_id as usize;
-            self.next_id += 1;
-
-            if next_id >= self.graph.slots.len() {
-                return None;
-            }
-
-            let slot = &self.graph.slots[next_id];
-            let source_id = slot.source_id?;
-
-            if !slot.enabled {
+            let slot = self.slots.next()?;
+            let Some(synth_id) = slot.synth_id else {
                 continue;
-            }
+            };
 
-            return Some(source_id);
+            // TODO: this doesn't take release into account, maybe fix it later?
+            // if !slot.enabled {
+            //     continue;
+            // }
+
+            return Some(synth_id);
         }
     }
 }
 
 pub struct Graph {
-    pub cmd_rx: rt_channels::RtConsumer<(u32, Command)>,
-    pub ack_tx: rt_channels::RtProducer<(u32, bool)>,
-    pub slots: Vec<Slot>,
+    pub slots: Siv<Slot, SlotId>,
     pub global_transposition: i8,
 }
 
 impl Graph {
-    pub fn drain_commands(&mut self) {
-        while let Ok((id, cmd)) = self.cmd_rx.pop() {
-            let res = self.process_command(cmd);
-            if self.ack_tx.push((id, res)).is_err() {
-                error!("failed to ack cmd #{id}")
+    pub fn midi_handler_iter(&'_ self, event: MidiEvent) -> MidiHandlerIter<'_> {
+        MidiHandlerIter::new(self, event)
+    }
+
+    pub fn audio_renderer_iter(&'_ self) -> AudioRendererIter<'_> {
+        AudioRendererIter::new(self)
+    }
+
+    pub fn remove_synth_references(&mut self, synth_id: SynthId) {
+        for slot in self.slots.iter_values_mut() {
+            if slot.synth_id == Some(synth_id) {
+                slot.synth_id = None;
             }
         }
     }
 
-    pub fn iter_midi_event(&'_ self, event: MidiEvent) -> MidiIter<'_> {
-        MidiIter::new(self, event)
+    pub fn set_global_transposition(&mut self, transposition: i8) {
+        self.global_transposition = transposition;
     }
 
-    pub fn iter_audio(&'_ self) -> AudioIter<'_> {
-        AudioIter::new(self)
-    }
-
-    fn process_command(&mut self, cmd: Command) -> bool {
-        match cmd {
-            Command::SetGlobalTransposition { transposition } => {
-                self.global_transposition = transposition;
-                true
-            }
-            Command::RemoveSource { source_id } => {
-                for slot in &mut self.slots {
-                    if let Some(slot_source_id) = slot.source_id {
-                        if slot_source_id == source_id {
-                            slot.source_id = None;
-                        } else if slot_source_id > source_id {
-                            slot.source_id = Some(slot_source_id - 1);
-                        }
-                    }
-                }
-                true
-            }
-            Command::PushSlot => {
-                if self.slots.len() == self.slots.capacity() {
-                    return false;
-                }
-                self.slots.push(Slot::default());
-                true
-            }
-            Command::RemoveSlot { slot_id } => {
-                if slot_id as usize >= self.slots.len() {
-                    return false;
-                }
-                self.slots.remove(slot_id as usize);
-                true
-            }
-            Command::SetSource { slot_id, source_id } => {
-                if slot_id as usize >= self.slots.len() {
-                    return false;
-                }
-                self.slots[slot_id as usize].source_id = source_id;
-                true
-            }
-            Command::SetEnabled { slot_id, flag } => {
-                if slot_id as usize >= self.slots.len() {
-                    return false;
-                }
-                self.slots[slot_id as usize].enabled = flag;
-                true
-            }
-            Command::SetChannelMask { slot_id, mask } => {
-                if slot_id as usize >= self.slots.len() {
-                    return false;
-                }
-                self.slots[slot_id as usize].channel_mask = mask;
-                true
-            }
-            Command::SetTransposition {
-                slot_id,
-                transposition,
-            } => {
-                if slot_id as usize >= self.slots.len() {
-                    return false;
-                }
-                self.slots[slot_id as usize].transposition = transposition;
-                true
-            }
-            Command::SetUseGlobalTransposition { slot_id, flag } => {
-                if slot_id as usize >= self.slots.len() {
-                    return false;
-                }
-                self.slots[slot_id as usize].use_global_transposition = flag;
-                true
-            }
+    pub fn append_new(&mut self) -> bool {
+        if self.slots.len() < self.slots.capacity() {
+            self.slots.push(Slot::default());
+            true
+        } else {
+            false
         }
+    }
+
+    pub fn remove(&mut self, slot_id: SlotId) -> bool {
+        self.slots.try_remove(slot_id).is_some()
+    }
+
+    pub fn set_synth(&mut self, slot_id: SlotId, synth_id: Option<SynthId>) -> bool {
+        if let Some(slot) = self.slots.get_mut(slot_id) {
+            slot.synth_id = synth_id;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn set_enabled(&mut self, slot_id: SlotId, flag: bool) -> bool {
+        if let Some(slot) = self.slots.get_mut(slot_id) {
+            slot.enabled = flag;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn set_key_transform(&mut self, slot_id: SlotId, transform: MidiKeyTransform) -> bool {
+        if let Some(slot) = self.slots.get_mut(slot_id) {
+            slot.key_transform.update(&transform);
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn set_channel_filter(&mut self, slot_id: SlotId, filter: MidiFilter) -> bool {
+        if let Some(slot) = self.slots.get_mut(slot_id) {
+            slot.channel_mask = filter.as_u16();
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn set_cc_filter(&mut self, slot_id: SlotId, filter: MidiFilter) -> bool {
+        if let Some(slot) = self.slots.get_mut(slot_id) {
+            slot.cc_mask = filter.as_u128();
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn set_use_global_transposition(&mut self, slot_id: SlotId, flag: bool) -> bool {
+        if let Some(slot) = self.slots.get_mut(slot_id) {
+            slot.use_global_transposition = flag;
+            true
+        } else {
+            false
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::graph::{SynthKind,  LocalSynthId};
+
+    fn synth(id: usize) -> SynthId {
+        SynthId(SynthKind::Dummy, LocalSynthId(id))
+    }
+
+    fn slot(synth_id: Option<SynthId>) -> Slot {
+        Slot { synth_id, ..Slot::default() }
+    }
+
+    fn graph_with_a_removed_slot_and_an_unassigned_slot() -> Graph {
+        let mut slots = Siv::from(vec![
+            slot(Some(synth(0))),
+            slot(Some(synth(1))),
+            slot(Some(synth(2))),
+            slot(None),
+        ]);
+        slots.remove(SlotId(1));
+        Graph { slots, global_transposition: 0 }
+    }
+
+    #[test]
+    fn midi_iterator_continues_past_removed_and_unassigned_slots() {
+        let graph = graph_with_a_removed_slot_and_an_unassigned_slot();
+        let event = MidiEvent {
+            timestamp: None,
+            channel: 0,
+            kind: MidiEventKind::NoteOn { key: 60, velocity: 100 },
+        };
+
+        let sources: Vec<_> =
+            graph.midi_handler_iter(event).map(|(source_id, _)| source_id).collect();
+
+        assert_eq!(sources, vec![synth(0), synth(2)]);
+    }
+
+    #[test]
+    fn audio_iterator_continues_past_removed_and_unassigned_slots() {
+        let graph = graph_with_a_removed_slot_and_an_unassigned_slot();
+
+        let sources: Vec<_> = graph.audio_renderer_iter().collect();
+
+        assert_eq!(sources, vec![synth(0), synth(2)]);
     }
 }

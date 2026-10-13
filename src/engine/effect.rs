@@ -34,7 +34,7 @@ pub enum Effect {
 }
 
 impl Effect {
-    pub fn prepare(&mut self, _sample_rate: u32, _max_frame_count: usize, _channel_count: usize) {
+    pub fn prepare(&mut self, _sample_rate: u32, _max_sample_count: usize, _channel_count: usize) {
         match self {
             Effect::Gain(_) => {}
         }

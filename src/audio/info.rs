@@ -57,7 +57,6 @@ pub fn list_hosts() -> Vec<Host> {
 
 pub fn list_output_devices(host_id: &str) -> Result<Vec<OutputDeviceInfo>> {
     let host = host_by_id(host_id)?;
-
     let default_id = host
         .default_output_device()
         .and_then(|device| device_id(&device).ok());
@@ -66,10 +65,14 @@ pub fn list_output_devices(host_id: &str) -> Result<Vec<OutputDeviceInfo>> {
     let mut devices = Vec::new();
 
     for device in cpal_devices {
-        let id = device_id(&device)?;
+        let Ok(id) = device_id(&device) else {
+            continue;
+        };
         let name = device_display_name(&device).unwrap_or_else(|_| id.clone());
         let is_default = default_id.as_deref() == Some(id.as_str());
-        let stream_configs = list_output_stream_configs(&device)?;
+        let Ok(stream_configs) = list_output_stream_configs(&device) else {
+            continue;
+        };
 
         devices.push(OutputDeviceInfo {
             host_id: host_id.into(),

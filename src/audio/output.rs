@@ -5,8 +5,7 @@ use crate::{
             DeviceCfgSelection, DeviceSelection, HostSelection, LatencySelection,
             SampleRateSelection,
         },
-    },
-    engine::Engine,
+    }, engine::rt::Engine,
 };
 use cpal::{
     BufferSize,
@@ -17,31 +16,31 @@ use tracing::error;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("host not found")]
+    #[error("audio host not found")]
     HostNotFound,
 
-    #[error("host has no default device")]
+    #[error("audio host has no default device")]
     HostHasNoDefaultDevice,
 
-    #[error("device not found")]
+    #[error("audio output device not found")]
     DeviceNotFound,
 
-    #[error("failed to list devices: {0}")]
+    #[error("failed to list audio output devices: {0}")]
     FailedToListDevices(#[source] cpal::Error),
 
-    #[error("failed to list device configs: {0}")]
+    #[error("failed to list audio output device configs: {0}")]
     FailedToListDeviceConfigs(#[source] cpal::Error),
 
-    #[error("no supported device config matches the requested settings")]
+    #[error("no supported audio output device config matches the requested settings")]
     NoSupportedDeviceConfig,
 
     #[error("unsupported sample format: {0}")]
     UnsupportedSampleFormat(cpal::SampleFormat),
 
-    #[error("failed to build stream")]
+    #[error("failed to build audio output stream")]
     FailedToBuildStream(#[source] cpal::Error),
 
-    #[error("failed to start stream")]
+    #[error("failed to start audio output stream")]
     FailedToStartStream(#[source] cpal::Error),
 }
 
@@ -55,7 +54,7 @@ pub struct ResolvedConfig {
 }
 
 impl ResolvedConfig {
-    pub fn find(selection: &DeviceCfgSelection) -> Result<Self> {
+    pub fn find(selection: DeviceCfgSelection) -> Result<Self> {
         resolve_device_config(selection)
     }
 
@@ -101,7 +100,17 @@ fn build_stream<T>(
 where
     T: cpal::Sample + cpal::SizedSample + cpal::FromSample<f32>,
 {
-    let mut scratch = vec![0.0_f32; config.channels as usize * 16_384];
+    let channel_count = config.channels as usize;
+    let max_sample_count = 16384;
+
+    {
+        let mut engine = engine.lock().expect("engine poisoned");
+        engine.create_buffers(channel_count, max_sample_count);
+        engine.set_sample_rate(config.sample_rate);
+    }
+
+    let mut scratch = vec![0.0_f32; channel_count * max_sample_count];
+
     let stream = device
         .build_output_stream(
             config,
@@ -112,10 +121,7 @@ where
                 }
 
                 let scratch = &mut scratch[..output.len()];
-                {
-                    let _engine = engine.lock().expect("engine poisoned");
-                    // info!("process {}", scratch.len());
-                }
+                engine.lock().expect("engine poisoned").run(scratch);
 
                 for (dst, src) in output.iter_mut().zip(scratch.iter().copied()) {
                     *dst = T::from_sample(src);
@@ -128,7 +134,7 @@ where
     Ok(stream)
 }
 
-fn resolve_device_config(selection: &DeviceCfgSelection) -> Result<ResolvedConfig> {
+fn resolve_device_config(selection: DeviceCfgSelection) -> Result<ResolvedConfig> {
     let host = match &selection.host {
         HostSelection::Default => cpal::default_host(),
         HostSelection::Id(id) => audio::info::host_by_id(id).map_err(|_| Error::HostNotFound)?,
@@ -187,24 +193,25 @@ fn list_config_ranges(device: &cpal::Device) -> Result<Vec<cpal::SupportedStream
     Ok(configs.collect::<Vec<_>>())
 }
 
-fn buffer_sizes(latency_sel: &LatencySelection) -> &'static [BufferSize] {
+fn buffer_sizes(latency_sel: &LatencySelection) -> Vec<BufferSize> {
     match latency_sel {
-        LatencySelection::Automatic => &[
+        LatencySelection::Automatic => vec![
             BufferSize::Default,
             BufferSize::Fixed(256),
             BufferSize::Fixed(512),
             BufferSize::Fixed(1024),
         ],
-        LatencySelection::Low => &[
+        LatencySelection::Low => vec![
             BufferSize::Fixed(64),
             BufferSize::Fixed(128),
             BufferSize::Fixed(256),
         ],
-        LatencySelection::Stable => &[
+        LatencySelection::Stable => vec![
             BufferSize::Fixed(256),
             BufferSize::Fixed(512),
             BufferSize::Fixed(1024),
         ],
+        LatencySelection::CustomBufferSize(size) => vec![BufferSize::Fixed(*size)],
     }
 }
 
