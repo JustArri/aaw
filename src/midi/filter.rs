@@ -1,68 +1,72 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
+use utoipa::ToSchema;
 
-use crate::midi::event::{MidiEvent, MidiEventKind};
-
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct KeyMask {
-    pub mask: u128,
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub enum MidiFilterKind {
+    Allowlist,
+    Denylist,
 }
 
-impl KeyMask {
-    pub const ALL: Self = Self { mask: u128::MAX };
-
-    pub fn contains(&self, key: u8) -> bool {
-        self.mask & (1 << key) > 0
+impl MidiFilterKind {
+    fn application_value(&self) -> bool {
+        match self {
+            MidiFilterKind::Allowlist => true,
+            MidiFilterKind::Denylist => false,
+        }
     }
 }
 
-impl Default for KeyMask {
-    fn default() -> Self {
-        Self::ALL
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct ChannelMask {
-    pub mask: u16,
-}
-
-impl ChannelMask {
-    pub const ALL: Self = Self { mask: u16::MAX };
-
-    pub fn contains(&self, key: u8) -> bool {
-        self.mask & (1 << key) > 0
-    }
-}
-
-impl Default for ChannelMask {
-    fn default() -> Self {
-        Self::ALL
-    }
-}
-
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct MidiFilter {
-    pub key_mask: KeyMask,
-    pub channel_mask: ChannelMask,
+    #[serde(rename = "type")]
+    pub kind: MidiFilterKind,
+
+    pub list: HashSet<u8>,
 }
 
 impl MidiFilter {
-    pub fn filter(&self, event: MidiEvent) -> Option<MidiEvent> {
-        if !self.channel_mask.contains(event.channel) {
-            return None;
+    pub fn as_u16(&self) -> u16 {
+        let value = self.kind.application_value();
+        let mut mask = if value { 0 } else { u16::MAX };
+
+        for &item in &self.list {
+            if item < 16 {
+                let bit = 1u16 << item;
+
+                if value {
+                    mask |= bit;
+                } else {
+                    mask &= !bit;
+                }
+            }
         }
 
-        if let MidiEventKind::NoteOn { key, velocity: _ } = event.kind
-            && !self.key_mask.contains(key)
-        {
-            return None;
+        mask
+    }
+
+    pub fn as_u128(&self) -> u128 {
+        let value = self.kind.application_value();
+        let mut mask = if value { 0 } else { u128::MAX };
+
+        for &item in &self.list {
+            if item < 128 {
+                let bit = 1u128 << item;
+
+                if value {
+                    mask |= bit;
+                } else {
+                    mask &= !bit;
+                }
+            }
         }
 
-        if let MidiEventKind::NoteOff { key, velocity: _ } = event.kind
-            && !self.key_mask.contains(key)
-        {
-            return None;
-        }
+        mask
+    }
+}
 
-        Some(event)
+impl Default for MidiFilter {
+    fn default() -> Self {
+        Self { kind: MidiFilterKind::Denylist, list: Default::default() }
     }
 }

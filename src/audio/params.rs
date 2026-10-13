@@ -1,40 +1,33 @@
-#[derive(Debug, Clone)]
-pub enum HostSelection {
+#[derive(Debug, Clone, Copy)]
+pub enum HostSelection<'a> {
     Default,
-    Id(String),
+    Id(&'a str),
 }
 
-#[derive(Debug, Clone)]
-pub enum DeviceSelection {
+#[derive(Debug, Clone, Copy)]
+pub enum DeviceSelection<'a> {
     Default,
-    Id(String),
+    Id(&'a str),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum LatencySelection {
-    // buffer size:
-    Automatic, //  device default, then 256
-    Low,       //  64, 128, then 256
-    Stable,    //  256, 512, then 1024
+    Automatic,
+    Low,
+    Stable,
+    CustomBufferSize(u32),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum SampleRateSelection {
     Automatic,
     Fixed(u32),
 }
 
-#[derive(Debug, Clone)]
-pub struct DeviceCfgSelection {
-    pub host: HostSelection,
-    pub device: DeviceSelection,
+#[derive(Debug, Clone, Copy)]
+pub struct DeviceCfgSelection<'a> {
+    pub host: HostSelection<'a>,
+    pub device: DeviceSelection<'a>,
     pub latency: LatencySelection,
     pub sample_rate: SampleRateSelection,
 }
-
-// #[derive(Debug, Clone, Serialize, Deserialize)]
-// pub struct OutputProfileSelection {
-//     pub sample_format: String, // TODO: change to the actual format type
-//     pub channels: u16,
-//     pub sample_rate: u32,
-// }

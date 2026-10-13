@@ -18,11 +18,11 @@ impl Gain {
 
     pub fn process(&mut self, output: &mut AudioBlock) {
         let channel_count = output.channel_count();
-        let frame_count = output.frame_count();
+        let sample_count = output.sample_count_per_channel();
 
         for channel_samples in output.samples_mut().iter_mut().take(channel_count) {
-            for frame in channel_samples.iter_mut().take(frame_count) {
-                *frame *= self.value;
+            for sample in channel_samples.iter_mut().take(sample_count) {
+                *sample *= self.value;
             }
         }
     }

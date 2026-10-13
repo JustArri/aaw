@@ -25,22 +25,13 @@ pub struct Dummy {
 }
 
 impl Dummy {
-    pub fn new() -> Self {
-        Self {
-            sample_rate: 48_000.0,
-            voices: Vec::with_capacity(MAX_VOICES),
-        }
-    }
-}
+    //TODO: implement multiple channels
 
-impl Default for Dummy {
-    fn default() -> Self {
-        Self::new()
+    pub fn new(sample_rate: u32) -> Self {
+        Self { sample_rate: sample_rate as f32, voices: Vec::with_capacity(MAX_VOICES) }
     }
-}
 
-impl Dummy {
-    pub fn prepare(&mut self, sample_rate: u32) {
+    pub fn set_sample_rate(&mut self, sample_rate: u32) {
         self.sample_rate = sample_rate as f32;
         self.voices.clear();
     }
@@ -70,33 +61,36 @@ impl Dummy {
                     }
                 }
             }
-            MidiEventKind::ControlChange { controller, value: _ } => {
-                if controller == ControlChange::AllNotesOff as u8 {
-                    self.voices.clear();
-                }
+            MidiEventKind::ControlChange { controller, value: _ }
+                if controller == ControlChange::AllNotesOff as u8 =>
+            {
+                self.panic();
             }
             _ => {}
         }
     }
 
-    pub fn process(&mut self, output: &mut AudioBlock) {
-        let frame_count = output.frame_count();
+    pub fn panic(&mut self) {
+        self.voices.clear();
+    }
+
+    pub fn render_audio_block(&mut self, output: &mut AudioBlock) {
+        let sample_count = output.sample_count_per_channel();
         let channel_count = output.channel_count();
         let samples = output.samples_mut();
 
-        for frame in 0..frame_count {
-            let sample = self.next_frame();
+        for sample_index in 0..sample_count {
+            let sample = self.next_sample();
 
             for channel_samples in samples.iter_mut().take(channel_count) {
-                channel_samples[frame] = sample;
+                channel_samples[sample_index] = sample;
             }
         }
 
-        self.voices
-            .retain(|voice| !voice.releasing || voice.release > 0.001);
+        self.voices.retain(|voice| !voice.releasing || voice.release > 0.001);
     }
 
-    fn next_frame(&mut self) -> f32 {
+    fn next_sample(&mut self) -> f32 {
         let attack_step = attack_step_per_sample(self.sample_rate);
         let release_gain = release_gain_per_sample(self.sample_rate);
 
