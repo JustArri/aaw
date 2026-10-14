@@ -14,6 +14,8 @@ fn main() {
     println!("cargo:rerun-if-changed=lib/fluidsynth/CMakeLists.txt");
     println!("cargo:rerun-if-changed=lib/sfizz/CMakeLists.txt");
 
+    load_version();
+
     let fluid = build_fluidsynth();
     let sfizz = build_sfizz();
 
@@ -22,6 +24,20 @@ fn main() {
     link_sfizz_static_libraries(&sfizz);
     link_cpp_runtime();
     generate_bindings();
+}
+
+fn load_version() {
+    let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
+    let version_path = manifest_dir.join("VERSION");
+
+    println!("cargo:rerun-if-changed={}", version_path.display());
+
+    let version = fs::read_to_string(&version_path)
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", version_path.display()));
+
+    let version = version.trim();
+
+    println!("cargo:rustc-env=APP_VERSION={version}");
 }
 
 fn build_fluidsynth_info(fluid: &Path) {
