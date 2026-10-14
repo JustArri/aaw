@@ -1,5 +1,7 @@
 use crate::{
-    engine::{self, Command, dummy_graph, fluid_graph, sfizz_graph, synth_graph}, midi::MidiEvent, rt_channels::{RtConsumer, RtSharedProducer},
+    engine::{self, Command, dummy_graph, fluid_graph, sfizz_graph, synth_graph},
+    midi::MidiEvent,
+    rt_channels::{NotifiedRtSharedProducer, RtConsumer, RtSharedProducer},
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -10,8 +12,10 @@ use std::{
     },
     time::Duration,
 };
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock, oneshot};
 use utoipa::ToSchema;
+
+const REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, thiserror::Error)]
 pub enum EngineError {
@@ -23,6 +27,9 @@ pub enum EngineError {
 
     #[error("command timed out")]
     Timeout,
+
+    #[error("command reply channel closed")]
+    ReplyChannelClosed,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -35,8 +42,8 @@ pub struct Engine {
 
 pub struct EngineHandle {
     pub cmd_tx: RtSharedProducer<(u32, Command)>,
-    pub reply_buffer: Arc<RwLock<HashMap<u32, bool>>>,
-    pub midi_tx: RtSharedProducer<MidiEvent>,
+    pub pending_replies: Arc<Mutex<HashMap<u32, oneshot::Sender<bool>>>>,
+    pub midi_tx: NotifiedRtSharedProducer<MidiEvent>,
     pub next_cmd_id: Arc<AtomicU32>,
     pub engine: Arc<RwLock<Engine>>,
 }
@@ -44,37 +51,41 @@ pub struct EngineHandle {
 impl EngineHandle {
     pub async fn command(&self, command: Command) -> Result<bool, EngineError> {
         let cmd_id = self.next_cmd_id.fetch_add(1, Ordering::Relaxed);
-        self.cmd_tx.push((cmd_id, command)).await.map_err(|_| EngineError::QueueFull)?;
-        let result = self.wait_for_reply(cmd_id).await;
-        Ok(result)
+        let (reply_tx, reply_rx) = oneshot::channel();
+
+        self.pending_replies.lock().await.insert(cmd_id, reply_tx);
+
+        if self.cmd_tx.push((cmd_id, command)).await.is_err() {
+            self.pending_replies.lock().await.remove(&cmd_id);
+            return Err(EngineError::QueueFull);
+        }
+
+        match tokio::time::timeout(REPLY_TIMEOUT, reply_rx).await {
+            Ok(Ok(reply)) => Ok(reply),
+            Ok(Err(_)) => Err(EngineError::ReplyChannelClosed),
+            Err(_) => {
+                self.pending_replies.lock().await.remove(&cmd_id);
+                Err(EngineError::Timeout)
+            }
+        }
     }
 
     pub async fn project(&self) -> engine::stored::Project {
         (&*self.engine.read().await).into()
     }
-
-    async fn wait_for_reply(&self, cmd_id: u32) -> bool {
-        loop {
-            if self.reply_buffer.read().await.contains_key(&cmd_id)
-                && let Some(result) = self.reply_buffer.write().await.remove(&cmd_id)
-            {
-                return result;
-            }
-
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    }
 }
 
 pub struct Runtime {
-    pub reply_buffer: Arc<RwLock<HashMap<u32, bool>>>,
+    pub pending_replies: Arc<Mutex<HashMap<u32, oneshot::Sender<bool>>>>,
     pub reply_rx: RtConsumer<(u32, bool)>,
 }
 
 impl Runtime {
     pub async fn update(&mut self) {
         while let Ok((cmd_id, reply)) = self.reply_rx.pop() {
-            self.reply_buffer.write().await.insert(cmd_id, reply);
+            if let Some(reply_tx) = self.pending_replies.lock().await.remove(&cmd_id) {
+                let _ = reply_tx.send(reply);
+            }
         }
     }
 }

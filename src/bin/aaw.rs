@@ -36,7 +36,7 @@ async fn run() -> anyhow::Result<()> {
     let port = listener.local_addr()?.port();
 
     let (midi_bc_tx, _) = tokio::sync::broadcast::channel(256);
-    let (midi_tx, midi_rx) = rt_channels::create_mpsc(32);
+    let (midi_tx, midi_rx) = rt_channels::create_notified_mpsc(32);
 
     let project = load_opt(CFG_LAST_PROJECT).await.unwrap_or_default();
     let (engine, engine_handle, engine_runtime) =

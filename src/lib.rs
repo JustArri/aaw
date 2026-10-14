@@ -1,6 +1,6 @@
 use crate::{
     midi::{ControlChange, MidiEvent, MidiEventKind, MidiRuntime},
-    rt_channels::RtConsumer,
+    rt_channels::NotifiedRtConsumer,
 };
 use std::{sync::Arc, time::Duration};
 use tokio::{
@@ -78,43 +78,40 @@ pub fn spawn_engine_runtime_task(
     mut runtime: engine::ctr::Runtime,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_millis(1));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
         loop {
-            if stop.is_cancelled() {
-                break;
+            tokio::select! {
+                _ = stop.cancelled() => break,
+                _ = interval.tick() => runtime.update().await,
             }
-            runtime.update().await;
-            tokio::time::sleep(Duration::from_millis(1000)).await;
         }
     })
 }
 
 pub fn spawn_midi_relay_task(
     stop: CancellationToken,
-    mut midi_rx: RtConsumer<MidiEvent>,
+    mut midi_rx: NotifiedRtConsumer<MidiEvent>,
     midi_tx: broadcast::Sender<Arc<MidiEvent>>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         loop {
-            if stop.is_cancelled() {
-                break;
-            }
+            tokio::select! {
+                _ = stop.cancelled() => break,
 
-            if let Ok(event) = midi_rx.pop() {
-                info!(target: "midi-event", "{event:?}");
+                event = midi_rx.recv() => {
+                    info!(target: "midi-event", "{event:?}");
 
-                if let MidiEventKind::ControlChange { controller, value: _ } = event.kind
-                    && controller == ControlChange::AllNotesOff as u8
-                {
-                    info!("[midi panic]");
-                    stop.cancel();
-                    break;
-                }
+                    if let MidiEventKind::ControlChange { controller, .. } = event.kind
+                        && controller == ControlChange::AllNotesOff as u8
+                    {
+                        info!("[midi panic]");
+                        stop.cancel();
+                        break;
+                    }
 
-                let _ = midi_tx.send(Arc::new(event));
-            } else {
-                tokio::select! {
-                    _ = stop.cancelled() => break,
-                    _ = tokio::time::sleep(Duration::from_millis(10)) => {}
+                    let _ = midi_tx.send(Arc::new(event));
                 }
             }
         }

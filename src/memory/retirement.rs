@@ -35,15 +35,9 @@ impl RetirementThread {
             .name("retirement-thread".to_string())
             .spawn(move || retirement_loop(consumer, idle_sleep))?;
 
-        let retirer = Retirer {
-            producer,
-            failed_retire_count: failed_retire_count.clone(),
-        };
+        let retirer = Retirer { producer, failed_retire_count: failed_retire_count.clone() };
 
-        let retirement_thread = RetirementThread {
-            handle: Some(handle),
-            failed_retire_count,
-        };
+        let retirement_thread = RetirementThread { handle: Some(handle), failed_retire_count };
 
         Ok((retirer, retirement_thread))
     }
@@ -53,11 +47,7 @@ impl RetirementThread {
     }
 
     pub fn join(mut self) -> thread::Result<()> {
-        if let Some(handle) = self.handle.take() {
-            handle.join()
-        } else {
-            Ok(())
-        }
+        if let Some(handle) = self.handle.take() { handle.join() } else { Ok(()) }
     }
 
     pub fn join_after_dropping<T>(self, retirer: Retirer<T>) -> thread::Result<()> {

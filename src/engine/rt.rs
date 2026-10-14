@@ -7,7 +7,7 @@ use crate::{
         synth_graph::{self, SlotId},
     },
     midi::{MidiEvent, MidiFilter, MidiKeyTransform},
-    rt_channels::{RtConsumer, RtProducer},
+    rt_channels::{NotifiedRtConsumer, RtConsumer, RtProducer},
     synths,
 };
 
@@ -49,7 +49,7 @@ pub struct Engine {
     pub fluid_graph: fluid_graph::rt::Graph,
     pub sfizz_graph: sfizz_graph::rt::Graph,
     pub audio_blocks: Option<AudioBlocks>,
-    pub midi_rx: RtConsumer<MidiEvent>,
+    pub midi_rx: NotifiedRtConsumer<MidiEvent>,
     pub cmd_rx: RtConsumer<(u32, Command)>,
     pub reply_tx: RtProducer<(u32, bool)>,
 }
@@ -148,7 +148,7 @@ impl Engine {
     }
 
     fn dispatch_midi_events(&mut self) {
-        while let Ok(event) = self.midi_rx.pop() {
+        while let Ok(event) = self.midi_rx.try_recv() {
             self.dispatch_midi_event(event);
         }
     }

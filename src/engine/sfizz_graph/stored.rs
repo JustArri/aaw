@@ -1,4 +1,4 @@
-use crate::engine::{sfizz_graph::ctr, graph::LocalSynthId};
+use crate::engine::{graph::LocalSynthId, sfizz_graph::ctr};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 

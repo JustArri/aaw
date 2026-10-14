@@ -1,4 +1,4 @@
-use crate::{midi::event::MidiEvent, rt_channels::RtSharedProducer};
+use crate::{midi::event::MidiEvent, rt_channels::NotifiedRtSharedProducer};
 use midir::{
     ConnectError, ConnectErrorKind, InitError, MidiInput, MidiInputConnection, PortInfoError,
 };
@@ -41,7 +41,7 @@ pub enum InputSlot {
 
 pub struct ConnectedInputSlot {
     inner: MidiInputConnection<()>,
-    senders: Vec<RtSharedProducer<MidiEvent>>,
+    senders: Vec<NotifiedRtSharedProducer<MidiEvent>>,
     name: String,
     port_id: String,
 }
@@ -66,14 +66,14 @@ impl ConnectedInputSlot {
 
 pub struct DisconnectedInputSlot {
     inner: MidiInput,
-    senders: Vec<RtSharedProducer<MidiEvent>>,
+    senders: Vec<NotifiedRtSharedProducer<MidiEvent>>,
     name: String,
 }
 
 impl DisconnectedInputSlot {
     pub fn new(
         name: impl Into<String>,
-        senders: Vec<RtSharedProducer<MidiEvent>>,
+        senders: Vec<NotifiedRtSharedProducer<MidiEvent>>,
     ) -> Result<Self, InitError> {
         let name = name.into();
 
@@ -155,7 +155,7 @@ impl MidiRuntime {
     pub fn new(
         input_count: usize,
         client_name: impl Into<String>,
-        senders: Vec<RtSharedProducer<MidiEvent>>,
+        senders: Vec<NotifiedRtSharedProducer<MidiEvent>>,
         input_auto_connections: HashMap<String, InputAutoConnection>,
     ) -> Result<Self, InitError> {
         let client_name = client_name.into();
