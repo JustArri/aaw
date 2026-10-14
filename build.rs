@@ -1,4 +1,5 @@
 use std::env;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 fn main() {
@@ -17,8 +18,9 @@ fn main() {
     let sfizz = build_sfizz();
 
     build_fluidsynth_info(&fluid);
-    link_shared_library(&fluid, "fluidsynth");
-    link_shared_library(&sfizz, "sfizz");
+    link_static_library(&fluid, "fluidsynth");
+    link_sfizz_static_libraries(&sfizz);
+    link_cpp_runtime();
     generate_bindings();
 }
 
@@ -54,6 +56,7 @@ fn common_config(source: &str, output_name: &str) -> cmake::Config {
     let mut config = cmake::Config::new(source);
     config
         .out_dir(&output)
+        .define("CMAKE_ARCHIVE_OUTPUT_DIRECTORY", &library_dir)
         .define("CMAKE_LIBRARY_OUTPUT_DIRECTORY", &library_dir)
         .define("CMAKE_RUNTIME_OUTPUT_DIRECTORY", &library_dir)
         .define("CMAKE_POSITION_INDEPENDENT_CODE", "ON");
@@ -64,10 +67,14 @@ fn build_fluidsynth() -> PathBuf {
     let mut config = common_config("lib/fluidsynth", "fluidsynth");
     config
         .build_target("libfluidsynth")
-        .define("BUILD_SHARED_LIBS", "ON")
+        .define("BUILD_SHARED_LIBS", "OFF")
         .define("enable-alsa", "OFF")
         .define("enable-aufile", "OFF")
+        .define("enable-coreaudio", "OFF")
+        .define("enable-coremidi", "OFF")
         .define("enable-dbus", "OFF")
+        .define("enable-dsound", "OFF")
+        .define("enable-framework", "OFF")
         .define("enable-ipv6", "OFF")
         .define("enable-jack", "OFF")
         .define("enable-ladspa", "OFF")
@@ -75,21 +82,26 @@ fn build_fluidsynth() -> PathBuf {
         .define("enable-midishare", "OFF")
         .define("enable-native-dls", "OFF")
         .define("enable-network", "OFF")
+        .define("enable-oboe", "OFF")
         .define("enable-openmp", "OFF")
+        .define("enable-opensles", "OFF")
         .define("enable-oss", "OFF")
         .define("enable-pipewire", "OFF")
         .define("enable-pulseaudio", "OFF")
         .define("enable-readline", "OFF")
         .define("enable-sdl3", "OFF")
         .define("enable-signalsmith", "OFF")
-        .define("enable-systemd", "OFF");
+        .define("enable-systemd", "OFF")
+        .define("enable-wasapi", "OFF")
+        .define("enable-waveout", "OFF")
+        .define("enable-winmidi", "OFF");
     config.build()
 }
 
 fn build_sfizz() -> PathBuf {
     let mut config = common_config("lib/sfizz", "sfizz");
     config
-        .build_target("sfizz_shared")
+        .build_target("sfizz_static")
         .define("BUILD_TESTING", "OFF")
         .define("ENABLE_LTO", "OFF")
         .define("SFIZZ_BENCHMARKS", "OFF")
@@ -98,7 +110,7 @@ fn build_sfizz() -> PathBuf {
         .define("SFIZZ_GIT_SUBMODULE_CHECK", "OFF")
         .define("SFIZZ_JACK", "OFF")
         .define("SFIZZ_RENDER", "OFF")
-        .define("SFIZZ_SHARED", "ON")
+        .define("SFIZZ_SHARED", "OFF")
         .define("SFIZZ_TESTS", "OFF")
         .define("SFIZZ_USE_SNDFILE", "OFF");
     // sfizz's pinned Abseil revision needs this explicit include with GCC 15.
@@ -109,13 +121,53 @@ fn build_sfizz() -> PathBuf {
     config.build().join("build/library")
 }
 
-fn link_shared_library(prefix: &Path, name: &str) {
+fn link_static_library(prefix: &Path, name: &str) {
     let library_dir = prefix.join("lib");
     println!("cargo:rustc-link-search=native={}", library_dir.display());
-    println!("cargo:rustc-link-lib=dylib={name}");
+    println!("cargo:rustc-link-lib=static={name}");
+}
 
-    if cfg!(any(target_os = "linux", target_os = "macos")) {
-        println!("cargo:rustc-link-arg=-Wl,-rpath,{}", library_dir.display());
+fn link_sfizz_static_libraries(prefix: &Path) {
+    let library_dir = prefix.join("lib");
+    println!("cargo:rustc-link-search=native={}", library_dir.display());
+
+    let mut libraries = fs::read_dir(&library_dir)
+        .unwrap_or_else(|error| {
+            panic!("failed to read sfizz library directory {}: {error}", library_dir.display())
+        })
+        .filter_map(|entry| entry.ok())
+        .filter_map(|entry| static_library_name(&entry.path()).map(str::to_owned))
+        .collect::<Vec<_>>();
+    libraries.sort_unstable();
+
+    assert!(libraries.iter().any(|library| library == "sfizz"), "sfizz static archive is missing");
+
+    // libsfizz.a is only the public API layer. Its implementation and bundled
+    // dependencies are separate archives, which must all be available to the
+    // final linker. Normal static linkage still allows unused objects to be
+    // discarded from the executable.
+    for library in libraries {
+        println!("cargo:rustc-link-lib=static={library}");
+    }
+}
+
+fn static_library_name(path: &Path) -> Option<&str> {
+    let file_name = path.file_name()?.to_str()?;
+    file_name.strip_prefix("lib")?.strip_suffix(".a")
+}
+
+fn link_cpp_runtime() {
+    match env::var("CARGO_CFG_TARGET_ENV").as_deref() {
+        Ok("msvc") => {}
+        _ if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") => {
+            println!("cargo:rustc-link-lib=dylib=c++");
+        }
+        _ => {
+            println!("cargo:rustc-link-lib=dylib=stdc++");
+            println!("cargo:rustc-link-lib=dylib=atomic");
+            println!("cargo:rustc-link-lib=dylib=rt");
+            println!("cargo:rustc-link-lib=dylib=m");
+        }
     }
 }
 

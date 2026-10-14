@@ -1,7 +1,6 @@
+use crate::server::AppState;
 use utoipa::OpenApi;
 use utoipa_axum::{router::OpenApiRouter, routes};
-
-use crate::server::AppState;
 
 pub mod audio;
 pub mod midi;

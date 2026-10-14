@@ -1,6 +1,5 @@
-use serde::{Deserialize, Serialize};
-
 use crate::{audio::block::AudioBlock, effects, midi::MidiEvent};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone)]
 pub enum EffectRequest {
@@ -79,11 +78,7 @@ impl EffectDoc {
 }
 
 pub fn expect_bool(value: ParamValue) -> Result<bool, EffectError> {
-    if let ParamValue::Bool(value) = value {
-        Ok(value)
-    } else {
-        Err(EffectError::InvalidValueType)
-    }
+    if let ParamValue::Bool(value) = value { Ok(value) } else { Err(EffectError::InvalidValueType) }
 }
 
 pub fn expect_f32(value: ParamValue) -> Result<f32, EffectError> {

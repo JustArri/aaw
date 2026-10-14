@@ -206,7 +206,7 @@ impl Graph {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::graph::{SynthKind,  LocalSynthId};
+    use crate::engine::graph::{LocalSynthId, SynthKind};
 
     fn synth(id: usize) -> SynthId {
         SynthId(SynthKind::Dummy, LocalSynthId(id))

@@ -3,6 +3,11 @@ name = "aaw"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = ["desktop-audio"]
+desktop-audio = ["cpal/pulseaudio", "rtkit"]
+rtkit = ["cpal/realtime-dbus"]
+
 [dependencies]
 anyhow = "1"
 thiserror = "2"
@@ -15,11 +20,7 @@ tower-http = { version = "0.7", features = [
     "compression-br",
 ] }
 
-cpal = { version = "0.18", features = [
-    "pipewire",
-    "pulseaudio",
-    "realtime-dbus",
-] }
+cpal = { version = "0.18", features = ["pipewire"] }
 midir = "0.11"
 
 rtrb = "0.4"

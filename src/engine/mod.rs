@@ -4,7 +4,7 @@ use std::{
     collections::HashMap,
     sync::{Arc, atomic::AtomicU32},
 };
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 
 pub mod ctr;
 pub mod dummy_graph;
@@ -26,7 +26,7 @@ pub async fn create_engine(
 ) -> synths::Result<(rt::Engine, ctr::EngineHandle, ctr::Runtime)> {
     let (cmd_tx, cmd_rx) = rt_channels::create_mpsc(cmd_capacity);
     let (reply_tx, reply_rx) = rt_channels::create_spsc(cmd_capacity);
-    let (midi_tx, midi_rx) = rt_channels::create_mpsc(midi_capacity);
+    let (midi_tx, midi_rx) = rt_channels::create_notified_mpsc(midi_capacity);
 
     let (ctr_synth_graph, rt_synth_graph) =
         synth_graph::prepare(project.synth_graph, slot_capacity);
@@ -62,17 +62,17 @@ pub async fn create_engine(
         sfizz_graph: ctr_sfizz_graph,
     };
 
-    let reply_buffer = Arc::new(RwLock::new(HashMap::new()));
+    let pending_replies = Arc::new(Mutex::new(HashMap::new()));
 
     let controller = ctr::EngineHandle {
         cmd_tx,
-        reply_buffer: Arc::clone(&reply_buffer),
+        pending_replies: Arc::clone(&pending_replies),
         midi_tx,
         next_cmd_id: Arc::new(AtomicU32::new(0)),
         engine: Arc::new(RwLock::new(ctr_engine)),
     };
 
-    let runtime = ctr::Runtime { reply_buffer, reply_rx };
+    let runtime = ctr::Runtime { pending_replies, reply_rx };
 
     Ok((rt_engine, controller, runtime))
 }

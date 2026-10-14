@@ -3,7 +3,7 @@ use axum::http::StatusCode;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 pub fn router() -> OpenApiRouter<AppState> {
-    OpenApiRouter::new().routes(routes!(shutdown))
+    OpenApiRouter::new().routes(routes!(shutdown)).routes(routes!(reboot))
 }
 
 #[utoipa::path(
@@ -16,10 +16,27 @@ pub fn router() -> OpenApiRouter<AppState> {
     )
 )]
 async fn shutdown() -> StatusCode {
-    match system::poweroff().await {
+    action_status(system::poweroff().await, "shut down")
+}
+
+#[utoipa::path(
+    post,
+    path = "/reboot",
+    responses(
+        (status = ACCEPTED, description = "Reboot initiated"),
+        (status = FORBIDDEN, description = "Permission denied"),
+        (status = INTERNAL_SERVER_ERROR, description = "Reboot failed"),
+    )
+)]
+async fn reboot() -> StatusCode {
+    action_status(system::reboot().await, "reboot")
+}
+
+fn action_status(result: zbus::Result<()>, action: &str) -> StatusCode {
+    match result {
         Ok(()) => StatusCode::ACCEPTED,
         Err(err) => {
-            tracing::error!(%err, "Failed to shut down system");
+            tracing::error!(%err, %action, "System action failed");
 
             match &err {
                 zbus::Error::MethodError(name, _, _)

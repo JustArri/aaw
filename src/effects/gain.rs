@@ -1,9 +1,8 @@
-use serde::{Deserialize, Serialize};
-
 use crate::{
     audio::block::AudioBlock,
     engine::effect::{self, EffectError, EffectRequest, EffectResult, ParamValue},
 };
+use serde::{Deserialize, Serialize};
 
 pub struct Gain {
     value: f32,

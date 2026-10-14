@@ -5,7 +5,8 @@ use crate::{
             DeviceCfgSelection, DeviceSelection, HostSelection, LatencySelection,
             SampleRateSelection,
         },
-    }, engine::rt::Engine,
+    },
+    engine::rt::Engine,
 };
 use cpal::{
     BufferSize,
@@ -140,18 +141,14 @@ fn resolve_device_config(selection: DeviceCfgSelection) -> Result<ResolvedConfig
         HostSelection::Id(id) => audio::info::host_by_id(id).map_err(|_| Error::HostNotFound)?,
     };
     let device = match &selection.device {
-        DeviceSelection::Default => host
-            .default_output_device()
-            .ok_or(Error::HostHasNoDefaultDevice)?,
+        DeviceSelection::Default => {
+            host.default_output_device().ok_or(Error::HostHasNoDefaultDevice)?
+        }
         DeviceSelection::Id(id) => find_device_by_id(&host, id)?,
     };
     let (sample_format, config) =
         resolve_preferred_config(&device, &selection.latency, &selection.sample_rate)?;
-    Ok(ResolvedConfig {
-        device,
-        sample_format,
-        config,
-    })
+    Ok(ResolvedConfig { device, sample_format, config })
 }
 
 fn find_device_by_id(host: &cpal::Host, id: &str) -> Result<cpal::Device> {
@@ -187,9 +184,7 @@ fn resolve_preferred_config(
 }
 
 fn list_config_ranges(device: &cpal::Device) -> Result<Vec<cpal::SupportedStreamConfigRange>> {
-    let configs = device
-        .supported_output_configs()
-        .map_err(Error::FailedToListDeviceConfigs)?;
+    let configs = device.supported_output_configs().map_err(Error::FailedToListDeviceConfigs)?;
     Ok(configs.collect::<Vec<_>>())
 }
 
@@ -201,16 +196,12 @@ fn buffer_sizes(latency_sel: &LatencySelection) -> Vec<BufferSize> {
             BufferSize::Fixed(512),
             BufferSize::Fixed(1024),
         ],
-        LatencySelection::Low => vec![
-            BufferSize::Fixed(64),
-            BufferSize::Fixed(128),
-            BufferSize::Fixed(256),
-        ],
-        LatencySelection::Stable => vec![
-            BufferSize::Fixed(256),
-            BufferSize::Fixed(512),
-            BufferSize::Fixed(1024),
-        ],
+        LatencySelection::Low => {
+            vec![BufferSize::Fixed(64), BufferSize::Fixed(128), BufferSize::Fixed(256)]
+        }
+        LatencySelection::Stable => {
+            vec![BufferSize::Fixed(256), BufferSize::Fixed(512), BufferSize::Fixed(1024)]
+        }
         LatencySelection::CustomBufferSize(size) => vec![BufferSize::Fixed(*size)],
     }
 }
@@ -262,9 +253,9 @@ fn with_selected_sample_rate(
     sample_rate_sel: &SampleRateSelection,
 ) -> cpal::SupportedStreamConfig {
     match sample_rate_sel {
-        SampleRateSelection::Automatic => range
-            .try_with_standard_sample_rate()
-            .unwrap_or_else(|| range.with_max_sample_rate()),
+        SampleRateSelection::Automatic => {
+            range.try_with_standard_sample_rate().unwrap_or_else(|| range.with_max_sample_rate())
+        }
         SampleRateSelection::Fixed(sr) => range.with_sample_rate(*sr),
     }
 }
