@@ -13,7 +13,6 @@ use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait},
 };
 use std::sync::{Arc, Mutex};
-use tracing::error;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -128,7 +127,9 @@ where
                     *dst = T::from_sample(src);
                 }
             },
-            move |err| error!(target = "stream", "{err}"),
+            move |_| {
+                //TODO: notify engine on error
+            },
             None,
         )
         .map_err(Error::FailedToBuildStream)?;

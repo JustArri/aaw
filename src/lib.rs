@@ -23,9 +23,7 @@ pub mod synths;
 pub mod system;
 
 pub const PACKAGE_NAME: &str = env!("CARGO_PKG_NAME");
-
-// pub type RoHashMap<K, V> = Arc<HashMap<K, V>>;
-// pub type RwHashMap<K, V> = Arc<RwLock<HashMap<K, Arc<V>>>>;
+pub const APP_VERSION: &str = env!("APP_VERSION");
 
 pub fn subscribe_tracing(default_filter: &str) {
     tracing_subscriber::fmt()
