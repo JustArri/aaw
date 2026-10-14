@@ -73,6 +73,16 @@ impl<T> NotifiedRtSharedProducer<T> {
             Err(value) => Err(value),
         }
     }
+
+    pub async fn push(&self, value: T) -> Result<(), T> {
+        match self.producer.push(value).await {
+            Ok(()) => {
+                self.notify.notify_one();
+                Ok(())
+            }
+            Err(value) => Err(value),
+        }
+    }
 }
 
 pub struct NotifiedRtConsumer<T> {

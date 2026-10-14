@@ -3,7 +3,7 @@ use midir::{
     ConnectError, ConnectErrorKind, InitError, MidiInput, MidiInputConnection, PortInfoError,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 use thiserror::Error;
 use tracing::{info, warn};
 
@@ -41,7 +41,7 @@ pub enum InputSlot {
 
 pub struct ConnectedInputSlot {
     inner: MidiInputConnection<()>,
-    senders: Vec<NotifiedRtSharedProducer<MidiEvent>>,
+    senders: Arc<[NotifiedRtSharedProducer<MidiEvent>]>,
     name: String,
     port_id: String,
 }
@@ -66,14 +66,14 @@ impl ConnectedInputSlot {
 
 pub struct DisconnectedInputSlot {
     inner: MidiInput,
-    senders: Vec<NotifiedRtSharedProducer<MidiEvent>>,
+    senders: Arc<[NotifiedRtSharedProducer<MidiEvent>]>,
     name: String,
 }
 
 impl DisconnectedInputSlot {
     pub fn new(
         name: impl Into<String>,
-        senders: Vec<NotifiedRtSharedProducer<MidiEvent>>,
+        senders: Arc<[NotifiedRtSharedProducer<MidiEvent>]>,
     ) -> Result<Self, InitError> {
         let name = name.into();
 
@@ -100,8 +100,8 @@ impl DisconnectedInputSlot {
             &self.name,
             move |_, msg, _| {
                 if let Some(event) = super::event::parse_midi_message(msg) {
-                    for sender in &senders {
-                        if let Err(event) = sender.blocking_push(event) {
+                    for sender in senders.iter() {
+                        if let Err(event) = sender.blocking_push(event.into()) {
                             warn!(
                                 target: LOG_TARGET,
                                 "failed to push midi event: {event:#?}"
@@ -155,14 +155,14 @@ impl MidiRuntime {
     pub fn new(
         input_count: usize,
         client_name: impl Into<String>,
-        senders: Vec<NotifiedRtSharedProducer<MidiEvent>>,
+        senders: Arc<[NotifiedRtSharedProducer<MidiEvent>]>,
         input_auto_connections: HashMap<String, InputAutoConnection>,
     ) -> Result<Self, InitError> {
         let client_name = client_name.into();
 
         let inputs = (0..input_count)
             .map(|i| {
-                DisconnectedInputSlot::new(format!("{client_name}-{i}"), senders.clone())
+                DisconnectedInputSlot::new(format!("{client_name}-{i}"), Arc::clone(&senders))
                     .map(InputSlot::Disconnected)
             })
             .collect::<Result<_, _>>()?;

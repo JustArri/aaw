@@ -33,7 +33,7 @@ pub enum EngineError {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct Engine {
+pub struct Project {
     pub synth_graph: synth_graph::ctr::Graph,
     pub dummy_graph: dummy_graph::ctr::Graph,
     pub fluid_graph: fluid_graph::ctr::Graph,
@@ -45,7 +45,7 @@ pub struct EngineHandle {
     pub pending_replies: Arc<Mutex<HashMap<u32, oneshot::Sender<bool>>>>,
     pub midi_tx: NotifiedRtSharedProducer<MidiEvent>,
     pub next_cmd_id: Arc<AtomicU32>,
-    pub engine: Arc<RwLock<Engine>>,
+    pub project: Arc<RwLock<Project>>,
 }
 
 impl EngineHandle {
@@ -70,8 +70,8 @@ impl EngineHandle {
         }
     }
 
-    pub async fn project(&self) -> engine::stored::Project {
-        (&*self.engine.read().await).into()
+    pub async fn save_project(&self) -> engine::stored::Project {
+        (&*self.project.read().await).into()
     }
 }
 

@@ -3,12 +3,38 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, ToSchema)]
-pub struct MidiEvent {
+pub struct TimedMidiEvent {
+    #[schema(required)]
     pub timestamp: Option<u64>,
+
     pub channel: u8,
 
     #[serde(flatten)]
     pub kind: MidiEventKind,
+}
+
+impl TimedMidiEvent {
+    pub fn has_timestamp(&self) -> bool {
+        self.timestamp.is_some()
+    }
+
+    pub fn split(self) -> (Option<u64>, MidiEvent) {
+        (self.timestamp, MidiEvent { channel: self.channel, kind: self.kind })
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, ToSchema)]
+pub struct MidiEvent {
+    pub channel: u8,
+
+    #[serde(flatten)]
+    pub kind: MidiEventKind,
+}
+
+impl From<TimedMidiEvent> for MidiEvent {
+    fn from(value: TimedMidiEvent) -> Self {
+        Self { channel: value.channel, kind: value.kind }
+    }
 }
 
 impl MidiEvent {
@@ -48,7 +74,7 @@ pub enum MidiEventKind {
     PolyphonicAftertouch { key: u8, value: u8 },
 }
 
-pub fn parse_midi_message(message: &[u8]) -> Option<MidiEvent> {
+pub fn parse_midi_message(message: &[u8]) -> Option<TimedMidiEvent> {
     let status = *message.first()?;
     let channel = status & 0x0f;
     let data = &message[1..];
@@ -84,5 +110,5 @@ pub fn parse_midi_message(message: &[u8]) -> Option<MidiEvent> {
         _ => return None,
     };
 
-    Some(MidiEvent { timestamp: None, channel, kind })
+    Some(TimedMidiEvent { timestamp: None, channel, kind })
 }

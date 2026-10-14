@@ -1,6 +1,7 @@
 use crate::{
     engine,
     midi::{MidiEvent, MidiRuntime},
+    rt_channels::NotifiedRtSharedProducer,
     server::api::audio::AudioOutputStream,
 };
 use std::sync::Arc;
@@ -15,6 +16,7 @@ pub mod api;
 pub struct AppState {
     pub midi_tx: tokio::sync::broadcast::Sender<Arc<MidiEvent>>,
     pub midi_runtime: Arc<Mutex<MidiRuntime>>,
+    pub midi_event_senders: Arc<[NotifiedRtSharedProducer<MidiEvent>]>,
     pub engine: Arc<std::sync::Mutex<engine::rt::Engine>>,
     pub output_stream: Arc<Mutex<Option<(cpal::Stream, AudioOutputStream)>>>,
 }
@@ -34,4 +36,9 @@ pub fn router() -> axum::Router<AppState> {
 
 pub fn api_router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new().nest("/api", api::router())
+}
+
+enum WsHandlerAction {
+    Continue,
+    Exit,
 }
