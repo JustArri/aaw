@@ -9,8 +9,8 @@ pub struct Project {
     pub sfizz_graph: sfizz_graph::stored::Graph,
 }
 
-impl From<&ctr::Engine> for Project {
-    fn from(value: &ctr::Engine) -> Self {
+impl From<&ctr::Project> for Project {
+    fn from(value: &ctr::Project) -> Self {
         Self {
             synth_graph: (&value.synth_graph).into(),
             dummy_graph: (&value.dummy_graph).into(),
@@ -20,8 +20,8 @@ impl From<&ctr::Engine> for Project {
     }
 }
 
-impl From<ctr::Engine> for Project {
-    fn from(value: ctr::Engine) -> Self {
+impl From<ctr::Project> for Project {
+    fn from(value: ctr::Project) -> Self {
         Self {
             synth_graph: value.synth_graph.into(),
             dummy_graph: value.dummy_graph.into(),

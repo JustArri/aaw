@@ -1,4 +1,7 @@
-use crate::{midi::MidiEvent, server::AppState};
+use crate::{
+    midi::MidiEvent,
+    server::{AppState, WsHandlerAction},
+};
 use axum::{
     extract::{
         State, WebSocketUpgrade,
@@ -50,7 +53,7 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
             }
         };
 
-        if matches!(action, Action::Exit) {
+        if matches!(action, WsHandlerAction::Exit) {
             break;
         }
     }
@@ -59,7 +62,7 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
 async fn handle_midi_rx_result(
     midi_event_result: Result<Arc<MidiEvent>, RecvError>,
     socket: &mut WebSocket,
-) -> Action {
+) -> WsHandlerAction {
     match midi_event_result {
         Ok(midi_event) => {
             let notif = Notification::MidiEvent(&midi_event);
@@ -68,37 +71,32 @@ async fn handle_midi_rx_result(
                 Ok(json) => json,
                 Err(err) => {
                     tracing::error!(target: "web", ?err, "failed to serialize notification");
-                    return Action::Continue;
+                    return WsHandlerAction::Continue;
                 }
             };
 
             if socket.send(Message::Text(json.into())).await.is_err() {
-                Action::Exit
+                WsHandlerAction::Exit
             } else {
-                Action::Continue
+                WsHandlerAction::Continue
             }
         }
         Err(RecvError::Lagged(count)) => {
             tracing::warn!(target: "web", count, "notification websocket receiver lagged");
-            Action::Continue
+            WsHandlerAction::Continue
         }
-        Err(RecvError::Closed) => Action::Exit,
+        Err(RecvError::Closed) => WsHandlerAction::Exit,
     }
 }
 
-fn handle_socket_rx_result(message: Option<Result<Message, axum::Error>>) -> Action {
+fn handle_socket_rx_result(message: Option<Result<Message, axum::Error>>) -> WsHandlerAction {
     match message {
-        Some(Ok(Message::Close(_))) => Action::Exit,
-        Some(Ok(_)) => Action::Continue,
+        Some(Ok(Message::Close(_))) => WsHandlerAction::Exit,
+        Some(Ok(_)) => WsHandlerAction::Continue,
         Some(Err(err)) => {
             tracing::error!(target: "web", ?err, "notification websocket error");
-            Action::Exit
+            WsHandlerAction::Exit
         }
-        None => Action::Exit,
+        None => WsHandlerAction::Exit,
     }
-}
-
-enum Action {
-    Continue,
-    Exit,
 }

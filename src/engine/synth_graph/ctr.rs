@@ -8,7 +8,9 @@ use utoipa::ToSchema;
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct Slot {
+    #[schema(required)]
     pub synth_id: Option<SynthId>,
+
     pub enabled: bool,
     pub key_transform: MidiKeyTransform,
     pub channel_filter: MidiFilter,

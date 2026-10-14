@@ -231,7 +231,6 @@ mod tests {
     fn midi_iterator_continues_past_removed_and_unassigned_slots() {
         let graph = graph_with_a_removed_slot_and_an_unassigned_slot();
         let event = MidiEvent {
-            timestamp: None,
             channel: 0,
             kind: MidiEventKind::NoteOn { key: 60, velocity: 100 },
         };

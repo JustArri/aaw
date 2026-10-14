@@ -17,62 +17,68 @@ pub mod stored;
 pub mod synth_graph;
 // TODO: make mods private?
 
-pub async fn create_engine(
-    project: stored::Project,
-    cmd_capacity: usize,
-    midi_capacity: usize,
-    slot_capacity: usize,
-    synth_capacity: usize,
-) -> synths::Result<(rt::Engine, ctr::EngineHandle, ctr::Runtime)> {
-    let (cmd_tx, cmd_rx) = rt_channels::create_mpsc(cmd_capacity);
-    let (reply_tx, reply_rx) = rt_channels::create_spsc(cmd_capacity);
-    let (midi_tx, midi_rx) = rt_channels::create_notified_mpsc(midi_capacity);
-
-    let (ctr_synth_graph, rt_synth_graph) =
-        synth_graph::prepare(project.synth_graph, slot_capacity);
+pub async fn load(
+    stored: stored::Project,
+    max_synth_slots: usize,
+    max_synths_per_graph: usize,
+) -> synths::Result<(ctr::Project, rt::Project)> {
+    let (ctr_synth_graph, rt_synth_graph) = synth_graph::prepare(stored.synth_graph, max_synth_slots);
 
     let (ctr_dummy_graph, rt_dummy_graph) =
-        dummy_graph::prepare(project.dummy_graph, synth_capacity);
+        dummy_graph::prepare(stored.dummy_graph, max_synths_per_graph);
 
     let (ctr_fluid_graph, rt_fluid_graph) =
-        fluid_graph::prepare(project.fluid_graph, synth_capacity)
+        fluid_graph::prepare(stored.fluid_graph, max_synths_per_graph)
             .await
-            .unwrap_or_else(|_| fluid_graph::default(synth_capacity));
+            .unwrap_or_else(|_| fluid_graph::default(max_synths_per_graph));
 
     let (ctr_sfizz_graph, rt_sfizz_graph) =
-        sfizz_graph::prepare(project.sfizz_graph, synth_capacity)
+        sfizz_graph::prepare(stored.sfizz_graph, max_synths_per_graph)
             .await
-            .unwrap_or_else(|_| sfizz_graph::default(synth_capacity));
+            .unwrap_or_else(|_| sfizz_graph::default(max_synths_per_graph));
 
-    let rt_engine = rt::Engine {
-        synth_graph: rt_synth_graph,
-        dummy_graph: rt_dummy_graph,
-        fluid_graph: rt_fluid_graph,
-        sfizz_graph: rt_sfizz_graph,
-        audio_blocks: None,
-        midi_rx,
-        cmd_rx,
-        reply_tx,
-    };
-
-    let ctr_engine = ctr::Engine {
+    let ctr_project = ctr::Project {
         synth_graph: ctr_synth_graph,
         dummy_graph: ctr_dummy_graph,
         fluid_graph: ctr_fluid_graph,
         sfizz_graph: ctr_sfizz_graph,
     };
 
+    let rt_project = rt::Project {
+        synth_graph: rt_synth_graph,
+        dummy_graph: rt_dummy_graph,
+        fluid_graph: rt_fluid_graph,
+        sfizz_graph: rt_sfizz_graph,
+    };
+
+    Ok((ctr_project, rt_project))
+}
+
+pub async fn create_engine(
+    project: stored::Project,
+    cmd_capacity: usize,
+    midi_capacity: usize,
+    max_synth_slots: usize,
+    max_synths_per_graph: usize,
+) -> synths::Result<(rt::Engine, ctr::EngineHandle, ctr::Runtime)> {
+    let (cmd_tx, cmd_rx) = rt_channels::create_mpsc(cmd_capacity);
+    let (reply_tx, reply_rx) = rt_channels::create_spsc(cmd_capacity);
+    let (midi_tx, midi_rx) = rt_channels::create_notified_mpsc(midi_capacity);
     let pending_replies = Arc::new(Mutex::new(HashMap::new()));
 
-    let controller = ctr::EngineHandle {
+    let (ctr_project, rt_project) = load(project, max_synth_slots, max_synths_per_graph).await?;
+
+    let handle = ctr::EngineHandle {
         cmd_tx,
         pending_replies: Arc::clone(&pending_replies),
         midi_tx,
         next_cmd_id: Arc::new(AtomicU32::new(0)),
-        engine: Arc::new(RwLock::new(ctr_engine)),
+        project: Arc::new(RwLock::new(ctr_project)),
     };
 
     let runtime = ctr::Runtime { pending_replies, reply_rx };
 
-    Ok((rt_engine, controller, runtime))
+    let engine = rt::Engine { project: rt_project, audio_blocks: None, midi_rx, cmd_rx, reply_tx };
+
+    Ok((engine, handle, runtime))
 }

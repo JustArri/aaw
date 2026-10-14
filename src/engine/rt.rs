@@ -43,11 +43,15 @@ pub struct AudioBlocks {
     pub temp: AudioBlock,
 }
 
-pub struct Engine {
+pub struct Project {
     pub synth_graph: synth_graph::rt::Graph,
     pub dummy_graph: dummy_graph::rt::Graph,
     pub fluid_graph: fluid_graph::rt::Graph,
     pub sfizz_graph: sfizz_graph::rt::Graph,
+}
+
+pub struct Engine {
+    pub project: Project,
     pub audio_blocks: Option<AudioBlocks>,
     pub midi_rx: NotifiedRtConsumer<MidiEvent>,
     pub cmd_rx: RtConsumer<(u32, Command)>,
@@ -62,7 +66,7 @@ impl Engine {
     }
 
     pub fn set_sample_rate(&mut self, sample_rate: u32) {
-        self.dummy_graph.set_sample_rate(sample_rate);
+        self.project.dummy_graph.set_sample_rate(sample_rate);
     }
 
     pub fn create_buffers(&mut self, channel_count: usize, max_sample_count_per_channel: usize) {
@@ -83,66 +87,78 @@ impl Engine {
     fn dispatch_command(&mut self, cmd: Command) -> bool {
         match cmd {
             Command::Panic => {
-                self.dummy_graph.panic();
-                self.fluid_graph.panic();
-                self.sfizz_graph.panic();
+                self.project.dummy_graph.panic();
+                self.project.fluid_graph.panic();
+                self.project.sfizz_graph.panic();
                 true
             }
 
-            Command::DummyPush { synth } => self.dummy_graph.push(synth),
+            Command::DummyPush { synth } => self.project.dummy_graph.push(synth),
             Command::DummyRemove { synth_id } => {
-                let removed = self.dummy_graph.remove(synth_id);
+                let removed = self.project.dummy_graph.remove(synth_id);
                 if removed {
-                    self.synth_graph.remove_synth_references(SynthId(SynthKind::Dummy, synth_id));
+                    self.project
+                        .synth_graph
+                        .remove_synth_references(SynthId(SynthKind::Dummy, synth_id));
                 }
                 removed
             }
 
-            Command::FluidPush { synth } => self.fluid_graph.push(synth),
-            Command::FluidReplace { synth_id, synth } => self.fluid_graph.replace(synth_id, synth),
+            Command::FluidPush { synth } => self.project.fluid_graph.push(synth),
+            Command::FluidReplace { synth_id, synth } => {
+                self.project.fluid_graph.replace(synth_id, synth)
+            }
             Command::FluidRemove { synth_id } => {
-                let removed = self.fluid_graph.remove(synth_id);
+                let removed = self.project.fluid_graph.remove(synth_id);
                 if removed {
-                    self.synth_graph.remove_synth_references(SynthId(SynthKind::Fluid, synth_id));
+                    self.project
+                        .synth_graph
+                        .remove_synth_references(SynthId(SynthKind::Fluid, synth_id));
                 }
                 removed
             }
             Command::FluidSelectProgram { synth_id, bank, preset_id } => {
-                self.fluid_graph.select_program(synth_id, bank, preset_id)
+                self.project.fluid_graph.select_program(synth_id, bank, preset_id)
             }
 
-            Command::SfizzPush { synth } => self.sfizz_graph.push(synth),
-            Command::SfizzReplace { synth_id, synth } => self.sfizz_graph.replace(synth_id, synth),
+            Command::SfizzPush { synth } => self.project.sfizz_graph.push(synth),
+            Command::SfizzReplace { synth_id, synth } => {
+                self.project.sfizz_graph.replace(synth_id, synth)
+            }
             Command::SfizzRemove { synth_id } => {
-                let removed = self.sfizz_graph.remove(synth_id);
+                let removed = self.project.sfizz_graph.remove(synth_id);
                 if removed {
-                    self.synth_graph.remove_synth_references(SynthId(SynthKind::Dummy, synth_id));
+                    self.project
+                        .synth_graph
+                        .remove_synth_references(SynthId(SynthKind::Dummy, synth_id));
                 }
                 removed
             }
 
             Command::SetGlobalTransposition { transposition } => {
-                self.synth_graph.set_global_transposition(transposition);
+                self.project.synth_graph.set_global_transposition(transposition);
                 true
             }
 
-            Command::SynthSlotAppendNew => self.synth_graph.append_new(),
-            Command::SynthSlotRemove { slot_id } => self.synth_graph.remove(slot_id),
+            Command::SynthSlotAppendNew => self.project.synth_graph.append_new(),
+            Command::SynthSlotRemove { slot_id } => self.project.synth_graph.remove(slot_id),
             Command::SetSynth { slot_id, synth_id } => {
-                self.synth_graph.set_synth(slot_id, synth_id)
+                self.project.synth_graph.set_synth(slot_id, synth_id)
             }
-            Command::SetEnabled { slot_id, flag } => self.synth_graph.set_enabled(slot_id, flag),
+            Command::SetEnabled { slot_id, flag } => {
+                self.project.synth_graph.set_enabled(slot_id, flag)
+            }
             Command::SetKeyTransform { slot_id, transform } => {
-                self.synth_graph.set_key_transform(slot_id, transform)
+                self.project.synth_graph.set_key_transform(slot_id, transform)
             }
             Command::SetChannelFilter { slot_id, filter } => {
-                self.synth_graph.set_channel_filter(slot_id, filter)
+                self.project.synth_graph.set_channel_filter(slot_id, filter)
             }
             Command::SetControlChangeFilter { slot_id, filter } => {
-                self.synth_graph.set_cc_filter(slot_id, filter)
+                self.project.synth_graph.set_cc_filter(slot_id, filter)
             }
             Command::SetUseGlobalTransposition { slot_id, flag } => {
-                self.synth_graph.set_use_global_transposition(slot_id, flag)
+                self.project.synth_graph.set_use_global_transposition(slot_id, flag)
             }
         }
     }
@@ -154,13 +170,13 @@ impl Engine {
     }
 
     fn dispatch_midi_event(&mut self, event: MidiEvent) {
-        self.synth_graph.midi_handler_iter(event).for_each(
+        self.project.synth_graph.midi_handler_iter(event).for_each(
             |(SynthId(synth_kind, local_id), event)| match synth_kind {
-                SynthKind::Dummy => self.dummy_graph.handle_midi_event(local_id, event),
+                SynthKind::Dummy => self.project.dummy_graph.handle_midi_event(local_id, event),
                 SynthKind::Fluid => {
-                    let _ = self.fluid_graph.handle_midi_event(local_id, event);
+                    let _ = self.project.fluid_graph.handle_midi_event(local_id, event);
                 }
-                SynthKind::Sfizz => self.sfizz_graph.handle_midi_event(local_id, event),
+                SynthKind::Sfizz => self.project.sfizz_graph.handle_midi_event(local_id, event),
             },
         );
     }
@@ -177,16 +193,22 @@ impl Engine {
 
         audio_blocks.main.clear();
 
-        self.synth_graph.audio_renderer_iter().for_each(|SynthId(synth_kind, local_id)| {
+        self.project.synth_graph.audio_renderer_iter().for_each(|SynthId(synth_kind, local_id)| {
             match synth_kind {
                 SynthKind::Dummy => {
-                    self.dummy_graph.render_audio_block(local_id, &mut audio_blocks.temp)
+                    self.project.dummy_graph.render_audio_block(local_id, &mut audio_blocks.temp)
                 }
                 SynthKind::Fluid => {
-                    let _ = self.fluid_graph.render_audio_block(local_id, &mut audio_blocks.temp);
+                    let _ = self
+                        .project
+                        .fluid_graph
+                        .render_audio_block(local_id, &mut audio_blocks.temp);
                 }
                 SynthKind::Sfizz => {
-                    let _ = self.sfizz_graph.render_audio_block(local_id, &mut audio_blocks.temp);
+                    let _ = self
+                        .project
+                        .sfizz_graph
+                        .render_audio_block(local_id, &mut audio_blocks.temp);
                 }
             }
             audio_blocks.main.add_samples_from_unchecked(&audio_blocks.temp);
