@@ -1,11 +1,14 @@
 use crate::{
-    engine,
+    engine::{ctr::EngineHandle, rt::Engine},
     midi::{MidiEvent, MidiRuntime},
     rt_channels::NotifiedRtSharedProducer,
     server::api::audio::AudioOutputStream,
 };
-use std::sync::Arc;
-use tokio::sync::Mutex;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
+use tokio::sync::{Mutex, broadcast};
 use tower_http::compression::CompressionLayer;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_scalar::{Scalar, Servable};
@@ -14,11 +17,21 @@ pub mod api;
 
 #[derive(Clone)]
 pub struct AppState {
-    pub midi_tx: tokio::sync::broadcast::Sender<Arc<MidiEvent>>,
+    pub midi_tx: broadcast::Sender<Arc<MidiEvent>>,
     pub midi_runtime: Arc<Mutex<MidiRuntime>>,
     pub midi_event_senders: Arc<[NotifiedRtSharedProducer<MidiEvent>]>,
-    pub engine: Arc<std::sync::Mutex<engine::rt::Engine>>,
+    pub engine: Arc<Mutex<Engine>>,
+    pub engine_handle: EngineHandle,
     pub output_stream: Arc<Mutex<Option<(cpal::Stream, AudioOutputStream)>>>,
+    pub min_synth_slots: usize,
+    pub min_synths_per_graph: usize,
+    pub stream_error: Arc<AtomicBool>,
+}
+
+impl AppState {
+    pub fn stream_error(&self) -> bool {
+        self.stream_error.load(Ordering::Relaxed)
+    }
 }
 
 pub fn router() -> axum::Router<AppState> {

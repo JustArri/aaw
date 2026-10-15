@@ -191,8 +191,10 @@ async fn set_output_stream(
         drop(stream);
     }
 
-    let stream =
-        resolved_config.start_stream(Arc::clone(&app_state.engine)).map_err(map_audio_error)?;
+    let stream = resolved_config
+        .start_stream(Arc::clone(&app_state.engine), Arc::clone(&app_state.stream_error))
+        .await
+        .map_err(map_audio_error)?;
 
     *app_state.output_stream.lock().await = Some((stream, stream_info.clone()));
 
@@ -211,6 +213,7 @@ fn map_audio_error(err: audio::output::Error) -> (StatusCode, String) {
         Error::UnsupportedSampleFormat(_) => StatusCode::BAD_REQUEST,
         Error::FailedToBuildStream(_) => StatusCode::INTERNAL_SERVER_ERROR,
         Error::FailedToStartStream(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        Error::EngineInit(_) => StatusCode::INTERNAL_SERVER_ERROR,
     };
     (code, err.to_string())
 }

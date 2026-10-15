@@ -1,7 +1,8 @@
 use crate::engine::{ctr, dummy_graph, fluid_graph, sfizz_graph, synth_graph};
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
-#[derive(Default, Debug, Clone, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct Project {
     pub synth_graph: synth_graph::stored::Graph,
     pub dummy_graph: dummy_graph::stored::Graph,

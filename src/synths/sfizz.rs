@@ -155,7 +155,7 @@ impl Synth {
         Ok(())
     }
 
-    pub fn panic(&mut self) {
+    pub fn silence(&mut self) {
         unsafe { sys::sfizz_all_sound_off(self.synth.as_ptr()) };
     }
 

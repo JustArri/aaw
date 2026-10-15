@@ -1,8 +1,10 @@
 use crate::engine::{fluid_graph::ctr, graph::LocalSynthId};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use utoipa::ToSchema;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[schema(as = FluidSynth)]
 pub struct Synth {
     pub file_path: String,
 }
@@ -13,7 +15,8 @@ impl From<ctr::Synth> for Synth {
     }
 }
 
-#[derive(Default, Debug, Clone, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[schema(as = FluidGraph)]
 pub struct Graph {
     pub synths: HashMap<LocalSynthId, Synth>,
 }

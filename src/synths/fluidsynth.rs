@@ -216,7 +216,7 @@ impl Synth {
         )
     }
 
-    pub fn panic(&mut self) -> Result<()> {
+    pub fn silence(&mut self) -> Result<()> {
         native_result(
             unsafe { sys::fluid_synth_all_sounds_off(self.synth.as_ptr(), -1) },
             "FluidSynth all-notes-off failed",

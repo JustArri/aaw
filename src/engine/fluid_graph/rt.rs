@@ -29,9 +29,9 @@ impl Graph {
         let _ = self.retirement_thread.join_after_dropping(self.retirer);
     }
 
-    pub fn panic(&mut self) {
+    pub fn silence(&mut self) {
         for synth in self.synths.iter_values_mut() {
-            let _ = synth.panic();
+            let _ = synth.silence();
         }
     }
 

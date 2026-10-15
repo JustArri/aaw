@@ -1,16 +1,11 @@
 use crate::{
-    engine::{self, Command, dummy_graph, fluid_graph, sfizz_graph, synth_graph},
-    midi::MidiEvent,
-    rt_channels::{NotifiedRtSharedProducer, RtConsumer, RtSharedProducer},
+    engine::{self, Command, dummy_graph, fluid_graph, rt, sfizz_graph, synth_graph}, midi::MidiEvent, rt_channels::{NotifiedRtSharedProducer, RtConsumer},
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashMap,
-    sync::{
-        Arc,
-        atomic::{AtomicU32, Ordering},
-    },
-    time::Duration,
+    collections::HashMap, sync::{
+        Arc, atomic::{AtomicBool, AtomicU32, Ordering},
+    }, time::Duration,
 };
 use tokio::sync::{Mutex, RwLock, oneshot};
 use utoipa::ToSchema;
@@ -30,6 +25,9 @@ pub enum EngineError {
 
     #[error("command reply channel closed")]
     ReplyChannelClosed,
+
+    #[error("engine paused, command discarded")]
+    EnginePaused,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -40,8 +38,9 @@ pub struct Project {
     pub sfizz_graph: sfizz_graph::ctr::Graph,
 }
 
+#[derive(Clone)]
 pub struct EngineHandle {
-    pub cmd_tx: RtSharedProducer<(u32, Command)>,
+    pub cmd_tx: NotifiedRtSharedProducer<(u32, Command)>,
     pub pending_replies: Arc<Mutex<HashMap<u32, oneshot::Sender<bool>>>>,
     pub midi_tx: NotifiedRtSharedProducer<MidiEvent>,
     pub next_cmd_id: Arc<AtomicU32>,
@@ -73,19 +72,46 @@ impl EngineHandle {
     pub async fn save_project(&self) -> engine::stored::Project {
         (&*self.project.read().await).into()
     }
+
+    pub async fn replace_project(
+        &self,
+        ctr: engine::ctr::Project,
+        rt: engine::rt::Project,
+    ) -> Result<(), EngineError> {
+        self.command(Command::ReplaceProject { project: Box::new(rt) }).await?;
+        self.pending_replies.lock().await.clear();
+        *self.project.write().await = ctr;
+        Ok(())
+    }
 }
 
 pub struct Runtime {
     pub pending_replies: Arc<Mutex<HashMap<u32, oneshot::Sender<bool>>>>,
     pub reply_rx: RtConsumer<(u32, bool)>,
+    pub stream_error: Arc<AtomicBool>,
+    pub cmd_notify: Arc<tokio::sync::Notify>,
+    pub midi_notify: Arc<tokio::sync::Notify>,
+    pub engine: Arc<Mutex<rt::Engine>>,
 }
 
 impl Runtime {
-    pub async fn update(&mut self) {
+    pub async fn process_replies(&mut self) {
         while let Ok((cmd_id, reply)) = self.reply_rx.pop() {
             if let Some(reply_tx) = self.pending_replies.lock().await.remove(&cmd_id) {
                 let _ = reply_tx.send(reply);
             }
         }
+    }
+
+    pub fn stream_error(&self) -> bool {
+        self.stream_error.load(Ordering::Relaxed)
+    }
+
+    pub fn cmd_notified(&self) -> tokio::sync::futures::Notified<'_> {
+        self.cmd_notify.notified()
+    }
+
+    pub fn midi_notified(&self) -> tokio::sync::futures::Notified<'_> {
+        self.midi_notify.notified()
     }
 }
