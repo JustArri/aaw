@@ -1,6 +1,6 @@
 use crate::{
     audio::block::AudioBlock,
-    engine::graph::{LocalSynthId, RETIREMENT_QUEUE_CAPACITY},
+    engine::graph::{LocalId, RETIREMENT_QUEUE_CAPACITY},
     memory::{
         Siv,
         retirement::{RetirementThread, Retirer},
@@ -13,11 +13,11 @@ use std::time::Duration;
 pub struct Graph {
     pub retirer: Retirer<synths::Sfizz>,
     pub retirement_thread: RetirementThread,
-    pub synths: Siv<synths::Sfizz, LocalSynthId>,
+    pub synths: Siv<synths::Sfizz, LocalId>,
 }
 
 impl Graph {
-    pub fn new(synths: Siv<synths::Sfizz, LocalSynthId>) -> Self {
+    pub fn new(synths: Siv<synths::Sfizz, LocalId>) -> Self {
         let (retirer, retirement_thread) =
             RetirementThread::spawn(RETIREMENT_QUEUE_CAPACITY, Duration::from_millis(10))
                 .expect("failed to spawn retirement thread");
@@ -42,7 +42,7 @@ impl Graph {
         Ok(())
     }
 
-    pub fn handle_midi_event(&mut self, id: LocalSynthId, event: MidiEvent) {
+    pub fn handle_midi_event(&mut self, id: LocalId, event: MidiEvent) {
         if let Some(synth) = self.synths.get_mut(id) {
             synth.handle_midi_event(event);
         }
@@ -50,7 +50,7 @@ impl Graph {
 
     pub fn render_audio_block(
         &mut self,
-        id: LocalSynthId,
+        id: LocalId,
         output: &mut AudioBlock,
     ) -> synths::Result<()> {
         if let Some(synth) = self.synths.get_mut(id) {
@@ -68,7 +68,7 @@ impl Graph {
         true
     }
 
-    pub fn replace(&mut self, synth_id: LocalSynthId, synth: synths::Sfizz) -> bool {
+    pub fn replace(&mut self, synth_id: LocalId, synth: synths::Sfizz) -> bool {
         match self.synths.try_replace(synth_id, synth) {
             Ok(previous) => {
                 self.retirer.retire_or_leak(previous);
@@ -81,7 +81,7 @@ impl Graph {
         }
     }
 
-    pub fn remove(&mut self, synth_id: LocalSynthId) -> bool {
+    pub fn remove(&mut self, synth_id: LocalId) -> bool {
         if let Some(synth) = self.synths.try_remove(synth_id) {
             self.retirer.retire_or_leak(synth);
             true

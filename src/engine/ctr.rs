@@ -1,11 +1,21 @@
 use crate::{
-    engine::{self, Command, dummy_graph, fluid_graph, rt, sfizz_graph, synth_graph}, midi::MidiEvent, rt_channels::{NotifiedRtSharedProducer, RtConsumer},
+    engine::{
+        self, Command, dummy_graph, fluid_graph,
+        graph::LocalId,
+        instrument_graph::{self, SynthId},
+        rt, sfizz_graph,
+    },
+    midi::{MidiEvent, MidiFilter, MidiKeyTransform},
+    rt_channels::{NotifiedRtSharedProducer, RtConsumer},
 };
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashMap, sync::{
-        Arc, atomic::{AtomicBool, AtomicU32, Ordering},
-    }, time::Duration,
+    collections::HashMap,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicU32, Ordering},
+    },
+    time::Duration,
 };
 use tokio::sync::{Mutex, RwLock, oneshot};
 use utoipa::ToSchema;
@@ -32,7 +42,7 @@ pub enum EngineError {
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct Project {
-    pub synth_graph: synth_graph::ctr::Graph,
+    pub instrument_graph: instrument_graph::ctr::Graph,
     pub dummy_graph: dummy_graph::ctr::Graph,
     pub fluid_graph: fluid_graph::ctr::Graph,
     pub sfizz_graph: sfizz_graph::ctr::Graph,
@@ -78,9 +88,139 @@ impl EngineHandle {
         ctr: engine::ctr::Project,
         rt: engine::rt::Project,
     ) -> Result<(), EngineError> {
-        self.command(Command::ReplaceProject { project: Box::new(rt) }).await?;
+        let mut project = self.project.write().await;
+
+        if !self.command(Command::ReplaceProject { project: Box::new(rt) }).await? {
+            return Err(EngineError::Rejected);
+        }
+
         self.pending_replies.lock().await.clear();
-        *self.project.write().await = ctr;
+        *project = ctr;
+        Ok(())
+    }
+
+    pub async fn set_global_transposition(&self, transposition: i8) -> Result<(), EngineError> {
+        let mut project = self.project.write().await;
+
+        if !self.command(Command::SetGlobalTransposition { transposition }).await? {
+            return Err(EngineError::Rejected);
+        }
+
+        project.instrument_graph.set_global_transposition(transposition);
+        Ok(())
+    }
+
+    pub async fn instrument_slot_append_new(&self) -> Result<(), EngineError> {
+        let mut project = self.project.write().await;
+
+        if !self.command(Command::InstrumentSlotAppendNew).await? {
+            return Err(EngineError::Rejected);
+        }
+
+        project.instrument_graph.append_new();
+        Ok(())
+    }
+
+    pub async fn instrument_slot_remove(&self, slot_id: LocalId) -> Result<(), EngineError> {
+        let mut project = self.project.write().await;
+
+        if !self.command(Command::InstrumentSlotRemove { slot_id }).await? {
+            return Err(EngineError::Rejected);
+        }
+
+        project.instrument_graph.remove(slot_id);
+        Ok(())
+    }
+
+    pub async fn set_synth(
+        &self,
+        slot_id: LocalId,
+        synth_id: Option<SynthId>,
+    ) -> Result<(), EngineError> {
+        let mut project = self.project.write().await;
+
+        if !self.command(Command::SetSynth { slot_id, synth_id }).await? {
+            return Err(EngineError::Rejected);
+        }
+
+        project.instrument_graph.set_synth(slot_id, synth_id);
+        Ok(())
+    }
+
+    pub async fn set_enabled(&self, slot_id: LocalId, flag: bool) -> Result<(), EngineError> {
+        let mut project = self.project.write().await;
+
+        if !self.command(Command::SetEnabled { slot_id, flag }).await? {
+            return Err(EngineError::Rejected);
+        }
+
+        project.instrument_graph.set_enabled(slot_id, flag);
+        Ok(())
+    }
+
+    pub async fn set_key_transform(
+        &self,
+        slot_id: LocalId,
+        transform: MidiKeyTransform,
+    ) -> Result<(), EngineError> {
+        let mut project = self.project.write().await;
+
+        if !self
+            .command(Command::SetKeyTransform { slot_id, transform: transform.compile() })
+            .await?
+        {
+            return Err(EngineError::Rejected);
+        }
+
+        project.instrument_graph.set_key_transform(slot_id, transform);
+        Ok(())
+    }
+
+    pub async fn set_channel_filter(
+        &self,
+        slot_id: LocalId,
+        filter: MidiFilter,
+    ) -> Result<(), EngineError> {
+        let mut project = self.project.write().await;
+
+        if !self.command(Command::SetChannelFilter { slot_id, mask: filter.as_u16() }).await? {
+            return Err(EngineError::Rejected);
+        }
+
+        project.instrument_graph.set_channel_filter(slot_id, filter);
+        Ok(())
+    }
+
+    pub async fn set_cc_filter(
+        &self,
+        slot_id: LocalId,
+        filter: MidiFilter,
+    ) -> Result<(), EngineError> {
+        let mut project = self.project.write().await;
+
+        if !self
+            .command(Command::SetControlChangeFilter { slot_id, mask: filter.as_u128() })
+            .await?
+        {
+            return Err(EngineError::Rejected);
+        }
+
+        project.instrument_graph.set_cc_filter(slot_id, filter);
+        Ok(())
+    }
+
+    pub async fn set_use_global_transposition(
+        &self,
+        slot_id: LocalId,
+        flag: bool,
+    ) -> Result<(), EngineError> {
+        let mut project = self.project.write().await;
+
+        if !self.command(Command::SetUseGlobalTransposition { slot_id, flag }).await? {
+            return Err(EngineError::Rejected);
+        }
+
+        project.instrument_graph.set_use_global_transposition(slot_id, flag);
         Ok(())
     }
 }

@@ -3,6 +3,10 @@ name = "aaw"
 version = "0.1.0"
 edition = "2024"
 
+[workspace]
+members = ["crates/migrations-derive"]
+resolver = "3"
+
 [features]
 default = ["desktop-audio"]
 desktop-audio = ["cpal/pulseaudio", "rtkit"]
@@ -11,6 +15,7 @@ rtkit = ["cpal/realtime-dbus"]
 [dependencies]
 anyhow = "1"
 thiserror = "2"
+migrations-derive = { path = "crates/migrations-derive" }
 
 tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"

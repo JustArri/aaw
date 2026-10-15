@@ -1,5 +1,5 @@
 use crate::{
-    engine::graph::{DEFAULT_SAMPLE_RATE, LocalSynthId},
+    engine::graph::{DEFAULT_SAMPLE_RATE, LocalId},
     memory::Siv,
     synths,
 };
@@ -13,8 +13,8 @@ pub async fn prepare(
     stored: stored::Graph,
     num_slots: usize,
 ) -> synths::Result<(ctr::Graph, rt::Graph)> {
-    let mut ctr_synths: HashMap<LocalSynthId, ctr::Synth> = HashMap::new();
-    let mut rt_synths: HashMap<LocalSynthId, synths::Fluid> = HashMap::new();
+    let mut ctr_synths: HashMap<LocalId, ctr::Synth> = HashMap::new();
+    let mut rt_synths: HashMap<LocalId, synths::Fluid> = HashMap::new();
 
     for (local_id, stored_synth) in stored.synths {
         let mut synth =

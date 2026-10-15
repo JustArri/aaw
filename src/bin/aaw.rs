@@ -1,7 +1,7 @@
 use aaw::{
     APP_VERSION, PACKAGE_NAME,
     audio::{self, params::DeviceCfgSelection},
-    engine::{self},
+    engine::{self, stored::ProjectVersioned},
     midi::MidiRuntime,
     rt_channels,
     server::{AppState, api::audio::AudioOutputStream},
@@ -54,9 +54,9 @@ struct Args {
     #[arg(
         long,
         default_value_t = 32,
-        help = "Minimum synth-slots capacity (can be overriden by a project)"
+        help = "Minimum instrument capacity (can be overriden by a project)"
     )]
-    min_synth_slots: usize,
+    min_instrument_slots: usize,
 
     #[arg(
         long,
@@ -64,6 +64,9 @@ struct Args {
         help = "Minimum synths-per-graph capacity (can be overriden by a project)"
     )]
     min_synths_per_graph: usize,
+
+    #[arg(long, help = "Create a migrated copy of specified project")]
+    migrate_project: Option<PathBuf>,
 }
 
 #[tokio::main]
@@ -73,9 +76,37 @@ async fn main() {
     aaw::subscribe_tracing("aaw=info,midi-event=info,midi-runtime=info");
     info!("** Arri's Audio Workstation **");
 
-    if let Err(err) = run(args).await {
+    let result = match &args.migrate_project {
+        Some(path) => migrate_project(path).await,
+        None => run(args).await,
+    };
+
+    if let Err(err) = result {
         error!("{err:#}");
     }
+}
+
+async fn migrate_project(path: &Path) -> anyhow::Result<()> {
+    let content = tokio::fs::read(&path).await.context("failed to load file")?;
+    let content = String::from_utf8_lossy(&content);
+
+    let orig_project: ProjectVersioned =
+        serde_json::from_str(&content).context("failed to parse file")?;
+
+    info!("old version: {}", orig_project.version().unwrap_or(ProjectVersioned::CURRENT_VERSION));
+    info!("new version: {}", ProjectVersioned::CURRENT_VERSION);
+
+    let migrated_project = orig_project.migrate();
+    let value = serde_json::to_string_pretty(&migrated_project).context("failed to serialize:")?;
+    let stem = path.file_stem().unwrap().to_str().unwrap();
+    let new_path = path.with_file_name(format!("{stem}.migrated.json"));
+
+    tokio::fs::write(&new_path, value)
+        .await
+        .with_context(|| format!("failed to save file '{}'", new_path.display()))?;
+
+    info!("file generated: {}", new_path.display());
+    Ok(())
 }
 
 async fn run(args: Args) -> anyhow::Result<()> {
@@ -100,7 +131,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
         Arc::clone(&stream_error),
         args.cmd_capacity,
         args.midi_to_engine_capacity,
-        args.min_synth_slots,
+        args.min_instrument_slots,
         args.min_synths_per_graph,
     )
     .await
@@ -135,7 +166,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
         engine,
         engine_handle: engine_handle.clone(),
         output_stream: Arc::clone(&output_stream),
-        min_synth_slots: args.min_synth_slots,
+        min_instrument_slots: args.min_instrument_slots,
         min_synths_per_graph: args.min_synths_per_graph,
         stream_error: Arc::clone(&stream_error),
     });
@@ -231,7 +262,8 @@ async fn load_opt<T: DeserializeOwned>(
     root: &Path,
     (path, subject): (impl AsRef<Path>, &str),
 ) -> Option<T> {
-    let full_path = root.join(&path);
+    let full_path =
+        if path.as_ref().is_relative() { root.join(&path) } else { path.as_ref().into() };
 
     info!(path = %full_path.display(), "loading {subject}...");
     let content = tokio::fs::read(&full_path).await.ok()?;

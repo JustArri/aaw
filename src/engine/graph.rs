@@ -5,34 +5,21 @@ pub const DEFAULT_SAMPLE_RATE: u32 = 48000;
 pub const DEFAULT_BLOCK_SIZE: usize = 128;
 pub const RETIREMENT_QUEUE_CAPACITY: usize = 16;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-pub enum SynthKind {
-    Dummy,
-    Fluid,
-    Sfizz,
-}
-
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, ToSchema,
 )]
 #[serde(transparent)]
 #[schema(value_type = usize)]
-pub struct LocalSynthId(pub usize);
+pub struct LocalId(pub usize);
 
-impl From<usize> for LocalSynthId {
+impl From<usize> for LocalId {
     fn from(id: usize) -> Self {
         Self(id)
     }
 }
 
-impl From<LocalSynthId> for usize {
-    fn from(id: LocalSynthId) -> Self {
+impl From<LocalId> for usize {
+    fn from(id: LocalId) -> Self {
         id.0
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-pub struct SynthId {
-    pub kind: SynthKind,
-    pub id: LocalSynthId
 }

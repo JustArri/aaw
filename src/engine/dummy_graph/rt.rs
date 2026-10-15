@@ -1,6 +1,6 @@
 use crate::{
     audio::block::AudioBlock,
-    engine::graph::{LocalSynthId, RETIREMENT_QUEUE_CAPACITY},
+    engine::graph::{LocalId, RETIREMENT_QUEUE_CAPACITY},
     memory::{
         Siv,
         retirement::{RetirementThread, Retirer},
@@ -13,11 +13,11 @@ use std::time::Duration;
 pub struct Graph {
     pub retirer: Retirer<synths::Dummy>,
     pub retirement_thread: RetirementThread,
-    pub synths: Siv<synths::Dummy, LocalSynthId>,
+    pub synths: Siv<synths::Dummy, LocalId>,
 }
 
 impl Graph {
-    pub fn new(synths: Siv<synths::Dummy, LocalSynthId>) -> Self {
+    pub fn new(synths: Siv<synths::Dummy, LocalId>) -> Self {
         let (retirer, retirement_thread) =
             RetirementThread::spawn(RETIREMENT_QUEUE_CAPACITY, Duration::from_millis(10))
                 .expect("failed to spawn retirement thread");
@@ -41,13 +41,13 @@ impl Graph {
         }
     }
 
-    pub fn handle_midi_event(&mut self, id: LocalSynthId, event: MidiEvent) {
+    pub fn handle_midi_event(&mut self, id: LocalId, event: MidiEvent) {
         if let Some(synth) = self.synths.get_mut(id) {
             synth.handle_midi_event(event);
         }
     }
 
-    pub fn render_audio_block(&mut self, id: LocalSynthId, output: &mut AudioBlock) {
+    pub fn render_audio_block(&mut self, id: LocalId, output: &mut AudioBlock) {
         if let Some(synth) = self.synths.get_mut(id) {
             synth.render_audio_block(output);
         }
@@ -62,7 +62,7 @@ impl Graph {
         true
     }
 
-    pub fn remove(&mut self, synth_id: LocalSynthId) -> bool {
+    pub fn remove(&mut self, synth_id: LocalId) -> bool {
         if let Some(synth) = self.synths.try_remove(synth_id) {
             self.retirer.retire_or_leak(synth);
             true

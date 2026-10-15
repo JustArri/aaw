@@ -1,15 +1,15 @@
-use crate::engine::synth_graph::{
-    SlotId,
-    ctr::{self, Slot},
+use crate::engine::{
+    graph::LocalId,
+    instrument_graph::ctr::{self, Slot},
 };
-use serde::{Deserialize, Serialize};
+use migrations_derive::Migrations;
 use std::collections::HashMap;
-use utoipa::ToSchema;
 
-#[derive(Default, Debug, Clone, Serialize, Deserialize, ToSchema)]
-#[schema(as = SynthGraph)]
+#[derive(Default, Debug, Clone, Migrations)]
+#[migrations(version = 1, version_type = u32)]
+#[schema(as = InstrumentGraph)]
 pub struct Graph {
-    pub slots: HashMap<SlotId, Slot>,
+    pub slots: HashMap<LocalId, Slot>,
     pub global_transposition: i8,
 }
 
