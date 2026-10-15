@@ -15,6 +15,8 @@ pub enum SynthKind {
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, ToSchema,
 )]
+#[serde(transparent)]
+#[schema(value_type = usize)]
 pub struct LocalSynthId(pub usize);
 
 impl From<usize> for LocalSynthId {
@@ -30,4 +32,7 @@ impl From<LocalSynthId> for usize {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-pub struct SynthId(pub SynthKind, pub LocalSynthId);
+pub struct SynthId {
+    pub kind: SynthKind,
+    pub id: LocalSynthId
+}

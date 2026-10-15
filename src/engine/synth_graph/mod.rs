@@ -10,6 +10,8 @@ pub mod stored;
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, ToSchema,
 )]
+#[serde(transparent)]
+#[schema(value_type = usize)]
 pub struct SlotId(pub usize);
 
 impl From<usize> for SlotId {

@@ -2,7 +2,10 @@ use crate::{rt_channels, synths};
 use rt::Command;
 use std::{
     collections::HashMap,
-    sync::{Arc, atomic::AtomicU32},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicU32},
+    },
 };
 use tokio::sync::{Mutex, RwLock};
 
@@ -22,7 +25,8 @@ pub async fn load(
     max_synth_slots: usize,
     max_synths_per_graph: usize,
 ) -> synths::Result<(ctr::Project, rt::Project)> {
-    let (ctr_synth_graph, rt_synth_graph) = synth_graph::prepare(stored.synth_graph, max_synth_slots);
+    let (ctr_synth_graph, rt_synth_graph) =
+        synth_graph::prepare(stored.synth_graph, max_synth_slots);
 
     let (ctr_dummy_graph, rt_dummy_graph) =
         dummy_graph::prepare(stored.dummy_graph, max_synths_per_graph);
@@ -56,12 +60,13 @@ pub async fn load(
 
 pub async fn create_engine(
     project: stored::Project,
+    stream_error: Arc<AtomicBool>,
     cmd_capacity: usize,
     midi_capacity: usize,
     max_synth_slots: usize,
     max_synths_per_graph: usize,
-) -> synths::Result<(rt::Engine, ctr::EngineHandle, ctr::Runtime)> {
-    let (cmd_tx, cmd_rx) = rt_channels::create_mpsc(cmd_capacity);
+) -> synths::Result<(Arc<Mutex<rt::Engine>>, ctr::EngineHandle, ctr::Runtime)> {
+    let (cmd_tx, cmd_rx) = rt_channels::create_notified_mpsc(cmd_capacity);
     let (reply_tx, reply_rx) = rt_channels::create_spsc(cmd_capacity);
     let (midi_tx, midi_rx) = rt_channels::create_notified_mpsc(midi_capacity);
     let pending_replies = Arc::new(Mutex::new(HashMap::new()));
@@ -76,9 +81,19 @@ pub async fn create_engine(
         project: Arc::new(RwLock::new(ctr_project)),
     };
 
-    let runtime = ctr::Runtime { pending_replies, reply_rx };
-
+    let (cmd_rx, cmd_notify) = cmd_rx.unwrap();
+    let (midi_rx, midi_notify) = midi_rx.unwrap();
     let engine = rt::Engine { project: rt_project, audio_blocks: None, midi_rx, cmd_rx, reply_tx };
+    let engine = Arc::new(Mutex::new(engine));
+
+    let runtime = ctr::Runtime {
+        pending_replies,
+        reply_rx,
+        cmd_notify,
+        midi_notify,
+        stream_error,
+        engine: Arc::clone(&engine),
+    };
 
     Ok((engine, handle, runtime))
 }

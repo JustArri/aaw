@@ -82,7 +82,18 @@ pub fn spawn_engine_runtime_task(
         loop {
             tokio::select! {
                 _ = stop.cancelled() => break,
-                _ = interval.tick() => runtime.update().await,
+
+                _ = interval.tick() => runtime.process_replies().await,
+
+                _ = runtime.cmd_notified(), if runtime.stream_error() => {
+                    tracing::info!(target: "engine-runtime", "idle processing commands");
+                    runtime.engine.lock().await.idle_process_commands();
+                }
+
+                _ = runtime.midi_notified(), if runtime.stream_error() => {
+                    tracing::info!(target: "engine-runtime", "idle processing midi events");
+                    runtime.engine.lock().await.idle_process_midi_events();
+                }
             }
         }
     })

@@ -7,12 +7,14 @@ use crate::{
         },
     },
     engine::rt::Engine,
+    synths,
 };
 use cpal::{
     BufferSize,
     traits::{DeviceTrait, HostTrait, StreamTrait},
 };
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, atomic::AtomicBool};
+use tokio::sync::Mutex;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -42,6 +44,9 @@ pub enum Error {
 
     #[error("failed to start audio output stream")]
     FailedToStartStream(#[source] cpal::Error),
+
+    #[error("failed to init engine: {0}")]
+    EngineInit(#[source] synths::Error),
 }
 
 type StdResult<T, E> = std::result::Result<T, E>;
@@ -70,44 +75,56 @@ impl ResolvedConfig {
         self.config
     }
 
-    pub fn start_stream(self, engine: Arc<Mutex<Engine>>) -> Result<cpal::Stream> {
+    pub async fn start_stream(
+        self,
+        engine: Arc<Mutex<Engine>>,
+        stream_error: Arc<AtomicBool>,
+    ) -> Result<cpal::Stream> {
         use cpal::SampleFormat as Fmt;
+
+        let device = &self.device;
+        let config = self.config;
+        let stream_error2 = Arc::clone(&stream_error);
+
         let stream = match self.sample_format {
-            Fmt::I8 => build_stream::<i8>(&self.device, self.config, engine),
-            Fmt::F32 => build_stream::<f32>(&self.device, self.config, engine),
-            Fmt::I16 => build_stream::<i16>(&self.device, self.config, engine),
-            Fmt::I24 => build_stream::<cpal::I24>(&self.device, self.config, engine),
-            Fmt::I32 => build_stream::<i32>(&self.device, self.config, engine),
-            Fmt::I64 => build_stream::<i64>(&self.device, self.config, engine),
-            Fmt::U8 => build_stream::<u8>(&self.device, self.config, engine),
-            Fmt::U16 => build_stream::<u16>(&self.device, self.config, engine),
-            Fmt::U24 => build_stream::<cpal::U24>(&self.device, self.config, engine),
-            Fmt::U32 => build_stream::<u32>(&self.device, self.config, engine),
-            Fmt::U64 => build_stream::<u64>(&self.device, self.config, engine),
-            Fmt::F64 => build_stream::<f64>(&self.device, self.config, engine),
+            Fmt::I8 => build_stream::<i8>(device, config, engine, stream_error).await,
+            Fmt::F32 => build_stream::<f32>(device, config, engine, stream_error).await,
+            Fmt::I16 => build_stream::<i16>(device, config, engine, stream_error).await,
+            Fmt::I24 => build_stream::<cpal::I24>(device, config, engine, stream_error).await,
+            Fmt::I32 => build_stream::<i32>(device, config, engine, stream_error).await,
+            Fmt::I64 => build_stream::<i64>(device, config, engine, stream_error).await,
+            Fmt::U8 => build_stream::<u8>(device, config, engine, stream_error).await,
+            Fmt::U16 => build_stream::<u16>(device, config, engine, stream_error).await,
+            Fmt::U24 => build_stream::<cpal::U24>(device, config, engine, stream_error).await,
+            Fmt::U32 => build_stream::<u32>(device, config, engine, stream_error).await,
+            Fmt::U64 => build_stream::<u64>(device, config, engine, stream_error).await,
+            Fmt::F64 => build_stream::<f64>(device, config, engine, stream_error).await,
             sample_format => Err(Error::UnsupportedSampleFormat(sample_format)),
         }?;
+
         stream.play().map_err(Error::FailedToStartStream)?;
+        stream_error2.store(false, std::sync::atomic::Ordering::Relaxed);
+
         Ok(stream)
     }
 }
 
-fn build_stream<T>(
+async fn build_stream<T>(
     device: &cpal::Device,
     config: cpal::StreamConfig,
     engine: Arc<Mutex<Engine>>,
+    stream_error: Arc<AtomicBool>,
 ) -> Result<cpal::Stream>
 where
     T: cpal::Sample + cpal::SizedSample + cpal::FromSample<f32>,
 {
     let channel_count = config.channels as usize;
     let max_sample_count = 16384;
-
-    {
-        let mut engine = engine.lock().expect("engine poisoned");
-        engine.create_buffers(channel_count, max_sample_count);
-        engine.set_sample_rate(config.sample_rate);
-    }
+    engine
+        .lock()
+        .await
+        .init(channel_count, max_sample_count, config.sample_rate)
+        .map_err(Error::EngineInit)?;
 
     let mut scratch = vec![0.0_f32; channel_count * max_sample_count];
 
@@ -121,18 +138,19 @@ where
                 }
 
                 let scratch = &mut scratch[..output.len()];
-                engine.lock().expect("engine poisoned").run(scratch);
+                engine.blocking_lock().run(scratch);
 
                 for (dst, src) in output.iter_mut().zip(scratch.iter().copied()) {
                     *dst = T::from_sample(src);
                 }
             },
             move |_| {
-                //TODO: notify engine on error
+                stream_error.store(true, std::sync::atomic::Ordering::Relaxed);
             },
             None,
         )
         .map_err(Error::FailedToBuildStream)?;
+
     Ok(stream)
 }
 

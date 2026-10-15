@@ -64,13 +64,13 @@ impl Dummy {
             MidiEventKind::ControlChange { controller, value: _ }
                 if controller == ControlChange::AllNotesOff as u8 =>
             {
-                self.panic();
+                self.silence();
             }
             _ => {}
         }
     }
 
-    pub fn panic(&mut self) {
+    pub fn silence(&mut self) {
         self.voices.clear();
     }
 

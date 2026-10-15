@@ -7,12 +7,14 @@ use crate::{
         synth_graph::{self, SlotId},
     },
     midi::{MidiEvent, MidiFilter, MidiKeyTransform},
-    rt_channels::{NotifiedRtConsumer, RtConsumer, RtProducer},
+    rt_channels::{RtConsumer, RtProducer},
     synths,
 };
 
 pub enum Command {
-    Panic,
+    ReplaceProject { project: Box<Project> },
+
+    Silence,
 
     DummyPush { synth: synths::Dummy },
     DummyRemove { synth_id: LocalSynthId },
@@ -53,20 +55,43 @@ pub struct Project {
 pub struct Engine {
     pub project: Project,
     pub audio_blocks: Option<AudioBlocks>,
-    pub midi_rx: NotifiedRtConsumer<MidiEvent>,
+    pub midi_rx: RtConsumer<MidiEvent>,
     pub cmd_rx: RtConsumer<(u32, Command)>,
     pub reply_tx: RtProducer<(u32, bool)>,
 }
 
 impl Engine {
+    pub fn init(
+        &mut self,
+        channel_count: usize,
+        max_sample_count_per_channel: usize,
+        sample_rate: u32,
+    ) -> synths::Result<()> {
+        self.silence();
+        self.create_buffers(channel_count, max_sample_count_per_channel);
+        self.set_sample_rate(sample_rate)?;
+        Ok(())
+    }
+
+    pub fn idle_process_commands(&mut self) {
+        self.dispatch_commands();
+    }
+
+    pub fn idle_process_midi_events(&mut self) {
+        self.dispatch_midi_events();
+    }
+
     pub fn run(&mut self, buffer: &mut [f32]) {
         self.dispatch_commands();
         self.dispatch_midi_events();
         self.render_next_audio_block(buffer);
     }
 
-    pub fn set_sample_rate(&mut self, sample_rate: u32) {
+    pub fn set_sample_rate(&mut self, sample_rate: u32) -> synths::Result<()> {
         self.project.dummy_graph.set_sample_rate(sample_rate);
+        self.project.fluid_graph.set_sample_rate(sample_rate)?;
+        self.project.sfizz_graph.set_sample_rate(sample_rate)?;
+        Ok(())
     }
 
     pub fn create_buffers(&mut self, channel_count: usize, max_sample_count_per_channel: usize) {
@@ -84,12 +109,21 @@ impl Engine {
         }
     }
 
+    fn silence(&mut self) {
+        self.project.dummy_graph.silence();
+        self.project.fluid_graph.silence();
+        self.project.sfizz_graph.silence();
+    }
+
     fn dispatch_command(&mut self, cmd: Command) -> bool {
         match cmd {
-            Command::Panic => {
-                self.project.dummy_graph.panic();
-                self.project.fluid_graph.panic();
-                self.project.sfizz_graph.panic();
+            Command::ReplaceProject { project } => {
+                self.project = *project;
+                true
+            }
+
+            Command::Silence => {
+                self.silence();
                 true
             }
 
@@ -99,7 +133,7 @@ impl Engine {
                 if removed {
                     self.project
                         .synth_graph
-                        .remove_synth_references(SynthId(SynthKind::Dummy, synth_id));
+                        .remove_synth_references(SynthId { kind: SynthKind::Dummy, id: synth_id });
                 }
                 removed
             }
@@ -113,7 +147,7 @@ impl Engine {
                 if removed {
                     self.project
                         .synth_graph
-                        .remove_synth_references(SynthId(SynthKind::Fluid, synth_id));
+                        .remove_synth_references(SynthId { kind: SynthKind::Fluid, id: synth_id });
                 }
                 removed
             }
@@ -130,7 +164,7 @@ impl Engine {
                 if removed {
                     self.project
                         .synth_graph
-                        .remove_synth_references(SynthId(SynthKind::Dummy, synth_id));
+                        .remove_synth_references(SynthId { kind: SynthKind::Dummy, id: synth_id });
                 }
                 removed
             }
@@ -164,19 +198,19 @@ impl Engine {
     }
 
     fn dispatch_midi_events(&mut self) {
-        while let Ok(event) = self.midi_rx.try_recv() {
+        while let Ok(event) = self.midi_rx.pop() {
             self.dispatch_midi_event(event);
         }
     }
 
     fn dispatch_midi_event(&mut self, event: MidiEvent) {
         self.project.synth_graph.midi_handler_iter(event).for_each(
-            |(SynthId(synth_kind, local_id), event)| match synth_kind {
-                SynthKind::Dummy => self.project.dummy_graph.handle_midi_event(local_id, event),
+            |(SynthId { kind, id }, event)| match kind {
+                SynthKind::Dummy => self.project.dummy_graph.handle_midi_event(id, event),
                 SynthKind::Fluid => {
-                    let _ = self.project.fluid_graph.handle_midi_event(local_id, event);
+                    let _ = self.project.fluid_graph.handle_midi_event(id, event);
                 }
-                SynthKind::Sfizz => self.project.sfizz_graph.handle_midi_event(local_id, event),
+                SynthKind::Sfizz => self.project.sfizz_graph.handle_midi_event(id, event),
             },
         );
     }
@@ -193,22 +227,16 @@ impl Engine {
 
         audio_blocks.main.clear();
 
-        self.project.synth_graph.audio_renderer_iter().for_each(|SynthId(synth_kind, local_id)| {
-            match synth_kind {
+        self.project.synth_graph.audio_renderer_iter().for_each(|SynthId { kind, id }| {
+            match kind {
                 SynthKind::Dummy => {
-                    self.project.dummy_graph.render_audio_block(local_id, &mut audio_blocks.temp)
+                    self.project.dummy_graph.render_audio_block(id, &mut audio_blocks.temp)
                 }
                 SynthKind::Fluid => {
-                    let _ = self
-                        .project
-                        .fluid_graph
-                        .render_audio_block(local_id, &mut audio_blocks.temp);
+                    let _ = self.project.fluid_graph.render_audio_block(id, &mut audio_blocks.temp);
                 }
                 SynthKind::Sfizz => {
-                    let _ = self
-                        .project
-                        .sfizz_graph
-                        .render_audio_block(local_id, &mut audio_blocks.temp);
+                    let _ = self.project.sfizz_graph.render_audio_block(id, &mut audio_blocks.temp);
                 }
             }
             audio_blocks.main.add_samples_from_unchecked(&audio_blocks.temp);

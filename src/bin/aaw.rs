@@ -12,7 +12,7 @@ use serde::{Serialize, de::DeserializeOwned};
 use std::{
     env,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, atomic::AtomicBool},
 };
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
@@ -54,16 +54,16 @@ struct Args {
     #[arg(
         long,
         default_value_t = 32,
-        help = "Default maximum number of synth slots (can be overriden by a project)"
+        help = "Minimum synth-slots capacity (can be overriden by a project)"
     )]
-    default_synth_slots: usize,
+    min_synth_slots: usize,
 
     #[arg(
         long,
         default_value_t = 32,
-        help = "Default maximum number of synths per graph (can be overriden by a project)"
+        help = "Minimum synths-per-graph capacity (can be overriden by a project)"
     )]
-    default_synths_per_graph: usize,
+    min_synths_per_graph: usize,
 }
 
 #[tokio::main]
@@ -92,18 +92,19 @@ async fn run(args: Args) -> anyhow::Result<()> {
     let (midi_relay_tx, midi_relay_rx) =
         rt_channels::create_notified_mpsc(args.midi_to_relay_capacity);
 
+    let stream_error = Arc::new(AtomicBool::new(true));
+
     let project = load_opt(&aaw_root_dir, CFG_LAST_PROJECT).await.unwrap_or_default();
     let (engine, engine_handle, engine_runtime) = engine::create_engine(
         project,
+        Arc::clone(&stream_error),
         args.cmd_capacity,
         args.midi_to_engine_capacity,
-        args.default_synth_slots,
-        args.default_synths_per_graph,
+        args.min_synth_slots,
+        args.min_synths_per_graph,
     )
     .await
     .context("failed to create engine")?;
-
-    let engine = Arc::new(std::sync::Mutex::new(engine));
 
     let midi_auto_connections = load_opt(&aaw_root_dir, CFG_MIDI_AC).await.unwrap_or_default();
     let midi_event_senders: Arc<[_]> = Arc::new([engine_handle.midi_tx.clone(), midi_relay_tx]);
@@ -115,18 +116,28 @@ async fn run(args: Args) -> anyhow::Result<()> {
 
     let stop = CancellationToken::new();
 
-    let output_stream = Arc::new(Mutex::new(
-        load_opt::<AudioOutputStream>(&aaw_root_dir, CFG_AUDIO_OUTPUT).await.and_then(|info| {
-            try_start_stream(info, Arc::clone(&engine)).inspect_err(|err| warn!("{err}")).ok()
-        }),
-    ));
+    let output_stream =
+        if let Some(info) = load_opt::<AudioOutputStream>(&aaw_root_dir, CFG_AUDIO_OUTPUT).await {
+            try_start_stream(info, Arc::clone(&engine), Arc::clone(&stream_error))
+                .await
+                .inspect_err(|err| warn!("{err}"))
+                .ok()
+        } else {
+            None
+        };
+
+    let output_stream = Arc::new(Mutex::new(output_stream));
 
     let root_router = aaw::server::router().with_state(AppState {
         midi_tx: midi_bc_tx.clone(),
         midi_runtime: Arc::clone(&midi_runtime),
         midi_event_senders,
         engine,
+        engine_handle: engine_handle.clone(),
         output_stream: Arc::clone(&output_stream),
+        min_synth_slots: args.min_synth_slots,
+        min_synths_per_graph: args.min_synths_per_graph,
+        stream_error: Arc::clone(&stream_error),
     });
 
     let relay_handle = aaw::spawn_midi_relay_task(stop.clone(), midi_relay_rx, midi_bc_tx);
@@ -235,9 +246,10 @@ async fn load_opt<T: DeserializeOwned>(
     }
 }
 
-fn try_start_stream(
+async fn try_start_stream(
     stream_info: AudioOutputStream,
-    engine: Arc<std::sync::Mutex<engine::rt::Engine>>,
+    engine: Arc<Mutex<engine::rt::Engine>>,
+    stream_error: Arc<AtomicBool>,
 ) -> anyhow::Result<(cpal::Stream, AudioOutputStream)> {
     let device_config = audio::output::ResolvedConfig::find(DeviceCfgSelection {
         host: audio::params::HostSelection::Id(stream_info.host_id.as_str()),
@@ -267,7 +279,8 @@ fn try_start_stream(
     };
 
     let stream = resolved_config
-        .start_stream(Arc::clone(&engine))
+        .start_stream(Arc::clone(&engine), stream_error)
+        .await
         .context("failed to start audio stream")?;
     Ok((stream, stream_info))
 }

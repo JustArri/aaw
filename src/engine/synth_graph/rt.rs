@@ -209,7 +209,7 @@ mod tests {
     use crate::engine::graph::{LocalSynthId, SynthKind};
 
     fn synth(id: usize) -> SynthId {
-        SynthId(SynthKind::Dummy, LocalSynthId(id))
+        SynthId { kind: SynthKind::Dummy, id: LocalSynthId(id) }
     }
 
     fn slot(synth_id: Option<SynthId>) -> Slot {

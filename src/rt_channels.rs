@@ -12,7 +12,7 @@ pub struct RtSharedProducer<T> {
 
 impl<T> Clone for RtSharedProducer<T> {
     fn clone(&self) -> Self {
-        Self { inner: self.inner.clone() }
+        Self { inner: Arc::clone(&self.inner) }
     }
 }
 
@@ -36,9 +36,14 @@ impl<T> RtSharedProducer<T> {
     }
 }
 
-#[derive(Clone)]
 pub struct RtSharedConsumer<T> {
     inner: Arc<Mutex<rtrb::Consumer<T>>>,
+}
+
+impl<T> Clone for RtSharedConsumer<T> {
+    fn clone(&self) -> Self {
+        Self { inner: Arc::clone(&self.inner) }
+    }
 }
 
 impl<T> RtSharedConsumer<T> {
@@ -57,10 +62,15 @@ impl<T> RtSharedConsumer<T> {
     }
 }
 
-#[derive(Clone)]
 pub struct NotifiedRtSharedProducer<T> {
     producer: RtSharedProducer<T>,
     notify: Arc<tokio::sync::Notify>,
+}
+
+impl<T> Clone for NotifiedRtSharedProducer<T> {
+    fn clone(&self) -> Self {
+        Self { producer: self.producer.clone(), notify: Arc::clone(&self.notify) }
+    }
 }
 
 impl<T> NotifiedRtSharedProducer<T> {
@@ -82,6 +92,10 @@ impl<T> NotifiedRtSharedProducer<T> {
             }
             Err(value) => Err(value),
         }
+    }
+
+    pub fn clone_notify(&self) -> Arc<tokio::sync::Notify> {
+        Arc::clone(&self.notify)
     }
 }
 

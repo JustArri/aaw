@@ -4,8 +4,10 @@ use crate::engine::synth_graph::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use utoipa::ToSchema;
 
-#[derive(Default, Debug, Clone, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[schema(as = SynthGraph)]
 pub struct Graph {
     pub slots: HashMap<SlotId, Slot>,
     pub global_transposition: i8,
