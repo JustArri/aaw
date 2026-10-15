@@ -1,5 +1,5 @@
 use crate::{
-    midi::{ControlChange, MidiEvent, MidiEventKind, MidiRuntime},
+    midi::{MidiEvent, MidiRuntime},
     rt_channels::NotifiedRtConsumer,
 };
 use std::{sync::Arc, time::Duration};
@@ -111,15 +111,6 @@ pub fn spawn_midi_relay_task(
 
                 event = midi_rx.recv() => {
                     info!(target: "midi-event", "{event:?}");
-
-                    if let MidiEventKind::ControlChange { controller, .. } = event.kind
-                        && controller == ControlChange::AllNotesOff as u8
-                    {
-                        info!("[midi panic]");
-                        stop.cancel();
-                        break;
-                    }
-
                     let _ = midi_tx.send(Arc::new(event));
                 }
             }
