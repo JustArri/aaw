@@ -23,7 +23,7 @@ pub struct AppState {
     pub engine: Arc<Mutex<Engine>>,
     pub engine_handle: EngineHandle,
     pub output_stream: Arc<Mutex<Option<(cpal::Stream, AudioOutputStream)>>>,
-    pub min_synth_slots: usize,
+    pub min_instrument_slots: usize,
     pub min_synths_per_graph: usize,
     pub stream_error: Arc<AtomicBool>,
 }

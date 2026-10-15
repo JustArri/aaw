@@ -1,11 +1,11 @@
-use crate::engine::{dummy_graph::ctr, graph::LocalSynthId};
-use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
+use crate::engine::{dummy_graph::ctr, graph::LocalId};
+use migrations_derive::Migrations;
 
-#[derive(Default, Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Default, Debug, Clone, Migrations)]
+#[migrations(version = 1, version_type = u32)]
 #[schema(as = DummyGraph)]
 pub struct Graph {
-    pub ids: Vec<LocalSynthId>,
+    pub ids: Vec<LocalId>,
 }
 
 impl From<&ctr::Graph> for Graph {

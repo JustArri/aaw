@@ -2,42 +2,44 @@ use crate::{
     audio::block::AudioBlock,
     engine::{
         dummy_graph, fluid_graph,
-        graph::{LocalSynthId, SynthId, SynthKind},
+        graph::LocalId,
+        instrument_graph::{self, SynthId, SynthKind},
         sfizz_graph,
-        synth_graph::{self, SlotId},
     },
-    midi::{MidiEvent, MidiFilter, MidiKeyTransform},
+    midi::{CompiledMidiKeyTransform, MidiEvent},
     rt_channels::{RtConsumer, RtProducer},
     synths,
 };
 
+// sacrifice memory for latency (avoid allocations/deallocations in the audio thread)
+#[allow(clippy::large_enum_variant)]
 pub enum Command {
     ReplaceProject { project: Box<Project> },
 
     Silence,
 
     DummyPush { synth: synths::Dummy },
-    DummyRemove { synth_id: LocalSynthId },
+    DummyRemove { synth_id: LocalId },
 
     FluidPush { synth: synths::Fluid },
-    FluidReplace { synth_id: LocalSynthId, synth: synths::Fluid },
-    FluidRemove { synth_id: LocalSynthId },
-    FluidSelectProgram { synth_id: LocalSynthId, bank: u16, preset_id: u8 },
+    FluidReplace { synth_id: LocalId, synth: synths::Fluid },
+    FluidRemove { synth_id: LocalId },
+    FluidSelectProgram { synth_id: LocalId, bank: u16, preset_id: u8 },
 
     SfizzPush { synth: synths::Sfizz },
-    SfizzReplace { synth_id: LocalSynthId, synth: synths::Sfizz },
-    SfizzRemove { synth_id: LocalSynthId },
+    SfizzReplace { synth_id: LocalId, synth: synths::Sfizz },
+    SfizzRemove { synth_id: LocalId },
 
     SetGlobalTransposition { transposition: i8 },
 
-    SynthSlotAppendNew,
-    SynthSlotRemove { slot_id: SlotId },
-    SetSynth { slot_id: SlotId, synth_id: Option<SynthId> },
-    SetEnabled { slot_id: SlotId, flag: bool },
-    SetKeyTransform { slot_id: SlotId, transform: MidiKeyTransform },
-    SetChannelFilter { slot_id: SlotId, filter: MidiFilter },
-    SetControlChangeFilter { slot_id: SlotId, filter: MidiFilter },
-    SetUseGlobalTransposition { slot_id: SlotId, flag: bool },
+    InstrumentSlotAppendNew,
+    InstrumentSlotRemove { slot_id: LocalId },
+    SetSynth { slot_id: LocalId, synth_id: Option<SynthId> },
+    SetEnabled { slot_id: LocalId, flag: bool },
+    SetKeyTransform { slot_id: LocalId, transform: CompiledMidiKeyTransform },
+    SetChannelFilter { slot_id: LocalId, mask: u16 },
+    SetControlChangeFilter { slot_id: LocalId, mask: u128 },
+    SetUseGlobalTransposition { slot_id: LocalId, flag: bool },
 }
 
 pub struct AudioBlocks {
@@ -46,7 +48,7 @@ pub struct AudioBlocks {
 }
 
 pub struct Project {
-    pub synth_graph: synth_graph::rt::Graph,
+    pub instrument_graph: instrument_graph::rt::Graph,
     pub dummy_graph: dummy_graph::rt::Graph,
     pub fluid_graph: fluid_graph::rt::Graph,
     pub sfizz_graph: sfizz_graph::rt::Graph,
@@ -132,7 +134,7 @@ impl Engine {
                 let removed = self.project.dummy_graph.remove(synth_id);
                 if removed {
                     self.project
-                        .synth_graph
+                        .instrument_graph
                         .remove_synth_references(SynthId { kind: SynthKind::Dummy, id: synth_id });
                 }
                 removed
@@ -146,7 +148,7 @@ impl Engine {
                 let removed = self.project.fluid_graph.remove(synth_id);
                 if removed {
                     self.project
-                        .synth_graph
+                        .instrument_graph
                         .remove_synth_references(SynthId { kind: SynthKind::Fluid, id: synth_id });
                 }
                 removed
@@ -163,36 +165,38 @@ impl Engine {
                 let removed = self.project.sfizz_graph.remove(synth_id);
                 if removed {
                     self.project
-                        .synth_graph
+                        .instrument_graph
                         .remove_synth_references(SynthId { kind: SynthKind::Dummy, id: synth_id });
                 }
                 removed
             }
 
             Command::SetGlobalTransposition { transposition } => {
-                self.project.synth_graph.set_global_transposition(transposition);
+                self.project.instrument_graph.set_global_transposition(transposition);
                 true
             }
 
-            Command::SynthSlotAppendNew => self.project.synth_graph.append_new(),
-            Command::SynthSlotRemove { slot_id } => self.project.synth_graph.remove(slot_id),
+            Command::InstrumentSlotAppendNew => self.project.instrument_graph.append_new(),
+            Command::InstrumentSlotRemove { slot_id } => {
+                self.project.instrument_graph.remove(slot_id)
+            }
             Command::SetSynth { slot_id, synth_id } => {
-                self.project.synth_graph.set_synth(slot_id, synth_id)
+                self.project.instrument_graph.set_synth(slot_id, synth_id)
             }
             Command::SetEnabled { slot_id, flag } => {
-                self.project.synth_graph.set_enabled(slot_id, flag)
+                self.project.instrument_graph.set_enabled(slot_id, flag)
             }
             Command::SetKeyTransform { slot_id, transform } => {
-                self.project.synth_graph.set_key_transform(slot_id, transform)
+                self.project.instrument_graph.set_key_transform(slot_id, transform)
             }
-            Command::SetChannelFilter { slot_id, filter } => {
-                self.project.synth_graph.set_channel_filter(slot_id, filter)
+            Command::SetChannelFilter { slot_id, mask } => {
+                self.project.instrument_graph.set_channel_filter(slot_id, mask)
             }
-            Command::SetControlChangeFilter { slot_id, filter } => {
-                self.project.synth_graph.set_cc_filter(slot_id, filter)
+            Command::SetControlChangeFilter { slot_id, mask } => {
+                self.project.instrument_graph.set_cc_filter(slot_id, mask)
             }
             Command::SetUseGlobalTransposition { slot_id, flag } => {
-                self.project.synth_graph.set_use_global_transposition(slot_id, flag)
+                self.project.instrument_graph.set_use_global_transposition(slot_id, flag)
             }
         }
     }
@@ -204,7 +208,7 @@ impl Engine {
     }
 
     fn dispatch_midi_event(&mut self, event: MidiEvent) {
-        self.project.synth_graph.midi_handler_iter(event).for_each(
+        self.project.instrument_graph.midi_handler_iter(event).for_each(
             |(SynthId { kind, id }, event)| match kind {
                 SynthKind::Dummy => self.project.dummy_graph.handle_midi_event(id, event),
                 SynthKind::Fluid => {
@@ -227,7 +231,7 @@ impl Engine {
 
         audio_blocks.main.clear();
 
-        self.project.synth_graph.audio_renderer_iter().for_each(|SynthId { kind, id }| {
+        self.project.instrument_graph.audio_renderer_iter().for_each(|SynthId { kind, id }| {
             match kind {
                 SynthKind::Dummy => {
                     self.project.dummy_graph.render_audio_block(id, &mut audio_blocks.temp)

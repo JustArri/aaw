@@ -1,9 +1,9 @@
-use crate::engine::{graph::LocalSynthId, sfizz_graph::ctr};
-use serde::{Deserialize, Serialize};
+use crate::engine::{graph::LocalId, sfizz_graph::ctr};
+use migrations_derive::Migrations;
 use std::collections::HashMap;
-use utoipa::ToSchema;
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Migrations)]
+#[migrations(version = 1, version_type = u32)]
 #[schema(as = SfizzSynth)]
 pub struct Synth {
     pub file_path: String,
@@ -15,10 +15,11 @@ impl From<ctr::Synth> for Synth {
     }
 }
 
-#[derive(Default, Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Default, Debug, Clone, Migrations)]
+#[migrations(version = 1, version_type = u32)]
 #[schema(as = SfizzGraph)]
 pub struct Graph {
-    pub synths: HashMap<LocalSynthId, Synth>,
+    pub synths: HashMap<LocalId, Synth>,
 }
 
 impl From<&ctr::Graph> for Graph {

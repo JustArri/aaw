@@ -1,7 +1,7 @@
 use crate::{
-    engine::{graph::SynthId, synth_graph::SlotId},
+    engine::{graph::LocalId, instrument_graph::SynthId},
     memory::Siv,
-    midi::{CompiledMidiKeyTransform, MidiEvent, MidiEventKind, MidiFilter, MidiKeyTransform},
+    midi::{CompiledMidiKeyTransform, MidiEvent, MidiEventKind, MidiKeyTransform},
 };
 
 pub struct Slot {
@@ -110,7 +110,7 @@ impl<'a> Iterator for AudioRendererIter<'a> {
 }
 
 pub struct Graph {
-    pub slots: Siv<Slot, SlotId>,
+    pub slots: Siv<Slot, LocalId>,
     pub global_transposition: i8,
 }
 
@@ -144,11 +144,11 @@ impl Graph {
         }
     }
 
-    pub fn remove(&mut self, slot_id: SlotId) -> bool {
+    pub fn remove(&mut self, slot_id: LocalId) -> bool {
         self.slots.try_remove(slot_id).is_some()
     }
 
-    pub fn set_synth(&mut self, slot_id: SlotId, synth_id: Option<SynthId>) -> bool {
+    pub fn set_synth(&mut self, slot_id: LocalId, synth_id: Option<SynthId>) -> bool {
         if let Some(slot) = self.slots.get_mut(slot_id) {
             slot.synth_id = synth_id;
             true
@@ -157,7 +157,7 @@ impl Graph {
         }
     }
 
-    pub fn set_enabled(&mut self, slot_id: SlotId, flag: bool) -> bool {
+    pub fn set_enabled(&mut self, slot_id: LocalId, flag: bool) -> bool {
         if let Some(slot) = self.slots.get_mut(slot_id) {
             slot.enabled = flag;
             true
@@ -166,34 +166,38 @@ impl Graph {
         }
     }
 
-    pub fn set_key_transform(&mut self, slot_id: SlotId, transform: MidiKeyTransform) -> bool {
+    pub fn set_key_transform(
+        &mut self,
+        slot_id: LocalId,
+        transform: CompiledMidiKeyTransform,
+    ) -> bool {
         if let Some(slot) = self.slots.get_mut(slot_id) {
-            slot.key_transform.update(&transform);
+            slot.key_transform = transform;
             true
         } else {
             false
         }
     }
 
-    pub fn set_channel_filter(&mut self, slot_id: SlotId, filter: MidiFilter) -> bool {
+    pub fn set_channel_filter(&mut self, slot_id: LocalId, mask: u16) -> bool {
         if let Some(slot) = self.slots.get_mut(slot_id) {
-            slot.channel_mask = filter.as_u16();
+            slot.channel_mask = mask;
             true
         } else {
             false
         }
     }
 
-    pub fn set_cc_filter(&mut self, slot_id: SlotId, filter: MidiFilter) -> bool {
+    pub fn set_cc_filter(&mut self, slot_id: LocalId, mask: u128) -> bool {
         if let Some(slot) = self.slots.get_mut(slot_id) {
-            slot.cc_mask = filter.as_u128();
+            slot.cc_mask = mask;
             true
         } else {
             false
         }
     }
 
-    pub fn set_use_global_transposition(&mut self, slot_id: SlotId, flag: bool) -> bool {
+    pub fn set_use_global_transposition(&mut self, slot_id: LocalId, flag: bool) -> bool {
         if let Some(slot) = self.slots.get_mut(slot_id) {
             slot.use_global_transposition = flag;
             true
@@ -206,10 +210,10 @@ impl Graph {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::graph::{LocalSynthId, SynthKind};
+    use crate::engine::{graph::LocalId, instrument_graph::SynthKind};
 
     fn synth(id: usize) -> SynthId {
-        SynthId { kind: SynthKind::Dummy, id: LocalSynthId(id) }
+        SynthId { kind: SynthKind::Dummy, id: LocalId(id) }
     }
 
     fn slot(synth_id: Option<SynthId>) -> Slot {
@@ -223,17 +227,15 @@ mod tests {
             slot(Some(synth(2))),
             slot(None),
         ]);
-        slots.remove(SlotId(1));
+        slots.remove(LocalId(1));
         Graph { slots, global_transposition: 0 }
     }
 
     #[test]
     fn midi_iterator_continues_past_removed_and_unassigned_slots() {
         let graph = graph_with_a_removed_slot_and_an_unassigned_slot();
-        let event = MidiEvent {
-            channel: 0,
-            kind: MidiEventKind::NoteOn { key: 60, velocity: 100 },
-        };
+        let event =
+            MidiEvent { channel: 0, kind: MidiEventKind::NoteOn { key: 60, velocity: 100 } };
 
         let sources: Vec<_> =
             graph.midi_handler_iter(event).map(|(source_id, _)| source_id).collect();

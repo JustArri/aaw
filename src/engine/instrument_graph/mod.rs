@@ -1,4 +1,4 @@
-use crate::memory::Siv;
+use crate::{engine::graph::LocalId, memory::Siv};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use utoipa::ToSchema;
@@ -7,23 +7,17 @@ pub mod ctr;
 pub mod rt;
 pub mod stored;
 
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, ToSchema,
-)]
-#[serde(transparent)]
-#[schema(value_type = usize)]
-pub struct SlotId(pub usize);
-
-impl From<usize> for SlotId {
-    fn from(id: usize) -> Self {
-        Self(id)
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub enum SynthKind {
+    Dummy,
+    Fluid,
+    Sfizz,
 }
 
-impl From<SlotId> for usize {
-    fn from(id: SlotId) -> Self {
-        id.0
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct SynthId {
+    pub kind: SynthKind,
+    pub id: LocalId,
 }
 
 pub fn prepare(stored: stored::Graph, num_slots: usize) -> (ctr::Graph, rt::Graph) {
@@ -42,7 +36,7 @@ pub fn prepare(stored: stored::Graph, num_slots: usize) -> (ctr::Graph, rt::Grap
     (ctr_graph, rt_graph)
 }
 
-fn ctr_slot_to_rt((slot_id, slot): (&SlotId, &ctr::Slot)) -> (SlotId, rt::Slot) {
+fn ctr_slot_to_rt((slot_id, slot): (&LocalId, &ctr::Slot)) -> (LocalId, rt::Slot) {
     let slot = rt::Slot {
         synth_id: slot.synth_id,
         enabled: slot.enabled,

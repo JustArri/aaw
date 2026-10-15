@@ -1,6 +1,6 @@
 use crate::{
     audio::block::AudioBlock,
-    engine::graph::{LocalSynthId, RETIREMENT_QUEUE_CAPACITY},
+    engine::graph::{LocalId, RETIREMENT_QUEUE_CAPACITY},
     memory::{
         Siv,
         retirement::{RetirementThread, Retirer},
@@ -13,11 +13,11 @@ use std::time::Duration;
 pub struct Graph {
     pub retirer: Retirer<synths::Fluid>,
     pub retirement_thread: RetirementThread,
-    pub synths: Siv<synths::Fluid, LocalSynthId>,
+    pub synths: Siv<synths::Fluid, LocalId>,
 }
 
 impl Graph {
-    pub fn new(synths: Siv<synths::Fluid, LocalSynthId>) -> Self {
+    pub fn new(synths: Siv<synths::Fluid, LocalId>) -> Self {
         let (retirer, retirement_thread) =
             RetirementThread::spawn(RETIREMENT_QUEUE_CAPACITY, Duration::from_millis(10))
                 .expect("failed to spawn retirement thread");
@@ -42,7 +42,7 @@ impl Graph {
         Ok(())
     }
 
-    pub fn handle_midi_event(&mut self, id: LocalSynthId, event: MidiEvent) -> synths::Result<()> {
+    pub fn handle_midi_event(&mut self, id: LocalId, event: MidiEvent) -> synths::Result<()> {
         if let Some(synth) = self.synths.get_mut(id) {
             synth.handle_midi_event(event)?;
         }
@@ -51,7 +51,7 @@ impl Graph {
 
     pub fn render_audio_block(
         &mut self,
-        id: LocalSynthId,
+        id: LocalId,
         output: &mut AudioBlock,
     ) -> synths::Result<()> {
         if let Some(synth) = self.synths.get_mut(id) {
@@ -69,7 +69,7 @@ impl Graph {
         true
     }
 
-    pub fn replace(&mut self, synth_id: LocalSynthId, synth: synths::Fluid) -> bool {
+    pub fn replace(&mut self, synth_id: LocalId, synth: synths::Fluid) -> bool {
         match self.synths.try_replace(synth_id, synth) {
             Ok(previous) => {
                 self.retirer.retire_or_leak(previous);
@@ -82,7 +82,7 @@ impl Graph {
         }
     }
 
-    pub fn remove(&mut self, synth_id: LocalSynthId) -> bool {
+    pub fn remove(&mut self, synth_id: LocalId) -> bool {
         if let Some(synth) = self.synths.try_remove(synth_id) {
             self.retirer.retire_or_leak(synth);
             true
@@ -91,7 +91,7 @@ impl Graph {
         }
     }
 
-    pub fn select_program(&mut self, synth_id: LocalSynthId, bank: u16, preset_id: u8) -> bool {
+    pub fn select_program(&mut self, synth_id: LocalId, bank: u16, preset_id: u8) -> bool {
         if let Some(synth) = self.synths.get_mut(synth_id) {
             select_program(synth, bank, preset_id).is_ok()
         } else {
