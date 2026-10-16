@@ -1,4 +1,5 @@
 use crate::{
+    MAX_BLOCK_SIZE,
     audio::{
         self,
         params::{
@@ -6,43 +7,47 @@ use crate::{
             SampleRateSelection,
         },
     },
-    instruments::engine::Engine,
+    engine::rt::Engine,
+    synths,
 };
 use cpal::{
     BufferSize,
     traits::{DeviceTrait, HostTrait, StreamTrait},
 };
-use tracing::{error, info};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, atomic::AtomicBool};
+use tokio::sync::Mutex;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("host not found")]
+    #[error("audio host not found")]
     HostNotFound,
 
-    #[error("host has no default device")]
+    #[error("audio host has no default device")]
     HostHasNoDefaultDevice,
 
-    #[error("device not found")]
+    #[error("audio output device not found")]
     DeviceNotFound,
 
-    #[error("failed to list devices: {0}")]
+    #[error("failed to list audio output devices: {0}")]
     FailedToListDevices(#[source] cpal::Error),
 
-    #[error("failed to list device configs: {0}")]
+    #[error("failed to list audio output device configs: {0}")]
     FailedToListDeviceConfigs(#[source] cpal::Error),
 
-    #[error("no supported device config matches the requested settings")]
+    #[error("no supported audio output device config matches the requested settings")]
     NoSupportedDeviceConfig,
 
     #[error("unsupported sample format: {0}")]
     UnsupportedSampleFormat(cpal::SampleFormat),
 
-    #[error("failed to build stream")]
+    #[error("failed to build audio output stream")]
     FailedToBuildStream(#[source] cpal::Error),
 
-    #[error("failed to start stream")]
+    #[error("failed to start audio output stream")]
     FailedToStartStream(#[source] cpal::Error),
+
+    #[error("failed to init engine: {0}")]
+    EngineInit(#[source] synths::Error),
 }
 
 type StdResult<T, E> = std::result::Result<T, E>;
@@ -55,7 +60,7 @@ pub struct ResolvedConfig {
 }
 
 impl ResolvedConfig {
-    pub fn find(selection: &DeviceCfgSelection) -> Result<Self> {
+    pub fn find(selection: DeviceCfgSelection) -> Result<Self> {
         resolve_device_config(selection)
     }
 
@@ -71,37 +76,58 @@ impl ResolvedConfig {
         self.config
     }
 
-    pub fn start_stream(self, engine: Arc<Mutex<Engine>>) -> Result<cpal::Stream> {
+    pub async fn start_stream(
+        self,
+        engine: Arc<Mutex<Engine>>,
+        stream_error: Arc<AtomicBool>,
+    ) -> Result<cpal::Stream> {
         use cpal::SampleFormat as Fmt;
+
+        let device = &self.device;
+        let config = self.config;
+        let stream_error2 = Arc::clone(&stream_error);
+
         let stream = match self.sample_format {
-            Fmt::I8 => build_stream::<i8>(&self.device, self.config, engine),
-            Fmt::F32 => build_stream::<f32>(&self.device, self.config, engine),
-            Fmt::I16 => build_stream::<i16>(&self.device, self.config, engine),
-            Fmt::I24 => build_stream::<cpal::I24>(&self.device, self.config, engine),
-            Fmt::I32 => build_stream::<i32>(&self.device, self.config, engine),
-            Fmt::I64 => build_stream::<i64>(&self.device, self.config, engine),
-            Fmt::U8 => build_stream::<u8>(&self.device, self.config, engine),
-            Fmt::U16 => build_stream::<u16>(&self.device, self.config, engine),
-            Fmt::U24 => build_stream::<cpal::U24>(&self.device, self.config, engine),
-            Fmt::U32 => build_stream::<u32>(&self.device, self.config, engine),
-            Fmt::U64 => build_stream::<u64>(&self.device, self.config, engine),
-            Fmt::F64 => build_stream::<f64>(&self.device, self.config, engine),
+            Fmt::I8 => build_stream::<i8>(device, config, engine, stream_error).await,
+            Fmt::F32 => build_stream::<f32>(device, config, engine, stream_error).await,
+            Fmt::I16 => build_stream::<i16>(device, config, engine, stream_error).await,
+            Fmt::I24 => build_stream::<cpal::I24>(device, config, engine, stream_error).await,
+            Fmt::I32 => build_stream::<i32>(device, config, engine, stream_error).await,
+            Fmt::I64 => build_stream::<i64>(device, config, engine, stream_error).await,
+            Fmt::U8 => build_stream::<u8>(device, config, engine, stream_error).await,
+            Fmt::U16 => build_stream::<u16>(device, config, engine, stream_error).await,
+            Fmt::U24 => build_stream::<cpal::U24>(device, config, engine, stream_error).await,
+            Fmt::U32 => build_stream::<u32>(device, config, engine, stream_error).await,
+            Fmt::U64 => build_stream::<u64>(device, config, engine, stream_error).await,
+            Fmt::F64 => build_stream::<f64>(device, config, engine, stream_error).await,
             sample_format => Err(Error::UnsupportedSampleFormat(sample_format)),
         }?;
+
         stream.play().map_err(Error::FailedToStartStream)?;
+        stream_error2.store(false, std::sync::atomic::Ordering::Relaxed);
+
         Ok(stream)
     }
 }
 
-fn build_stream<T>(
+async fn build_stream<T>(
     device: &cpal::Device,
     config: cpal::StreamConfig,
     engine: Arc<Mutex<Engine>>,
+    stream_error: Arc<AtomicBool>,
 ) -> Result<cpal::Stream>
 where
     T: cpal::Sample + cpal::SizedSample + cpal::FromSample<f32>,
 {
-    let mut scratch = vec![0.0_f32; config.channels as usize * 16_384];
+    let channel_count = config.channels as usize;
+    engine
+        .lock()
+        .await
+        .init(channel_count, config.sample_rate, MAX_BLOCK_SIZE)
+        .map_err(Error::EngineInit)?;
+
+    let mut scratch = vec![0.0_f32; channel_count * MAX_BLOCK_SIZE];
+
     let stream = device
         .build_output_stream(
             config,
@@ -112,40 +138,36 @@ where
                 }
 
                 let scratch = &mut scratch[..output.len()];
-                {
-                    let _engine = engine.lock().expect("engine poisoned");
-                    info!("process {}", scratch.len());
-                }
+                engine.blocking_lock().run(scratch);
 
                 for (dst, src) in output.iter_mut().zip(scratch.iter().copied()) {
                     *dst = T::from_sample(src);
                 }
             },
-            move |err| error!(target="stream", "{err}"),
+            move |_| {
+                stream_error.store(true, std::sync::atomic::Ordering::Relaxed);
+            },
             None,
         )
         .map_err(Error::FailedToBuildStream)?;
+
     Ok(stream)
 }
 
-fn resolve_device_config(selection: &DeviceCfgSelection) -> Result<ResolvedConfig> {
+fn resolve_device_config(selection: DeviceCfgSelection) -> Result<ResolvedConfig> {
     let host = match &selection.host {
         HostSelection::Default => cpal::default_host(),
         HostSelection::Id(id) => audio::info::host_by_id(id).map_err(|_| Error::HostNotFound)?,
     };
     let device = match &selection.device {
-        DeviceSelection::Default => host
-            .default_output_device()
-            .ok_or(Error::HostHasNoDefaultDevice)?,
+        DeviceSelection::Default => {
+            host.default_output_device().ok_or(Error::HostHasNoDefaultDevice)?
+        }
         DeviceSelection::Id(id) => find_device_by_id(&host, id)?,
     };
     let (sample_format, config) =
         resolve_preferred_config(&device, &selection.latency, &selection.sample_rate)?;
-    Ok(ResolvedConfig {
-        device,
-        sample_format,
-        config,
-    })
+    Ok(ResolvedConfig { device, sample_format, config })
 }
 
 fn find_device_by_id(host: &cpal::Host, id: &str) -> Result<cpal::Device> {
@@ -181,30 +203,25 @@ fn resolve_preferred_config(
 }
 
 fn list_config_ranges(device: &cpal::Device) -> Result<Vec<cpal::SupportedStreamConfigRange>> {
-    let configs = device
-        .supported_output_configs()
-        .map_err(Error::FailedToListDeviceConfigs)?;
+    let configs = device.supported_output_configs().map_err(Error::FailedToListDeviceConfigs)?;
     Ok(configs.collect::<Vec<_>>())
 }
 
-fn buffer_sizes(latency_sel: &LatencySelection) -> &'static [BufferSize] {
+fn buffer_sizes(latency_sel: &LatencySelection) -> Vec<BufferSize> {
     match latency_sel {
-        LatencySelection::Automatic => &[
+        LatencySelection::Automatic => vec![
             BufferSize::Default,
             BufferSize::Fixed(256),
             BufferSize::Fixed(512),
             BufferSize::Fixed(1024),
         ],
-        LatencySelection::Low => &[
-            BufferSize::Fixed(64),
-            BufferSize::Fixed(128),
-            BufferSize::Fixed(256),
-        ],
-        LatencySelection::Stable => &[
-            BufferSize::Fixed(256),
-            BufferSize::Fixed(512),
-            BufferSize::Fixed(1024),
-        ],
+        LatencySelection::Low => {
+            vec![BufferSize::Fixed(64), BufferSize::Fixed(128), BufferSize::Fixed(256)]
+        }
+        LatencySelection::Stable => {
+            vec![BufferSize::Fixed(256), BufferSize::Fixed(512), BufferSize::Fixed(1024)]
+        }
+        LatencySelection::CustomBufferSize(size) => vec![BufferSize::Fixed(*size)],
     }
 }
 
@@ -255,9 +272,9 @@ fn with_selected_sample_rate(
     sample_rate_sel: &SampleRateSelection,
 ) -> cpal::SupportedStreamConfig {
     match sample_rate_sel {
-        SampleRateSelection::Automatic => range
-            .try_with_standard_sample_rate()
-            .unwrap_or_else(|| range.with_max_sample_rate()),
+        SampleRateSelection::Automatic => {
+            range.try_with_standard_sample_rate().unwrap_or_else(|| range.with_max_sample_rate())
+        }
         SampleRateSelection::Fixed(sr) => range.with_sample_rate(*sr),
     }
 }

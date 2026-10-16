@@ -6,7 +6,13 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 ### Added
+ - API endpoints
+ - Project migrations
+ - Engine
  - audio stream
  - MIDI runtime
 
 [Unreleased]: https://github.com/SuperiorArri/aaw/compare/main...dev
+
+### Changed
+ - MIDI runtime automatically connects defined MIDI inouts

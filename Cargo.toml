@@ -3,15 +3,47 @@ name = "aaw"
 version = "0.1.0"
 edition = "2024"
 
+[workspace]
+members = ["crates/migrations-derive"]
+resolver = "3"
+
+[features]
+default = ["desktop-audio"]
+desktop-audio = ["cpal/pulseaudio", "rtkit"]
+rtkit = ["cpal/realtime-dbus"]
+
 [dependencies]
 anyhow = "1"
-axum = { version = "0.8", features = ["ws"] }
-cpal = { version = "0.18", features = ["pipewire", "pulseaudio", "realtime-dbus"] }
+thiserror = "2"
+migrations-derive = { path = "crates/migrations-derive" }
+
+tokio = { version = "1", features = ["full"] }
+tokio-util = "0.7"
+axum = { version = "0.8", features = ["ws", "macros"] }
+tower-http = { version = "0.7", features = [
+    "compression-gzip",
+    "compression-br",
+] }
+
+cpal = { version = "0.18", features = ["pipewire"] }
 midir = "0.11"
-rtrb = "0.3"
+
+rtrb = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-thiserror = "2"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "sync"] }
+
+utoipa = { version = "6", features = ["axum_extras", "time"] }
+utoipa-axum = "0.3"
+utoipa-scalar = { version = "0.4", features = ["axum"] }
+
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+zbus = { version = "5.19", features = ["tokio"] }
+clap = { version = "4.6", features = ["derive"] }
+
+
+[build-dependencies]
+bindgen = { version = "0.73", default-features = false, features = ["runtime"] }
+cc = "1"
+cmake = "0.1"
