@@ -46,30 +46,25 @@ impl From<cpal::SupportedBufferSize> for BufferSizeInfo {
 }
 
 pub fn list_hosts() -> Vec<Host> {
-    cpal::available_hosts()
-        .iter()
-        .map(|h| Host {
-            id: h.to_string(),
-            name: h.name(),
-        })
-        .collect()
+    cpal::available_hosts().iter().map(|h| Host { id: h.to_string(), name: h.name() }).collect()
 }
 
 pub fn list_output_devices(host_id: &str) -> Result<Vec<OutputDeviceInfo>> {
     let host = host_by_id(host_id)?;
-
-    let default_id = host
-        .default_output_device()
-        .and_then(|device| device_id(&device).ok());
+    let default_id = host.default_output_device().and_then(|device| device_id(&device).ok());
 
     let cpal_devices = host.output_devices()?;
     let mut devices = Vec::new();
 
     for device in cpal_devices {
-        let id = device_id(&device)?;
+        let Ok(id) = device_id(&device) else {
+            continue;
+        };
         let name = device_display_name(&device).unwrap_or_else(|_| id.clone());
         let is_default = default_id.as_deref() == Some(id.as_str());
-        let stream_configs = list_output_stream_configs(&device)?;
+        let Ok(stream_configs) = list_output_stream_configs(&device) else {
+            continue;
+        };
 
         devices.push(OutputDeviceInfo {
             host_id: host_id.into(),
@@ -128,7 +123,5 @@ fn device_id(device: &cpal::Device) -> Result<String> {
 }
 
 fn device_display_name(device: &cpal::Device) -> Result<String> {
-    device
-        .description()
-        .map(|description| description.name().to_string())
+    device.description().map(|description| description.name().to_string())
 }
