@@ -1,11 +1,19 @@
-use crate::{engine::graph::LocalId, memory::Siv, synths::SoundFontInfo};
+use crate::{
+    engine::graph::LocalId,
+    memory::Siv,
+    synths::{SoundFontInfo, SoundFontProgram},
+};
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 use utoipa::ToSchema;
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct Synth {
-    pub file_path: String,
+    #[schema(value_type = String)]
+    pub file_path: PathBuf,
+
     pub info: SoundFontInfo,
+    pub program: SoundFontProgram,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -28,5 +36,11 @@ impl Graph {
 
     pub fn remove(&mut self, synth_id: LocalId) {
         let _ = self.synths.try_remove(synth_id);
+    }
+
+    pub fn select_program(&mut self, synth_id: LocalId, program: SoundFontProgram) {
+        if let Some(synth) = self.synths.get_mut(synth_id) {
+            synth.program = program;
+        }
     }
 }

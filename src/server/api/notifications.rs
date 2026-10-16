@@ -21,6 +21,8 @@ pub enum Notification<'a> {
     MidiEvent(&'a MidiEvent),
 }
 
+//--------------------------------------------------------------------------------------------------
+
 #[utoipa::path(
     get,
     path = "/notifications",
@@ -39,6 +41,8 @@ pub async fn handler(
 ) -> Result<Response, StatusCode> {
     Ok(ws.on_upgrade(move |socket| handle_socket(socket, state)))
 }
+
+//--------------------------------------------------------------------------------------------------
 
 async fn handle_socket(mut socket: WebSocket, state: AppState) {
     let mut midi_rx = state.midi_tx.subscribe();

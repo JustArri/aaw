@@ -1,10 +1,13 @@
 use crate::{engine::graph::LocalId, memory::Siv, synths::SfzInfo};
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 use utoipa::ToSchema;
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct Synth {
-    pub file_path: String,
+    #[schema(value_type = String)]
+    pub file_path: PathBuf,
+
     pub info: SfzInfo,
 }
 

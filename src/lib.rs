@@ -25,6 +25,8 @@ pub mod system;
 pub const PACKAGE_NAME: &str = env!("CARGO_PKG_NAME");
 pub const APP_VERSION: &str = env!("APP_VERSION");
 
+pub const MAX_BLOCK_SIZE: usize = 16384;
+
 pub fn subscribe_tracing(default_filter: &str) {
     tracing_subscriber::fmt()
         .with_env_filter(

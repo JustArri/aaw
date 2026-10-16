@@ -58,15 +58,35 @@ impl SoundFontAsset {
     }
 }
 
+#[derive(Clone)]
+enum SoundFontSource {
+    File(PathBuf),
+    Asset(SoundFontAsset),
+}
+
 struct MemoryFile {
     bytes: Arc<[u8]>,
     position: usize,
+}
+
+#[derive(Default, Debug, Clone, Copy, Serialize, Deserialize, ToSchema)]
+pub struct SoundFontProgram {
+    pub bank: u16,
+    pub preset_id: u8,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 pub struct SoundFontInfo {
     pub name: String,
     pub banks: Vec<SoundFontBankInfo>,
+}
+
+impl SoundFontInfo {
+    pub fn first_program(&self) -> Option<SoundFontProgram> {
+        let bank_info = self.banks.first()?;
+        let preset_info = bank_info.presets.first()?;
+        Some(SoundFontProgram { bank: bank_info.number, preset_id: preset_info.number })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
@@ -92,6 +112,10 @@ pub struct Synth {
     synth: NonNull<sys::fluid_synth_t>,
     settings: NonNull<sys::fluid_settings_t>,
     soundfont_id: Option<i32>,
+    soundfont_source: Option<SoundFontSource>,
+    selected_bank: Option<u16>,
+    selected_preset: Option<u8>,
+    sample_rate: f64,
     _not_sync: PhantomData<Cell<()>>,
 }
 
@@ -122,6 +146,7 @@ impl Synth {
             Err(Error::InstrumentLoad(path.to_owned()))
         } else {
             self.soundfont_id = Some(id);
+            self.soundfont_source = Some(SoundFontSource::File(path.to_owned()));
             Ok(id)
         }
     }
@@ -146,6 +171,7 @@ impl Synth {
             Err(Error::InstrumentLoad(asset.source().to_owned()))
         } else {
             self.soundfont_id = Some(id);
+            self.soundfont_source = Some(SoundFontSource::Asset(asset.clone()));
             Ok(id)
         }
     }
@@ -203,17 +229,35 @@ impl Synth {
     }
 
     pub fn bank_select(&mut self, bank: u16) -> Result<()> {
-        native_result(
-            unsafe { sys::fluid_synth_bank_select(self.synth.as_ptr(), -1, bank.into()) },
-            "FluidSynth all-notes-off failed",
-        )
+        let channel_count = unsafe { sys::fluid_synth_count_midi_channels(self.synth.as_ptr()) };
+        for channel in 0..channel_count {
+            native_result(
+                unsafe { sys::fluid_synth_bank_select(self.synth.as_ptr(), channel, bank.into()) },
+                "FluidSynth bank selection failed",
+            )?;
+        }
+        self.selected_bank = Some(bank);
+        Ok(())
+    }
+
+    pub fn select_program(&mut self, program: SoundFontProgram) -> Result<()> {
+        self.bank_select(program.bank)?;
+        self.program_change(program.preset_id)?;
+        Ok(())
     }
 
     pub fn program_change(&mut self, preset_id: u8) -> Result<()> {
-        native_result(
-            unsafe { sys::fluid_synth_program_change(self.synth.as_ptr(), -1, preset_id.into()) },
-            "FluidSynth all-notes-off failed",
-        )
+        let channel_count = unsafe { sys::fluid_synth_count_midi_channels(self.synth.as_ptr()) };
+        for channel in 0..channel_count {
+            native_result(
+                unsafe {
+                    sys::fluid_synth_program_change(self.synth.as_ptr(), channel, preset_id.into())
+                },
+                "FluidSynth program change failed",
+            )?;
+        }
+        self.selected_preset = Some(preset_id);
+        Ok(())
     }
 
     pub fn silence(&mut self) -> Result<()> {
@@ -227,10 +271,39 @@ impl Synth {
         if sample_rate == 0 {
             return Err(Error::InvalidArgument("sample rate must be greater than zero"));
         }
-        unsafe {
-            sys::fluid_synth_set_sample_rate(self.synth.as_ptr(), sample_rate as f32);
+
+        let sample_rate = f64::from(sample_rate);
+        if self.sample_rate == sample_rate {
+            return Ok(());
         }
+
+        let source = self.soundfont_source.clone();
+        let selected_bank = self.selected_bank;
+        let selected_preset = self.selected_preset;
+        let mut replacement = Self::new(sample_rate)?;
+
+        match source {
+            Some(SoundFontSource::File(path)) => {
+                replacement.load_soundfont(path)?;
+            }
+            Some(SoundFontSource::Asset(asset)) => {
+                replacement.load_asset(&asset)?;
+            }
+            None => {}
+        }
+        if let Some(bank) = selected_bank {
+            replacement.bank_select(bank)?;
+        }
+        if let Some(preset) = selected_preset {
+            replacement.program_change(preset)?;
+        }
+
+        std::mem::swap(self, &mut replacement);
         Ok(())
+    }
+
+    pub fn set_max_block_size(&mut self, _max_block_size: usize) -> Result<()> {
+        self.silence()
     }
 
     pub fn handle_midi_event(&mut self, event: MidiEvent) -> Result<()> {
@@ -420,7 +493,16 @@ impl Synth {
         // The synth owns and eventually destroys the loader after this call.
         unsafe { sys::fluid_synth_add_sfloader(synth.as_ptr(), loader.as_ptr()) };
 
-        Ok(Self { synth, settings, soundfont_id: None, _not_sync: PhantomData })
+        Ok(Self {
+            synth,
+            settings,
+            soundfont_id: None,
+            soundfont_source: None,
+            selected_bank: None,
+            selected_preset: None,
+            sample_rate,
+            _not_sync: PhantomData,
+        })
     }
 }
 
@@ -574,6 +656,18 @@ mod tests {
                     .windows(2)
                     .all(|ranges| ranges[0].end.saturating_add(1) < ranges[1].start)
         }));
+
+        let program = info.first_program().unwrap();
+        synth.select_program(program).unwrap();
+        let previous_native_synth = synth.synth;
+
+        synth.set_sample_rate(44_100).unwrap();
+
+        assert_eq!(synth.sample_rate, 44_100.0);
+        assert_ne!(synth.synth, previous_native_synth);
+        assert_eq!(synth.selected_bank, Some(program.bank));
+        assert_eq!(synth.selected_preset, Some(program.preset_id));
+        assert_eq!(synth.soundfont_info().unwrap(), info);
     }
 
     #[test]

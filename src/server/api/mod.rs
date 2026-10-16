@@ -24,6 +24,8 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(notifications::handler))
 }
 
+//--------------------------------------------------------------------------------------------------
+
 #[utoipa::path(
     get,
     path = "/health",
@@ -35,6 +37,8 @@ pub fn router() -> OpenApiRouter<AppState> {
 async fn health() -> &'static str {
     "ok"
 }
+
+//--------------------------------------------------------------------------------------------------
 
 #[utoipa::path(
     post,
@@ -52,3 +56,5 @@ async fn silence(State(app_state): State<AppState>) -> Result<StatusCode, (Statu
         .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, format!("command failed: {err}")))?;
     Ok(StatusCode::NO_CONTENT)
 }
+
+//--------------------------------------------------------------------------------------------------

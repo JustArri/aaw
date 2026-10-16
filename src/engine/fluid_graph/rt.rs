@@ -6,7 +6,7 @@ use crate::{
         retirement::{RetirementThread, Retirer},
     },
     midi::MidiEvent,
-    synths,
+    synths::{self, SoundFontProgram},
 };
 use std::time::Duration;
 
@@ -38,6 +38,13 @@ impl Graph {
     pub fn set_sample_rate(&mut self, sample_rate: u32) -> synths::Result<()> {
         for synth in self.synths.iter_values_mut() {
             synth.set_sample_rate(sample_rate)?;
+        }
+        Ok(())
+    }
+
+    pub fn set_max_block_size(&mut self, max_block_size: usize) -> synths::Result<()> {
+        for synth in self.synths.iter_values_mut() {
+            synth.set_max_block_size(max_block_size)?;
         }
         Ok(())
     }
@@ -91,17 +98,11 @@ impl Graph {
         }
     }
 
-    pub fn select_program(&mut self, synth_id: LocalId, bank: u16, preset_id: u8) -> bool {
+    pub fn select_program(&mut self, synth_id: LocalId, program: SoundFontProgram) -> bool {
         if let Some(synth) = self.synths.get_mut(synth_id) {
-            select_program(synth, bank, preset_id).is_ok()
+            synth.select_program(program).is_ok()
         } else {
             false
         }
     }
-}
-
-fn select_program(synth: &mut synths::Fluid, bank: u16, preset_id: u8) -> synths::Result<()> {
-    synth.bank_select(bank)?;
-    synth.program_change(preset_id)?;
-    Ok(())
 }

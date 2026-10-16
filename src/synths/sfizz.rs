@@ -155,6 +155,15 @@ impl Synth {
         Ok(())
     }
 
+    pub fn set_max_block_size(&mut self, max_block_size: usize) -> Result<()> {
+        let block_size = i32::try_from(max_block_size)
+            .ok()
+            .filter(|size| *size > 0)
+            .ok_or(Error::InvalidArgument("maximum block size must be in 1..=i32::MAX"))?;
+        unsafe { sys::sfizz_set_samples_per_block(self.synth.as_ptr(), block_size) };
+        Ok(())
+    }
+
     pub fn silence(&mut self) {
         unsafe { sys::sfizz_all_sound_off(self.synth.as_ptr()) };
     }

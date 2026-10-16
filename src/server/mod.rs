@@ -1,5 +1,5 @@
 use crate::{
-    engine::{ctr::EngineHandle, rt::Engine},
+    engine::{ctr::EngineHandle, graph::DEFAULT_SAMPLE_RATE, rt::Engine},
     midi::{MidiEvent, MidiRuntime},
     rt_channels::NotifiedRtSharedProducer,
     server::api::audio::AudioOutputStream,
@@ -31,6 +31,15 @@ pub struct AppState {
 impl AppState {
     pub fn stream_error(&self) -> bool {
         self.stream_error.load(Ordering::Relaxed)
+    }
+
+    pub async fn sample_rate(&self) -> u32 {
+        self.output_stream
+            .lock()
+            .await
+            .as_ref()
+            .map(|s| s.1.sample_rate)
+            .unwrap_or(DEFAULT_SAMPLE_RATE)
     }
 }
 

@@ -53,6 +53,8 @@ pub struct MidiInputAutoConnection {
     pub slot_id_fixed: bool,
 }
 
+//--------------------------------------------------------------------------------------------------
+
 #[utoipa::path(
     get,
     path = "/input/ports",
@@ -72,6 +74,8 @@ async fn input_ports(State(app_state): State<AppState>) -> Json<Vec<MidiPort>> {
         .collect();
     Json(ports)
 }
+
+//--------------------------------------------------------------------------------------------------
 
 #[utoipa::path(
     get,
@@ -102,6 +106,8 @@ async fn input_slots(
     Ok(Json(ports.ok_or(StatusCode::INTERNAL_SERVER_ERROR)?))
 }
 
+//--------------------------------------------------------------------------------------------------
+
 #[derive(Deserialize, IntoParams)]
 #[into_params(parameter_in = Path)]
 pub struct InputSlotPath {
@@ -112,6 +118,8 @@ pub struct InputSlotPath {
 pub struct ConnectInputSlotRequest {
     port_id: String,
 }
+
+//--------------------------------------------------------------------------------------------------
 
 #[utoipa::path(
     post,
@@ -138,6 +146,8 @@ async fn connect_input_slot(
     Ok(StatusCode::NO_CONTENT)
 }
 
+//--------------------------------------------------------------------------------------------------
+
 #[utoipa::path(
     post,
     path = "/input/slots/disconnect/{slot_id}",
@@ -160,6 +170,8 @@ async fn disconnect_input_slot(
         .map_err(map_input_slot_err)?;
     Ok(StatusCode::NO_CONTENT)
 }
+
+//--------------------------------------------------------------------------------------------------
 
 #[utoipa::path(
     get,
@@ -186,6 +198,8 @@ async fn input_auto_connections(
     Ok(Json(auto_connections))
 }
 
+//--------------------------------------------------------------------------------------------------
+
 #[utoipa::path(
     put,
     path = "/input/auto-connections",
@@ -208,10 +222,14 @@ async fn insert_input_auto_connection(
     StatusCode::NO_CONTENT
 }
 
+//--------------------------------------------------------------------------------------------------
+
 #[derive(Deserialize, ToSchema)]
 pub struct DeleteMidiAutoConnectionRequest {
     pub port_id: String,
 }
+
+//--------------------------------------------------------------------------------------------------
 
 #[utoipa::path(
     delete,
@@ -229,21 +247,7 @@ async fn delete_input_auto_connection(
     StatusCode::NO_CONTENT
 }
 
-fn map_input_slot_err(err: InputSlotError) -> (StatusCode, String) {
-    let code = match &err {
-        InputSlotError::AlreadyDisconnected => StatusCode::BAD_REQUEST,
-        InputSlotError::AlreadyConnected => StatusCode::BAD_REQUEST,
-        InputSlotError::NotConnected => StatusCode::BAD_REQUEST,
-        InputSlotError::NotDisconnected => StatusCode::BAD_REQUEST,
-        InputSlotError::InvalidId(_) => StatusCode::NOT_FOUND,
-        InputSlotError::Connect(midir::ConnectErrorKind::InvalidPort) => StatusCode::BAD_REQUEST,
-        InputSlotError::Connect(midir::ConnectErrorKind::Other(_)) => {
-            StatusCode::INTERNAL_SERVER_ERROR
-        }
-        InputSlotError::PortInfo(_) => StatusCode::INTERNAL_SERVER_ERROR,
-    };
-    (code, err.to_string())
-}
+//--------------------------------------------------------------------------------------------------
 
 #[utoipa::path(
     post,
@@ -268,6 +272,8 @@ async fn send_event(
     Ok(StatusCode::NO_CONTENT)
 }
 
+//--------------------------------------------------------------------------------------------------
+
 #[utoipa::path(
     get,
     path = "/events",
@@ -286,6 +292,8 @@ pub async fn open_event_stream(
 ) -> Result<axum::response::Response, StatusCode> {
     Ok(ws.on_upgrade(move |socket| handle_event_stream_socket(socket, state)))
 }
+
+//--------------------------------------------------------------------------------------------------
 
 async fn handle_event_stream_socket(mut socket: WebSocket, state: AppState) {
     let mut midi_rx = state.midi_tx.subscribe();
@@ -361,4 +369,20 @@ async fn handle_socket_rx_result(
         }
         None => WsHandlerAction::Exit,
     }
+}
+
+fn map_input_slot_err(err: InputSlotError) -> (StatusCode, String) {
+    let code = match &err {
+        InputSlotError::AlreadyDisconnected => StatusCode::BAD_REQUEST,
+        InputSlotError::AlreadyConnected => StatusCode::BAD_REQUEST,
+        InputSlotError::NotConnected => StatusCode::BAD_REQUEST,
+        InputSlotError::NotDisconnected => StatusCode::BAD_REQUEST,
+        InputSlotError::InvalidId(_) => StatusCode::NOT_FOUND,
+        InputSlotError::Connect(midir::ConnectErrorKind::InvalidPort) => StatusCode::BAD_REQUEST,
+        InputSlotError::Connect(midir::ConnectErrorKind::Other(_)) => {
+            StatusCode::INTERNAL_SERVER_ERROR
+        }
+        InputSlotError::PortInfo(_) => StatusCode::INTERNAL_SERVER_ERROR,
+    };
+    (code, err.to_string())
 }
