@@ -1,4 +1,5 @@
 use crate::{
+    MAX_BLOCK_SIZE,
     audio::{
         self,
         params::{
@@ -119,14 +120,13 @@ where
     T: cpal::Sample + cpal::SizedSample + cpal::FromSample<f32>,
 {
     let channel_count = config.channels as usize;
-    let max_sample_count = 16384;
     engine
         .lock()
         .await
-        .init(channel_count, max_sample_count, config.sample_rate)
+        .init(channel_count, config.sample_rate, MAX_BLOCK_SIZE)
         .map_err(Error::EngineInit)?;
 
-    let mut scratch = vec![0.0_f32; channel_count * max_sample_count];
+    let mut scratch = vec![0.0_f32; channel_count * MAX_BLOCK_SIZE];
 
     let stream = device
         .build_output_stream(

@@ -47,6 +47,8 @@ pub struct AudioOutputStream {
     pub buffer_size: Option<u32>,
 }
 
+//--------------------------------------------------------------------------------------------------
+
 #[utoipa::path(
     get,
     path = "/outputs",
@@ -80,6 +82,8 @@ async fn outputs() -> Result<Json<Vec<AudioHostOutputs>>, (StatusCode, String)> 
     Ok(Json(outputs))
 }
 
+//--------------------------------------------------------------------------------------------------
+
 #[utoipa::path(
     get,
     path = "/output/stream",
@@ -90,6 +94,8 @@ async fn outputs() -> Result<Json<Vec<AudioHostOutputs>>, (StatusCode, String)> 
 async fn output_stream(State(app_state): State<AppState>) -> Json<Option<AudioOutputStream>> {
     Json(app_state.output_stream.lock().await.as_ref().map(|s| s.1.clone()))
 }
+
+//--------------------------------------------------------------------------------------------------
 
 #[derive(Deserialize, ToSchema)]
 pub struct SetOutputStreamRequest {
@@ -134,6 +140,8 @@ impl From<OutputStreamSampleRate> for SampleRateSelection {
         }
     }
 }
+
+//--------------------------------------------------------------------------------------------------
 
 #[utoipa::path(
     post,
@@ -200,6 +208,8 @@ async fn set_output_stream(
 
     Ok(Json(Some(stream_info)))
 }
+
+//--------------------------------------------------------------------------------------------------
 
 fn map_audio_error(err: audio::output::Error) -> (StatusCode, String) {
     use audio::output::Error;

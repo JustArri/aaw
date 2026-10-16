@@ -41,6 +41,12 @@ impl Graph {
         }
     }
 
+    pub fn set_max_block_size(&mut self, max_block_size: usize) {
+        for synth in self.synths.iter_values_mut() {
+            synth.set_max_block_size(max_block_size);
+        }
+    }
+
     pub fn handle_midi_event(&mut self, id: LocalId, event: MidiEvent) {
         if let Some(synth) = self.synths.get_mut(id) {
             synth.handle_midi_event(event);

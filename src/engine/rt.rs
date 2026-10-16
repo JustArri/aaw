@@ -8,7 +8,7 @@ use crate::{
     },
     midi::{CompiledMidiKeyTransform, MidiEvent},
     rt_channels::{RtConsumer, RtProducer},
-    synths,
+    synths::{self, SoundFontProgram},
 };
 
 // sacrifice memory for latency (avoid allocations/deallocations in the audio thread)
@@ -24,7 +24,7 @@ pub enum Command {
     FluidPush { synth: synths::Fluid },
     FluidReplace { synth_id: LocalId, synth: synths::Fluid },
     FluidRemove { synth_id: LocalId },
-    FluidSelectProgram { synth_id: LocalId, bank: u16, preset_id: u8 },
+    FluidSelectProgram { synth_id: LocalId, program: SoundFontProgram },
 
     SfizzPush { synth: synths::Sfizz },
     SfizzReplace { synth_id: LocalId, synth: synths::Sfizz },
@@ -66,12 +66,13 @@ impl Engine {
     pub fn init(
         &mut self,
         channel_count: usize,
-        max_sample_count_per_channel: usize,
         sample_rate: u32,
+        max_block_size: usize,
     ) -> synths::Result<()> {
         self.silence();
-        self.create_buffers(channel_count, max_sample_count_per_channel);
         self.set_sample_rate(sample_rate)?;
+        self.set_max_block_size(max_block_size)?;
+        self.create_buffers(channel_count, max_block_size);
         Ok(())
     }
 
@@ -96,8 +97,15 @@ impl Engine {
         Ok(())
     }
 
-    pub fn create_buffers(&mut self, channel_count: usize, max_sample_count_per_channel: usize) {
-        let main = AudioBlock::new(channel_count, max_sample_count_per_channel);
+    pub fn set_max_block_size(&mut self, max_block_size: usize) -> synths::Result<()> {
+        self.project.dummy_graph.set_max_block_size(max_block_size);
+        self.project.fluid_graph.set_max_block_size(max_block_size)?;
+        self.project.sfizz_graph.set_max_block_size(max_block_size)?;
+        Ok(())
+    }
+
+    pub fn create_buffers(&mut self, channel_count: usize, max_block_size: usize) {
+        let main = AudioBlock::new(channel_count, max_block_size);
         let temp = main.mirror();
         self.audio_blocks = Some(AudioBlocks { main, temp });
     }
@@ -153,8 +161,8 @@ impl Engine {
                 }
                 removed
             }
-            Command::FluidSelectProgram { synth_id, bank, preset_id } => {
-                self.project.fluid_graph.select_program(synth_id, bank, preset_id)
+            Command::FluidSelectProgram { synth_id, program } => {
+                self.project.fluid_graph.select_program(synth_id, program)
             }
 
             Command::SfizzPush { synth } => self.project.sfizz_graph.push(synth),
@@ -225,6 +233,7 @@ impl Engine {
             return;
         };
 
+        //TODO: update block size???
         let sample_count = buffer.len() / audio_blocks.main.channel_count();
         audio_blocks.main.resize(sample_count);
         audio_blocks.temp.resize(sample_count);

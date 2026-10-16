@@ -227,7 +227,7 @@ fn generate_bindings() {
         .allowlist_function("fluid_synth_channel_pressure")
         .allowlist_function("fluid_synth_key_pressure")
         .allowlist_function("fluid_synth_all_sounds_off")
-        .allowlist_function("fluid_synth_set_sample_rate")
+        .allowlist_function("fluid_synth_count_midi_channels")
         .allowlist_function("fluid_synth_write_float")
         .generate_comments(false)
         .layout_tests(false)

@@ -36,6 +36,10 @@ impl Dummy {
         self.voices.clear();
     }
 
+    pub fn set_max_block_size(&mut self, _max_block_size: usize) {
+        self.silence();
+    }
+
     pub fn handle_midi_event(&mut self, event: MidiEvent) {
         match event.kind {
             MidiEventKind::NoteOn { key, velocity } if velocity > 0 => {

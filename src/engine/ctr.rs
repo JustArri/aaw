@@ -2,11 +2,12 @@ use crate::{
     engine::{
         self, Command, dummy_graph, fluid_graph,
         graph::LocalId,
-        instrument_graph::{self, SynthId},
+        instrument_graph::{self, SynthId, SynthKind},
         rt, sfizz_graph,
     },
     midi::{MidiEvent, MidiFilter, MidiKeyTransform},
     rt_channels::{NotifiedRtSharedProducer, RtConsumer},
+    synths::{self, SoundFontProgram},
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -96,6 +97,140 @@ impl EngineHandle {
 
         self.pending_replies.lock().await.clear();
         *project = ctr;
+        Ok(())
+    }
+
+    pub async fn dummy_push(
+        &self,
+        ctr: dummy_graph::ctr::Synth,
+        rt: synths::Dummy,
+    ) -> Result<(), EngineError> {
+        let mut project = self.project.write().await;
+
+        if !self.command(Command::DummyPush { synth: rt }).await? {
+            return Err(EngineError::Rejected);
+        }
+
+        project.dummy_graph.push(ctr);
+        Ok(())
+    }
+
+    pub async fn dummy_remove(&self, synth_id: LocalId) -> Result<(), EngineError> {
+        let mut project = self.project.write().await;
+
+        if !self.command(Command::DummyRemove { synth_id }).await? {
+            return Err(EngineError::Rejected);
+        }
+
+        project.dummy_graph.remove(synth_id);
+        project
+            .instrument_graph
+            .remove_synth_references(SynthId { kind: SynthKind::Dummy, id: synth_id });
+        Ok(())
+    }
+
+    pub async fn fluid_push(
+        &self,
+        ctr: fluid_graph::ctr::Synth,
+        rt: synths::Fluid,
+    ) -> Result<(), EngineError> {
+        let mut project = self.project.write().await;
+
+        if !self.command(Command::FluidPush { synth: rt }).await? {
+            return Err(EngineError::Rejected);
+        }
+
+        project.fluid_graph.push(ctr);
+        Ok(())
+    }
+
+    pub async fn fluid_replace(
+        &self,
+        synth_id: LocalId,
+        ctr: fluid_graph::ctr::Synth,
+        rt: synths::Fluid,
+    ) -> Result<(), EngineError> {
+        let mut project = self.project.write().await;
+
+        if !self.command(Command::FluidReplace { synth_id, synth: rt }).await? {
+            return Err(EngineError::Rejected);
+        }
+
+        project.fluid_graph.replace(synth_id, ctr);
+        Ok(())
+    }
+
+    pub async fn fluid_remove(&self, synth_id: LocalId) -> Result<(), EngineError> {
+        let mut project = self.project.write().await;
+
+        if !self.command(Command::FluidRemove { synth_id }).await? {
+            return Err(EngineError::Rejected);
+        }
+
+        project.fluid_graph.remove(synth_id);
+        project
+            .instrument_graph
+            .remove_synth_references(SynthId { kind: SynthKind::Fluid, id: synth_id });
+        Ok(())
+    }
+
+    pub async fn fluid_select_program(
+        &self,
+        synth_id: LocalId,
+        program: SoundFontProgram,
+    ) -> Result<(), EngineError> {
+        let mut project = self.project.write().await;
+
+        if !self.command(Command::FluidSelectProgram { synth_id, program }).await? {
+            return Err(EngineError::Rejected);
+        }
+
+        project.fluid_graph.select_program(synth_id, program);
+        Ok(())
+    }
+
+    pub async fn sfizz_push(
+        &self,
+        ctr: sfizz_graph::ctr::Synth,
+        rt: synths::Sfizz,
+    ) -> Result<(), EngineError> {
+        let mut project = self.project.write().await;
+
+        if !self.command(Command::SfizzPush { synth: rt }).await? {
+            return Err(EngineError::Rejected);
+        }
+
+        project.sfizz_graph.push(ctr);
+        Ok(())
+    }
+
+    pub async fn sfizz_replace(
+        &self,
+        synth_id: LocalId,
+        ctr: sfizz_graph::ctr::Synth,
+        rt: synths::Sfizz,
+    ) -> Result<(), EngineError> {
+        let mut project = self.project.write().await;
+
+        if !self.command(Command::SfizzReplace { synth_id, synth: rt }).await? {
+            return Err(EngineError::Rejected);
+        }
+
+        project.sfizz_graph.replace(synth_id, ctr);
+        Ok(())
+    }
+
+    pub async fn sfizz_remove(&self, synth_id: LocalId) -> Result<(), EngineError> {
+        let mut project = self.project.write().await;
+
+        if !self.command(Command::SfizzRemove { synth_id }).await? {
+            return Err(EngineError::Rejected);
+        }
+
+        project.sfizz_graph.remove(synth_id);
+        project
+            .instrument_graph
+            .remove_synth_references(SynthId { kind: SynthKind::Sfizz, id: synth_id });
         Ok(())
     }
 

@@ -1,4 +1,4 @@
-use crate::{rt_channels, synths};
+use crate::{engine::graph::DEFAULT_SAMPLE_RATE, rt_channels, synths};
 use rt::Command;
 use std::{
     collections::HashMap,
@@ -23,20 +23,21 @@ pub async fn load(
     stored: stored::Project,
     min_instrument_slots: usize,
     min_synths_per_graph: usize,
+    sample_rate: u32,
 ) -> synths::Result<(ctr::Project, rt::Project)> {
     let (ctr_instrument_graph, rt_instrument_graph) =
         instrument_graph::prepare(stored.instrument_graph, min_instrument_slots);
 
     let (ctr_dummy_graph, rt_dummy_graph) =
-        dummy_graph::prepare(stored.dummy_graph, min_synths_per_graph);
+        dummy_graph::prepare(stored.dummy_graph, min_synths_per_graph, sample_rate);
 
     let (ctr_fluid_graph, rt_fluid_graph) =
-        fluid_graph::prepare(stored.fluid_graph, min_synths_per_graph)
+        fluid_graph::prepare(stored.fluid_graph, min_synths_per_graph, sample_rate)
             .await
             .unwrap_or_else(|_| fluid_graph::default(min_synths_per_graph));
 
     let (ctr_sfizz_graph, rt_sfizz_graph) =
-        sfizz_graph::prepare(stored.sfizz_graph, min_synths_per_graph)
+        sfizz_graph::prepare(stored.sfizz_graph, min_synths_per_graph, sample_rate)
             .await
             .unwrap_or_else(|_| sfizz_graph::default(min_synths_per_graph));
 
@@ -71,7 +72,7 @@ pub async fn create_engine(
     let pending_replies = Arc::new(Mutex::new(HashMap::new()));
 
     let (ctr_project, rt_project) =
-        load(project, min_instrument_slots, min_synths_per_graph).await?;
+        load(project, min_instrument_slots, min_synths_per_graph, DEFAULT_SAMPLE_RATE).await?;
 
     let handle = ctr::EngineHandle {
         cmd_tx,

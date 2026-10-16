@@ -1,7 +1,8 @@
 pub use dummy::Dummy;
 pub use error::{Error, Result};
 pub use fluidsynth::{
-    SoundFontBankInfo, SoundFontInfo, SoundFontNoteRange, SoundFontPresetInfo, Synth as Fluid,
+    SoundFontBankInfo, SoundFontInfo, SoundFontNoteRange, SoundFontPresetInfo, SoundFontProgram,
+    Synth as Fluid,
 };
 pub use sfizz::{SfzInfo, SfzKeyRange, Synth as Sfizz};
 

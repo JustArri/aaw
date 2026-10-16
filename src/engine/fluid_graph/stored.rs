@@ -1,12 +1,13 @@
 use crate::engine::{fluid_graph::ctr, graph::LocalId};
 use migrations_derive::Migrations;
-use std::collections::HashMap;
+use std::{collections::HashMap, path::PathBuf};
 
 #[derive(Debug, Clone, Migrations)]
 #[migrations(version = 1, version_type = u32)]
 #[schema(as = FluidSynth)]
 pub struct Synth {
-    pub file_path: String,
+    #[schema(value_type = String)]
+    pub file_path: PathBuf,
 }
 
 impl From<ctr::Synth> for Synth {
