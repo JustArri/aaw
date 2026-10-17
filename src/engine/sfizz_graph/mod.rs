@@ -1,11 +1,20 @@
-use crate::{MAX_BLOCK_SIZE, engine::graph::LocalId, memory::Siv, synths};
-use std::{collections::HashMap, path::PathBuf};
+use crate::{
+    MAX_BLOCK_SIZE,
+    engine::{graph::LocalId, resolve_asset_path},
+    memory::Siv,
+    synths,
+};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
 
 pub mod ctr;
 pub mod rt;
 pub mod stored;
 
 pub async fn prepare(
+    assets_dir: &Path,
     stored: stored::Graph,
     num_slots: usize,
     sample_rate: u32,
@@ -14,7 +23,8 @@ pub async fn prepare(
     let mut ctr_synths: HashMap<LocalId, ctr::Synth> = HashMap::new();
 
     for (local_id, stored_synth) in stored.synths {
-        let (ctr_synth, rt_synth) = prepare_synth(stored_synth.file_path, sample_rate).await?;
+        let (ctr_synth, rt_synth) =
+            prepare_synth(assets_dir, stored_synth.file_path, sample_rate).await?;
         ctr_synths.insert(local_id, ctr_synth);
         rt_synths.insert(local_id, rt_synth);
     }
@@ -29,9 +39,13 @@ pub async fn prepare(
 }
 
 pub async fn prepare_synth(
-    file_path: PathBuf,
+    assets_dir: &Path,
+    relative_path: PathBuf,
     sample_rate: u32,
 ) -> synths::Result<(ctr::Synth, synths::Sfizz)> {
+    let file_path = resolve_asset_path(assets_dir, &relative_path)
+        .await
+        .map_err(|source| synths::Error::AssetPathResolution { relative_path, source })?;
     let mut rt_synth = synths::Sfizz::load(sample_rate as f32, MAX_BLOCK_SIZE, &file_path).await?;
     let info = rt_synth.sfz_info()?;
     let ctr_synth = ctr::Synth { file_path, info };
