@@ -7,11 +7,11 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 ## [Unreleased]
 ### Added
  - Asset management
- - Saved projects
+ - Project management
  - API endpoints
  - Project migrations
  - Engine
- - audio stream
+ - Audio stream
  - MIDI runtime
 
 [Unreleased]: https://github.com/SuperiorArri/aaw/compare/main...dev
