@@ -1,7 +1,4 @@
-use crate::{
-    midi::MidiEvent,
-    server::{AppState, WsHandlerAction},
-};
+use crate::{app_state::AppState, midi::MidiEvent, server::WsHandlerAction};
 use axum::{
     extract::{
         State, WebSocketUpgrade,

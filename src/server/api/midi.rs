@@ -1,7 +1,8 @@
 use crate::{
+    app_state::AppState,
     midi::{InputAutoConnection, InputSlotError, MidiEvent},
     rt_channels::NotifiedRtSharedProducer,
-    server::{AppState, WsHandlerAction},
+    server::WsHandlerAction,
 };
 use axum::{
     Json,
