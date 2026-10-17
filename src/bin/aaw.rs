@@ -1,27 +1,31 @@
 use aaw::{
     APP_VERSION, PACKAGE_NAME,
+    app_state::{AppState, LastProject},
     audio::{self, params::DeviceCfgSelection},
     engine::{self, stored::ProjectVersioned},
+    files::{load_opt, save},
     midi::MidiRuntime,
+    projects::Projects,
     rt_channels,
-    server::{AppState, api::audio::AudioOutputStream},
+    server::api::audio::AudioOutputStream,
 };
 use anyhow::Context;
 use clap::{ArgAction, Parser};
-use serde::{Serialize, de::DeserializeOwned};
 use std::{
     env,
     path::{Path, PathBuf},
     sync::{Arc, atomic::AtomicBool},
 };
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
 const AAW_ROOT_DIR_ENV: &str = "AAW_ROOT_DIR";
 const CFG_AUDIO_OUTPUT: (&str, &str) = ("config/audio-output.json", "audio output config");
-const CFG_LAST_PROJECT: (&str, &str) = ("config/last-project.json", "last project");
+const CFG_LAST_PROJECT_SUBJECT: &str = "last project";
+const CFG_LAST_PROJECT: (&str, &str) = ("config/last-project.json", CFG_LAST_PROJECT_SUBJECT);
 const CFG_MIDI_AC: (&str, &str) = ("config/midi-auto-connections.json", "midi auto-connections");
+const PROJECTS_DIR: &str = "projects";
 
 #[derive(Parser, Debug)]
 #[command(
@@ -113,6 +117,9 @@ async fn run(args: Args) -> anyhow::Result<()> {
     let aaw_root_dir = aaw_root_dir()?;
     info!("root directory: {}", aaw_root_dir.display());
 
+    let projects_dir = aaw_root_dir.join(PROJECTS_DIR);
+    tokio::fs::create_dir_all(&projects_dir).await?;
+
     info!(addr = %args.http_addr, port = args.http_port, "starting HTTP server...");
     let bind_params = (args.http_addr, args.http_port);
     let listener =
@@ -125,7 +132,19 @@ async fn run(args: Args) -> anyhow::Result<()> {
 
     let stream_error = Arc::new(AtomicBool::new(true));
 
-    let project = load_opt(&aaw_root_dir, CFG_LAST_PROJECT).await.unwrap_or_default();
+    let project: Option<LastProject> = load_opt(&aaw_root_dir, CFG_LAST_PROJECT).await;
+    let (project, project_id) = match project {
+        Some(LastProject::Cached(cached)) => (cached, None),
+        Some(LastProject::Saved(id)) => {
+            let path = Projects::project_path(&projects_dir, id);
+            let proj = load_opt::<engine::stored::Project>("", (&path, CFG_LAST_PROJECT_SUBJECT))
+                .await
+                .unwrap_or_default();
+            (proj, Some(id))
+        }
+        None => (engine::stored::Project::default(), None),
+    };
+
     let (engine, engine_handle, engine_runtime) = engine::create_engine(
         project,
         Arc::clone(&stream_error),
@@ -158,6 +177,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
         };
 
     let output_stream = Arc::new(Mutex::new(output_stream));
+    let active_project_id = Arc::new(RwLock::new(project_id));
 
     let root_router = aaw::server::router().with_state(AppState {
         midi_tx: midi_bc_tx.clone(),
@@ -169,6 +189,10 @@ async fn run(args: Args) -> anyhow::Result<()> {
         min_instrument_slots: args.min_instrument_slots,
         min_synths_per_graph: args.min_synths_per_graph,
         stream_error: Arc::clone(&stream_error),
+        projects: Arc::new(RwLock::new(
+            Projects::new(projects_dir).await.context("failed to load projects")?,
+        )),
+        active_project_id: Arc::clone(&active_project_id),
     });
 
     let relay_handle = aaw::spawn_midi_relay_task(stop.clone(), midi_relay_rx, midi_bc_tx);
@@ -194,7 +218,10 @@ async fn run(args: Args) -> anyhow::Result<()> {
         drop(stream);
     }
 
-    let project = engine_handle.save_project().await;
+    let project = match *active_project_id.read().await {
+        Some(id) => LastProject::Saved(id),
+        None => LastProject::Cached(engine_handle.save_project().await),
+    };
     save(&aaw_root_dir, CFG_LAST_PROJECT, &project).await;
 
     {
@@ -229,53 +256,6 @@ fn aaw_root_dir() -> anyhow::Result<PathBuf> {
     }
 
     Ok(path)
-}
-
-async fn save<T: Serialize>(root: &Path, (path, subject): (impl AsRef<Path>, &str), value: &T) {
-    async fn inner<T: Serialize>(full_path: &Path, subject: &str, value: &T) -> anyhow::Result<()> {
-        info!(path = %full_path.display(), "saving {subject}...");
-        if let Some(parent) = full_path.parent()
-            && !parent.exists()
-        {
-            tokio::fs::create_dir_all(parent).await.with_context(|| {
-                format!("failed to create save directory '{}'", parent.display())
-            })?;
-        }
-        let value = serde_json::to_string_pretty(value)
-            .with_context(|| format!("failed to save file '{}'", full_path.display()))?;
-
-        tokio::fs::write(full_path, value)
-            .await
-            .with_context(|| format!("failed to save file '{}'", full_path.display()))?;
-
-        Ok(())
-    }
-
-    let full_path = root.join(&path);
-
-    if inner(&full_path, subject, value).await.is_err() {
-        error!(path = %full_path.display(), "failed to save {subject}");
-    }
-}
-
-async fn load_opt<T: DeserializeOwned>(
-    root: &Path,
-    (path, subject): (impl AsRef<Path>, &str),
-) -> Option<T> {
-    let full_path =
-        if path.as_ref().is_relative() { root.join(&path) } else { path.as_ref().into() };
-
-    info!(path = %full_path.display(), "loading {subject}...");
-    let content = tokio::fs::read(&full_path).await.ok()?;
-    let content = String::from_utf8_lossy(&content);
-
-    match serde_json::from_str(&content) {
-        Ok(value) => Some(value),
-        Err(err) => {
-            error!(path = %full_path.display(), %err, "failed to load {subject}");
-            None
-        }
-    }
 }
 
 async fn try_start_stream(

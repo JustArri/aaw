@@ -1,7 +1,7 @@
 use crate::audio;
 use crate::{
+    app_state::AppState,
     audio::params::{DeviceCfgSelection, LatencySelection, SampleRateSelection},
-    server::AppState,
 };
 use axum::{Json, extract::State, http::StatusCode};
 use serde::{Deserialize, Serialize};
