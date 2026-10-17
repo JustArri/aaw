@@ -26,6 +26,7 @@ const CFG_LAST_PROJECT_SUBJECT: &str = "last project";
 const CFG_LAST_PROJECT: (&str, &str) = ("config/last-project.json", CFG_LAST_PROJECT_SUBJECT);
 const CFG_MIDI_AC: (&str, &str) = ("config/midi-auto-connections.json", "midi auto-connections");
 const PROJECTS_DIR: &str = "projects";
+const ASSETS_DIR: &str = "assets";
 
 #[derive(Parser, Debug)]
 #[command(
@@ -119,6 +120,8 @@ async fn run(args: Args) -> anyhow::Result<()> {
 
     let projects_dir = aaw_root_dir.join(PROJECTS_DIR);
     tokio::fs::create_dir_all(&projects_dir).await?;
+    let assets_dir = aaw_root_dir.join(ASSETS_DIR);
+    tokio::fs::create_dir_all(&assets_dir).await?;
 
     info!(addr = %args.http_addr, port = args.http_port, "starting HTTP server...");
     let bind_params = (args.http_addr, args.http_port);
@@ -146,6 +149,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
     };
 
     let (engine, engine_handle, engine_runtime) = engine::create_engine(
+        &assets_dir,
         project,
         Arc::clone(&stream_error),
         args.cmd_capacity,
@@ -179,7 +183,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
     let output_stream = Arc::new(Mutex::new(output_stream));
     let active_project_id = Arc::new(RwLock::new(project_id));
 
-    let root_router = aaw::server::router().with_state(AppState {
+    let root_router = aaw::server::router(assets_dir.clone()).with_state(AppState {
         midi_tx: midi_bc_tx.clone(),
         midi_runtime: Arc::clone(&midi_runtime),
         midi_event_senders,
@@ -192,6 +196,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
         projects: Arc::new(RwLock::new(
             Projects::new(projects_dir).await.context("failed to load projects")?,
         )),
+        assets_dir: Arc::from(assets_dir),
         active_project_id: Arc::clone(&active_project_id),
     });
 

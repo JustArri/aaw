@@ -5,8 +5,8 @@ use utoipa_scalar::{Scalar, Servable};
 
 pub mod api;
 
-pub fn router() -> axum::Router<AppState> {
-    let root_router = api_router();
+pub fn router(assets_dir: impl AsRef<std::path::Path>) -> axum::Router<AppState> {
+    let root_router = api_router(assets_dir);
     let (root_router, openapi) = root_router.split_for_parts();
     let openapi_json = openapi.clone();
     let root_router = root_router.route(
@@ -18,8 +18,8 @@ pub fn router() -> axum::Router<AppState> {
     root_router.layer(compression_layer)
 }
 
-pub fn api_router() -> OpenApiRouter<AppState> {
-    OpenApiRouter::new().nest("/api", api::router())
+pub fn api_router(assets_dir: impl AsRef<std::path::Path>) -> OpenApiRouter<AppState> {
+    OpenApiRouter::new().nest("/api", api::router(assets_dir))
 }
 
 enum WsHandlerAction {

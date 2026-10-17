@@ -84,6 +84,7 @@ async fn set_project(
 ) -> Result<StatusCode, (StatusCode, String)> {
     let sample_rate = app_state.sample_rate().await;
     let (ctr_project, rt_project) = engine::load(
+        &app_state.assets_dir,
         project,
         app_state.min_instrument_slots,
         app_state.min_synths_per_graph,
@@ -287,7 +288,8 @@ async fn fluid_push(
     Json(req): Json<SynthPushRequest>,
 ) -> Result<StatusCode, (StatusCode, String)> {
     let sample_rate = app_state.sample_rate().await;
-    let (ctr_synth, rt_synth) = fluid_graph::prepare_synth(req.path, sample_rate).await?;
+    let (ctr_synth, rt_synth) =
+        fluid_graph::prepare_synth(&app_state.assets_dir, req.path, sample_rate).await?;
     app_state.engine_handle.fluid_push(ctr_synth, rt_synth).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -315,7 +317,8 @@ async fn fluid_replace(
 ) -> Result<StatusCode, (StatusCode, String)> {
     with_fluid_synth(&app_state, path.synth_id, |_| ()).await?;
     let sample_rate = app_state.sample_rate().await;
-    let (ctr_synth, rt_synth) = fluid_graph::prepare_synth(req.path, sample_rate).await?;
+    let (ctr_synth, rt_synth) =
+        fluid_graph::prepare_synth(&app_state.assets_dir, req.path, sample_rate).await?;
     app_state.engine_handle.fluid_replace(path.synth_id, ctr_synth, rt_synth).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -432,7 +435,8 @@ async fn sfizz_push(
     Json(req): Json<SynthPushRequest>,
 ) -> Result<StatusCode, (StatusCode, String)> {
     let sample_rate = app_state.sample_rate().await;
-    let (ctr_synth, rt_synth) = sfizz_graph::prepare_synth(req.path, sample_rate).await?;
+    let (ctr_synth, rt_synth) =
+        sfizz_graph::prepare_synth(&app_state.assets_dir, req.path, sample_rate).await?;
     app_state.engine_handle.sfizz_push(ctr_synth, rt_synth).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -460,7 +464,8 @@ async fn sfizz_replace(
 ) -> Result<StatusCode, (StatusCode, String)> {
     with_sfizz_synth(&app_state, path.synth_id, |_| ()).await?;
     let sample_rate = app_state.sample_rate().await;
-    let (ctr_synth, rt_synth) = sfizz_graph::prepare_synth(req.path, sample_rate).await?;
+    let (ctr_synth, rt_synth) =
+        sfizz_graph::prepare_synth(&app_state.assets_dir, req.path, sample_rate).await?;
     app_state.engine_handle.sfizz_replace(path.synth_id, ctr_synth, rt_synth).await?;
     Ok(StatusCode::NO_CONTENT)
 }

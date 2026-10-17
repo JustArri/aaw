@@ -6,6 +6,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [Unreleased]
 ### Added
+ - Asset management
  - Saved projects
  - API endpoints
  - Project migrations
@@ -14,6 +15,3 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
  - MIDI runtime
 
 [Unreleased]: https://github.com/SuperiorArri/aaw/compare/main...dev
-
-### Changed
- - MIDI runtime automatically connects defined MIDI inouts
