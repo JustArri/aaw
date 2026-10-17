@@ -44,8 +44,8 @@ struct ProjectPath {
             content_type = "application/json",
             description = "Project saved"
         ),
-        (status = BAD_REQUEST, body = String),
-        (status = INTERNAL_SERVER_ERROR, body = String),
+        (status = BAD_REQUEST, body = String, description = "Bad Request"),
+        (status = INTERNAL_SERVER_ERROR, body = String, description = "Internal Server Error"),
     )
 )]
 async fn save(
@@ -79,8 +79,8 @@ struct ProjectInfo {
             content_type = "application/json",
             description = "OK"
         ),
-        (status = BAD_REQUEST, body = String),
-        (status = INTERNAL_SERVER_ERROR, body = String),
+        (status = BAD_REQUEST, body = String, description = "Bad Request"),
+        (status = INTERNAL_SERVER_ERROR, body = String, description = "Internal Server Error"),
     )
 )]
 async fn list(
@@ -106,7 +106,7 @@ async fn list(
     path = "/refresh",
     responses(
         (status = NO_CONTENT, description = "Projects refreshed"),
-        (status = INTERNAL_SERVER_ERROR, body = String),
+        (status = INTERNAL_SERVER_ERROR, body = String, description = "Internal Server Error"),
     )
 )]
 async fn refresh(State(app_state): State<AppState>) -> Result<StatusCode, (StatusCode, String)> {
@@ -122,10 +122,11 @@ async fn refresh(State(app_state): State<AppState>) -> Result<StatusCode, (Statu
 #[utoipa::path(
     post,
     path = "/load-active-project/{project_id}",
+    params(ProjectPath),
     responses(
         (status = NO_CONTENT, description = "Active project loaded"),
-        (status = BAD_REQUEST, body = String),
-        (status = INTERNAL_SERVER_ERROR, body = String),
+        (status = BAD_REQUEST, body = String, description = "Bad Request"),
+        (status = INTERNAL_SERVER_ERROR, body = String, description = "Internal Server Error"),
     )
 )]
 async fn load_active_project(
@@ -163,8 +164,8 @@ async fn load_active_project(
             content_type = "application/json",
             description = "Active project saved"
         ),
-        (status = BAD_REQUEST, body = String),
-        (status = INTERNAL_SERVER_ERROR, body = String),
+        (status = BAD_REQUEST, body = String, description = "Bad Request"),
+        (status = INTERNAL_SERVER_ERROR, body = String, description = "Internal Server Error"),
     )
 )]
 async fn save_active_project(
@@ -195,8 +196,8 @@ async fn save_active_project(
     params(ProjectPath),
     responses(
         (status = NO_CONTENT, description = "Project deleted"),
-        (status = BAD_REQUEST, body = String),
-        (status = INTERNAL_SERVER_ERROR, body = String),
+        (status = BAD_REQUEST, body = String, description = "Bad Request"),
+        (status = INTERNAL_SERVER_ERROR, body = String, description = "Internal Server Error"),
     )
 )]
 async fn delete(
@@ -224,8 +225,8 @@ async fn delete(
             content_type = "application/json",
             description = "Project deleted"
         ),
-        (status = BAD_REQUEST, body = String),
-        (status = INTERNAL_SERVER_ERROR, body = String),
+        (status = BAD_REQUEST, body = String, description = "Bad Request"),
+        (status = INTERNAL_SERVER_ERROR, body = String, description = "Internal Server Error"),
     )
 )]
 async fn load(
