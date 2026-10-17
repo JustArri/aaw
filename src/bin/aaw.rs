@@ -149,6 +149,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
     };
 
     let (engine, engine_handle, engine_runtime) = engine::create_engine(
+        &assets_dir,
         project,
         Arc::clone(&stream_error),
         args.cmd_capacity,
@@ -182,7 +183,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
     let output_stream = Arc::new(Mutex::new(output_stream));
     let active_project_id = Arc::new(RwLock::new(project_id));
 
-    let root_router = aaw::server::router(assets_dir).with_state(AppState {
+    let root_router = aaw::server::router(assets_dir.clone()).with_state(AppState {
         midi_tx: midi_bc_tx.clone(),
         midi_runtime: Arc::clone(&midi_runtime),
         midi_event_senders,
@@ -195,6 +196,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
         projects: Arc::new(RwLock::new(
             Projects::new(projects_dir).await.context("failed to load projects")?,
         )),
+        assets_dir: Arc::from(assets_dir),
         active_project_id: Arc::clone(&active_project_id),
     });
 
