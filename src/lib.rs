@@ -2,6 +2,8 @@ use crate::{
     midi::{MidiEvent, MidiRuntime},
     rt_channels::NotifiedRtConsumer,
 };
+use serde::Serialize;
+use serde_json::{Serializer, ser::PrettyFormatter};
 use std::{sync::Arc, time::Duration};
 use tokio::{
     net::TcpListener,
@@ -11,12 +13,15 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
+pub mod app_state;
 pub mod audio;
 pub mod effects;
 pub mod engine;
 pub mod ffi;
+pub mod files;
 pub mod memory;
 pub mod midi;
+pub mod projects;
 pub mod rt_channels;
 pub mod server;
 pub mod synths;
@@ -118,4 +123,12 @@ pub fn spawn_midi_relay_task(
             }
         }
     })
+}
+
+pub fn to_pretty_string<T: Serialize>(value: &T) -> serde_json::Result<String> {
+    let mut buf = Vec::new();
+    let formatter = PrettyFormatter::with_indent(b"    ");
+    let mut serializer = Serializer::with_formatter(&mut buf, formatter);
+    value.serialize(&mut serializer)?;
+    Ok(String::from_utf8_lossy(&buf).into())
 }

@@ -1,4 +1,4 @@
-use crate::{server::AppState, system};
+use crate::{app_state::AppState, system};
 use axum::http::StatusCode;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
