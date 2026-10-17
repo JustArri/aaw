@@ -139,6 +139,7 @@ async fn load_active_project(
         .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
     let sample_rate = app_state.sample_rate().await;
     let (ctr_project, rt_project) = engine::load(
+        app_state.assets_dir.as_ref(),
         project,
         app_state.min_instrument_slots,
         app_state.min_synths_per_graph,

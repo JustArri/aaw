@@ -2,6 +2,7 @@ use crate::{engine::graph::DEFAULT_SAMPLE_RATE, rt_channels, synths};
 use rt::Command;
 use std::{
     collections::HashMap,
+    path::{Path, PathBuf},
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicU32},
@@ -20,6 +21,7 @@ pub mod sfizz_graph;
 pub mod stored;
 
 pub async fn load(
+    assets_dir: &Path,
     stored: stored::Project,
     min_instrument_slots: usize,
     min_synths_per_graph: usize,
@@ -32,12 +34,12 @@ pub async fn load(
         dummy_graph::prepare(stored.dummy_graph, min_synths_per_graph, sample_rate);
 
     let (ctr_fluid_graph, rt_fluid_graph) =
-        fluid_graph::prepare(stored.fluid_graph, min_synths_per_graph, sample_rate)
+        fluid_graph::prepare(assets_dir, stored.fluid_graph, min_synths_per_graph, sample_rate)
             .await
             .unwrap_or_else(|_| fluid_graph::default(min_synths_per_graph));
 
     let (ctr_sfizz_graph, rt_sfizz_graph) =
-        sfizz_graph::prepare(stored.sfizz_graph, min_synths_per_graph, sample_rate)
+        sfizz_graph::prepare(assets_dir, stored.sfizz_graph, min_synths_per_graph, sample_rate)
             .await
             .unwrap_or_else(|_| sfizz_graph::default(min_synths_per_graph));
 
@@ -60,6 +62,7 @@ pub async fn load(
 }
 
 pub async fn create_engine(
+    assets_dir: &Path,
     project: stored::Project,
     stream_error: Arc<AtomicBool>,
     cmd_capacity: usize,
@@ -73,7 +76,8 @@ pub async fn create_engine(
     let pending_replies = Arc::new(Mutex::new(HashMap::new()));
 
     let (ctr_project, rt_project) =
-        load(project, min_instrument_slots, min_synths_per_graph, DEFAULT_SAMPLE_RATE).await?;
+        load(assets_dir, project, min_instrument_slots, min_synths_per_graph, DEFAULT_SAMPLE_RATE)
+            .await?;
 
     let handle = ctr::EngineHandle {
         cmd_tx,
@@ -98,4 +102,29 @@ pub async fn create_engine(
     };
 
     Ok((engine, handle, runtime))
+}
+
+async fn resolve_asset_path(assets_dir: &Path, relative: &Path) -> std::io::Result<PathBuf> {
+    if relative.components().any(|component| {
+        matches!(
+            component,
+            std::path::Component::ParentDir
+                | std::path::Component::RootDir
+                | std::path::Component::Prefix(_)
+        )
+    }) {
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid asset path"));
+    }
+
+    let root = tokio::fs::canonicalize(assets_dir).await?;
+    let resolved = tokio::fs::canonicalize(root.join(relative)).await?;
+
+    if !resolved.starts_with(&root) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "asset path escapes the assets directory",
+        ));
+    }
+
+    Ok(resolved)
 }
