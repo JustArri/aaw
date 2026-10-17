@@ -1,4 +1,5 @@
 use crate::{
+    app_state::AppState,
     engine::{
         self,
         ctr::EngineError,
@@ -9,7 +10,6 @@ use crate::{
         stored::Project,
     },
     midi::{MidiFilter, MidiKeyTransform},
-    server::AppState,
     synths::{self, SfzInfo, SoundFontInfo, SoundFontProgram},
 };
 use axum::{
@@ -24,8 +24,12 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 
 pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
-        .routes(routes!(project))
         .routes(routes!(set_project))
+        .routes(routes!(project))
+        .routes(routes!(project_id))
+        .routes(routes!(delete_project_id))
+        .routes(routes!(set_project_name))
+        .routes(routes!(project_name))
         .routes(routes!(dummy_synths))
         .routes(routes!(dummy_push))
         .routes(routes!(dummy_remove))
@@ -63,19 +67,6 @@ pub fn router() -> OpenApiRouter<AppState> {
 //--------------------------------------------------------------------------------------------------
 
 #[utoipa::path(
-    get,
-    path = "/",
-    responses(
-        (status = OK, body = Project, content_type = "application/json", description = "OK"),
-    )
-)]
-async fn project(State(app_state): State<AppState>) -> Json<Project> {
-    Json(app_state.engine_handle.save_project().await)
-}
-
-//--------------------------------------------------------------------------------------------------
-
-#[utoipa::path(
     post,
     path = "/",
     request_body(
@@ -100,7 +91,88 @@ async fn set_project(
     )
     .await?;
     app_state.engine_handle.replace_project(ctr_project, rt_project).await?;
+    *app_state.active_project_id.write().await = None;
     Ok(StatusCode::NO_CONTENT)
+}
+
+//--------------------------------------------------------------------------------------------------
+
+#[utoipa::path(
+    get,
+    path = "/",
+    responses(
+        (status = OK, body = Project, content_type = "application/json", description = "OK"),
+    )
+)]
+async fn project(State(app_state): State<AppState>) -> Json<Project> {
+    Json(app_state.engine_handle.save_project().await)
+}
+
+//--------------------------------------------------------------------------------------------------
+
+#[utoipa::path(
+    get,
+    path = "/id",
+    responses(
+        (
+            status = OK,
+            body = Option<uuid::Uuid>,
+            content_type = "application/json",
+            description = "OK"
+        ),
+    )
+)]
+async fn project_id(State(app_state): State<AppState>) -> Json<Option<uuid::Uuid>> {
+    Json(*app_state.active_project_id.read().await)
+}
+
+//--------------------------------------------------------------------------------------------------
+
+#[utoipa::path(
+    delete,
+    path = "/id",
+    responses(
+        (status = NO_CONTENT, description = "Project ID deleted"),
+    )
+)]
+async fn delete_project_id(State(app_state): State<AppState>) -> StatusCode {
+    *app_state.active_project_id.write().await = None;
+    StatusCode::NO_CONTENT
+}
+
+//--------------------------------------------------------------------------------------------------
+
+#[utoipa::path(
+    put,
+    path = "/name",
+    request_body(
+        content = String,
+        content_type = "application/json"
+    ),
+    responses(
+        (status = NO_CONTENT, description = "Project name set"),
+        (status = INTERNAL_SERVER_ERROR, body = String, description = "Internal Server Error"),
+    )
+)]
+async fn set_project_name(
+    State(app_state): State<AppState>,
+    Json(name): Json<String>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    app_state.engine_handle.set_project_name(name).await;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+//--------------------------------------------------------------------------------------------------
+
+#[utoipa::path(
+    get,
+    path = "/name",
+    responses(
+        (status = OK, body = String, content_type = "application/json", description = "OK"),
+    )
+)]
+async fn project_name(State(app_state): State<AppState>) -> Json<String> {
+    Json(app_state.engine_handle.project.read().await.name.clone())
 }
 
 //--------------------------------------------------------------------------------------------------

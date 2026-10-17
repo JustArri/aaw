@@ -43,6 +43,7 @@ pub enum EngineError {
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct Project {
+    pub name: String,
     pub instrument_graph: instrument_graph::ctr::Graph,
     pub dummy_graph: dummy_graph::ctr::Graph,
     pub fluid_graph: fluid_graph::ctr::Graph,
@@ -78,6 +79,10 @@ impl EngineHandle {
                 Err(EngineError::Timeout)
             }
         }
+    }
+
+    pub async fn set_project_name(&self, name: String) {
+        self.project.write().await.name = name;
     }
 
     pub async fn save_project(&self) -> engine::stored::Project {

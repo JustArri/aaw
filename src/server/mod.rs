@@ -1,47 +1,9 @@
-use crate::{
-    engine::{ctr::EngineHandle, graph::DEFAULT_SAMPLE_RATE, rt::Engine},
-    midi::{MidiEvent, MidiRuntime},
-    rt_channels::NotifiedRtSharedProducer,
-    server::api::audio::AudioOutputStream,
-};
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
-};
-use tokio::sync::{Mutex, broadcast};
+use crate::app_state::AppState;
 use tower_http::compression::CompressionLayer;
 use utoipa_axum::router::OpenApiRouter;
 use utoipa_scalar::{Scalar, Servable};
 
 pub mod api;
-
-#[derive(Clone)]
-pub struct AppState {
-    pub midi_tx: broadcast::Sender<Arc<MidiEvent>>,
-    pub midi_runtime: Arc<Mutex<MidiRuntime>>,
-    pub midi_event_senders: Arc<[NotifiedRtSharedProducer<MidiEvent>]>,
-    pub engine: Arc<Mutex<Engine>>,
-    pub engine_handle: EngineHandle,
-    pub output_stream: Arc<Mutex<Option<(cpal::Stream, AudioOutputStream)>>>,
-    pub min_instrument_slots: usize,
-    pub min_synths_per_graph: usize,
-    pub stream_error: Arc<AtomicBool>,
-}
-
-impl AppState {
-    pub fn stream_error(&self) -> bool {
-        self.stream_error.load(Ordering::Relaxed)
-    }
-
-    pub async fn sample_rate(&self) -> u32 {
-        self.output_stream
-            .lock()
-            .await
-            .as_ref()
-            .map(|s| s.1.sample_rate)
-            .unwrap_or(DEFAULT_SAMPLE_RATE)
-    }
-}
 
 pub fn router() -> axum::Router<AppState> {
     let root_router = api_router();

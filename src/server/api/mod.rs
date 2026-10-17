@@ -1,12 +1,13 @@
-use crate::{engine::rt::Command, server::AppState};
+use crate::{engine::rt::Command, app_state::AppState};
 use axum::{extract::State, http::StatusCode};
 use utoipa::OpenApi;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
+pub mod active_project;
 pub mod audio;
 pub mod midi;
 pub mod notifications;
-pub mod project;
+pub mod projects;
 pub mod system;
 
 pub fn router() -> OpenApiRouter<AppState> {
@@ -20,7 +21,8 @@ pub fn router() -> OpenApiRouter<AppState> {
         .nest("/midi", midi::router())
         .nest("/audio", audio::router())
         .nest("/system", system::router())
-        .nest("/project", project::router())
+        .nest("/active-project", active_project::router())
+        .nest("/projects", projects::router())
         .routes(routes!(notifications::handler))
 }
 
