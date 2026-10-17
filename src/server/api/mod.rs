@@ -1,16 +1,17 @@
-use crate::{engine::rt::Command, app_state::AppState};
+use crate::{app_state::AppState, engine::rt::Command};
 use axum::{extract::State, http::StatusCode};
 use utoipa::OpenApi;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 pub mod active_project;
+pub mod assets_dav;
 pub mod audio;
 pub mod midi;
 pub mod notifications;
 pub mod projects;
 pub mod system;
 
-pub fn router() -> OpenApiRouter<AppState> {
+pub fn router(assets_dir: impl AsRef<std::path::Path>) -> OpenApiRouter<AppState> {
     #[derive(OpenApi)]
     #[openapi(components(schemas(notifications::Notification)))]
     struct Api;
@@ -23,6 +24,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .nest("/system", system::router())
         .nest("/active-project", active_project::router())
         .nest("/projects", projects::router())
+        .merge(assets_dav::router("/assets", assets_dir))
         .routes(routes!(notifications::handler))
 }
 
