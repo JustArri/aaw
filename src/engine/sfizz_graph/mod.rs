@@ -43,12 +43,12 @@ pub async fn prepare_synth(
     relative_path: PathBuf,
     sample_rate: u32,
 ) -> synths::Result<(ctr::Synth, synths::Sfizz)> {
-    let file_path = resolve_asset_path(assets_dir, &relative_path)
-        .await
-        .map_err(|source| synths::Error::AssetPathResolution { relative_path, source })?;
+    let file_path = resolve_asset_path(assets_dir, &relative_path).await.map_err(|source| {
+        synths::Error::AssetPathResolution { relative_path: relative_path.clone(), source }
+    })?;
     let mut rt_synth = synths::Sfizz::load(sample_rate as f32, MAX_BLOCK_SIZE, &file_path).await?;
     let info = rt_synth.sfz_info()?;
-    let ctr_synth = ctr::Synth { file_path, info };
+    let ctr_synth = ctr::Synth { file_path: relative_path, info };
     Ok((ctr_synth, rt_synth))
 }
 

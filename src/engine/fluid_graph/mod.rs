@@ -42,14 +42,14 @@ pub async fn prepare_synth(
     relative_path: PathBuf,
     sample_rate: u32,
 ) -> synths::Result<(ctr::Synth, synths::Fluid)> {
-    let file_path = resolve_asset_path(assets_dir, &relative_path)
-        .await
-        .map_err(|source| synths::Error::AssetPathResolution { relative_path, source })?;
+    let file_path = resolve_asset_path(assets_dir, &relative_path).await.map_err(|source| {
+        synths::Error::AssetPathResolution { relative_path: relative_path.clone(), source }
+    })?;
     let mut rt_synth = synths::Fluid::load(sample_rate as f64, &file_path).await?;
     let info = rt_synth.soundfont_info()?;
     let program = info.first_program().unwrap_or_default();
     let _ = rt_synth.select_program(program);
-    let ctr_synth = ctr::Synth { file_path, info, program };
+    let ctr_synth = ctr::Synth { file_path: relative_path, info, program };
     Ok((ctr_synth, rt_synth))
 }
 
