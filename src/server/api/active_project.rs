@@ -217,15 +217,16 @@ async fn dummy_synths(
     post,
     path = "/graph/dummy/synths",
     responses(
-        (status = NO_CONTENT, description = "Created"),
+        (status = OK, body = LocalId, content_type = "application/json", description = "Created"),
         (status = INTERNAL_SERVER_ERROR, body = String, description = "Internal Server Error"),
     )
 )]
-async fn dummy_push(State(app_state): State<AppState>) -> Result<StatusCode, (StatusCode, String)> {
+async fn dummy_push(
+    State(app_state): State<AppState>,
+) -> Result<Json<LocalId>, (StatusCode, String)> {
     let sample_rate = app_state.sample_rate().await;
     let (ctr_synth, rt_synth) = dummy_graph::prepare_synth(sample_rate);
-    app_state.engine_handle.dummy_push(ctr_synth, rt_synth).await?;
-    Ok(StatusCode::NO_CONTENT)
+    Ok(Json(app_state.engine_handle.dummy_push(ctr_synth, rt_synth).await?))
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -279,19 +280,18 @@ async fn fluid_synths(
         content_type = "application/json"
     ),
     responses(
-        (status = NO_CONTENT, description = "Created"),
+        (status = OK, body = LocalId, content_type = "application/json", description = "Created"),
         (status = INTERNAL_SERVER_ERROR, body = String, description = "Internal Server Error"),
     )
 )]
 async fn fluid_push(
     State(app_state): State<AppState>,
     Json(req): Json<SynthPushRequest>,
-) -> Result<StatusCode, (StatusCode, String)> {
+) -> Result<Json<LocalId>, (StatusCode, String)> {
     let sample_rate = app_state.sample_rate().await;
     let (ctr_synth, rt_synth) =
         fluid_graph::prepare_synth(&app_state.assets_dir, req.path, sample_rate).await?;
-    app_state.engine_handle.fluid_push(ctr_synth, rt_synth).await?;
-    Ok(StatusCode::NO_CONTENT)
+    Ok(Json(app_state.engine_handle.fluid_push(ctr_synth, rt_synth).await?))
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -426,19 +426,18 @@ async fn fluid_program(
         content_type = "application/json"
     ),
     responses(
-        (status = NO_CONTENT, description = "Created"),
+        (status = OK, body = LocalId, content_type = "application/json", description = "Created"),
         (status = INTERNAL_SERVER_ERROR, body = String, description = "Internal Server Error"),
     )
 )]
 async fn sfizz_push(
     State(app_state): State<AppState>,
     Json(req): Json<SynthPushRequest>,
-) -> Result<StatusCode, (StatusCode, String)> {
+) -> Result<Json<LocalId>, (StatusCode, String)> {
     let sample_rate = app_state.sample_rate().await;
     let (ctr_synth, rt_synth) =
         sfizz_graph::prepare_synth(&app_state.assets_dir, req.path, sample_rate).await?;
-    app_state.engine_handle.sfizz_push(ctr_synth, rt_synth).await?;
-    Ok(StatusCode::NO_CONTENT)
+    Ok(Json(app_state.engine_handle.sfizz_push(ctr_synth, rt_synth).await?))
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -486,7 +485,7 @@ async fn sfizz_remove(
     State(app_state): State<AppState>,
     Path(path): Path<SynthPath>,
 ) -> Result<StatusCode, (StatusCode, String)> {
-    with_fluid_synth(&app_state, path.synth_id, |_| ()).await?;
+    with_sfizz_synth(&app_state, path.synth_id, |_| ()).await?;
     app_state.engine_handle.sfizz_remove(path.synth_id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -575,15 +574,14 @@ async fn instrument_slots(
     post,
     path = "/graph/instrument/slots",
     responses(
-        (status = NO_CONTENT, description = "Created"),
+        (status = OK, body = LocalId, content_type = "application/json", description = "Created"),
         (status = INTERNAL_SERVER_ERROR, body = String, description = "Internal Server Error"),
     )
 )]
 async fn instrument_slot_append_new(
     State(app_state): State<AppState>,
-) -> Result<StatusCode, (StatusCode, String)> {
-    app_state.engine_handle.instrument_slot_append_new().await?;
-    Ok(StatusCode::NO_CONTENT)
+) -> Result<Json<LocalId>, (StatusCode, String)> {
+    Ok(Json(app_state.engine_handle.instrument_slot_append_new().await?))
 }
 
 //--------------------------------------------------------------------------------------------------

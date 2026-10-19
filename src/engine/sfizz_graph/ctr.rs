@@ -21,8 +21,8 @@ impl Graph {
         Self { synths }
     }
 
-    pub fn push(&mut self, synth: Synth) {
-        self.synths.push(synth);
+    pub fn push(&mut self, synth: Synth) -> LocalId {
+        self.synths.push(synth)
     }
 
     pub fn replace(&mut self, synth_id: LocalId, synth: Synth) {

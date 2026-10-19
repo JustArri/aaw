@@ -43,11 +43,18 @@ pub enum EngineError {
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct Project {
+    pub revision: u32,
     pub name: String,
     pub instrument_graph: instrument_graph::ctr::Graph,
     pub dummy_graph: dummy_graph::ctr::Graph,
     pub fluid_graph: fluid_graph::ctr::Graph,
     pub sfizz_graph: sfizz_graph::ctr::Graph,
+}
+
+impl Project {
+    fn next_revision(&mut self) {
+        (self.revision, _) = self.revision.overflowing_add(1);
+    }
 }
 
 #[derive(Clone)]
@@ -82,7 +89,9 @@ impl EngineHandle {
     }
 
     pub async fn set_project_name(&self, name: String) {
-        self.project.write().await.name = name;
+        let mut project = self.project.write().await;
+        project.next_revision();
+        project.name = name;
     }
 
     pub async fn save_project(&self) -> engine::stored::Project {
@@ -109,15 +118,15 @@ impl EngineHandle {
         &self,
         ctr: dummy_graph::ctr::Synth,
         rt: synths::Dummy,
-    ) -> Result<(), EngineError> {
+    ) -> Result<LocalId, EngineError> {
         let mut project = self.project.write().await;
 
         if !self.command(Command::DummyPush { synth: rt }).await? {
             return Err(EngineError::Rejected);
         }
 
-        project.dummy_graph.push(ctr);
-        Ok(())
+        project.next_revision();
+        Ok(project.dummy_graph.push(ctr))
     }
 
     pub async fn dummy_remove(&self, synth_id: LocalId) -> Result<(), EngineError> {
@@ -127,6 +136,7 @@ impl EngineHandle {
             return Err(EngineError::Rejected);
         }
 
+        project.next_revision();
         project.dummy_graph.remove(synth_id);
         project
             .instrument_graph
@@ -138,15 +148,15 @@ impl EngineHandle {
         &self,
         ctr: fluid_graph::ctr::Synth,
         rt: synths::Fluid,
-    ) -> Result<(), EngineError> {
+    ) -> Result<LocalId, EngineError> {
         let mut project = self.project.write().await;
 
         if !self.command(Command::FluidPush { synth: rt }).await? {
             return Err(EngineError::Rejected);
         }
 
-        project.fluid_graph.push(ctr);
-        Ok(())
+        project.next_revision();
+        Ok(project.fluid_graph.push(ctr))
     }
 
     pub async fn fluid_replace(
@@ -161,6 +171,7 @@ impl EngineHandle {
             return Err(EngineError::Rejected);
         }
 
+        project.next_revision();
         project.fluid_graph.replace(synth_id, ctr);
         Ok(())
     }
@@ -172,6 +183,7 @@ impl EngineHandle {
             return Err(EngineError::Rejected);
         }
 
+        project.next_revision();
         project.fluid_graph.remove(synth_id);
         project
             .instrument_graph
@@ -190,6 +202,7 @@ impl EngineHandle {
             return Err(EngineError::Rejected);
         }
 
+        project.next_revision();
         project.fluid_graph.select_program(synth_id, program);
         Ok(())
     }
@@ -198,15 +211,15 @@ impl EngineHandle {
         &self,
         ctr: sfizz_graph::ctr::Synth,
         rt: synths::Sfizz,
-    ) -> Result<(), EngineError> {
+    ) -> Result<LocalId, EngineError> {
         let mut project = self.project.write().await;
 
         if !self.command(Command::SfizzPush { synth: rt }).await? {
             return Err(EngineError::Rejected);
         }
 
-        project.sfizz_graph.push(ctr);
-        Ok(())
+        project.next_revision();
+        Ok(project.sfizz_graph.push(ctr))
     }
 
     pub async fn sfizz_replace(
@@ -221,6 +234,7 @@ impl EngineHandle {
             return Err(EngineError::Rejected);
         }
 
+        project.next_revision();
         project.sfizz_graph.replace(synth_id, ctr);
         Ok(())
     }
@@ -232,6 +246,7 @@ impl EngineHandle {
             return Err(EngineError::Rejected);
         }
 
+        project.next_revision();
         project.sfizz_graph.remove(synth_id);
         project
             .instrument_graph
@@ -246,19 +261,20 @@ impl EngineHandle {
             return Err(EngineError::Rejected);
         }
 
+        project.next_revision();
         project.instrument_graph.set_global_transposition(transposition);
         Ok(())
     }
 
-    pub async fn instrument_slot_append_new(&self) -> Result<(), EngineError> {
+    pub async fn instrument_slot_append_new(&self) -> Result<LocalId, EngineError> {
         let mut project = self.project.write().await;
 
         if !self.command(Command::InstrumentSlotAppendNew).await? {
             return Err(EngineError::Rejected);
         }
 
-        project.instrument_graph.append_new();
-        Ok(())
+        project.next_revision();
+        Ok(project.instrument_graph.append_new())
     }
 
     pub async fn instrument_slot_remove(&self, slot_id: LocalId) -> Result<(), EngineError> {
@@ -268,6 +284,7 @@ impl EngineHandle {
             return Err(EngineError::Rejected);
         }
 
+        project.next_revision();
         project.instrument_graph.remove(slot_id);
         Ok(())
     }
@@ -283,6 +300,7 @@ impl EngineHandle {
             return Err(EngineError::Rejected);
         }
 
+        project.next_revision();
         project.instrument_graph.set_synth(slot_id, synth_id);
         Ok(())
     }
@@ -294,6 +312,7 @@ impl EngineHandle {
             return Err(EngineError::Rejected);
         }
 
+        project.next_revision();
         project.instrument_graph.set_enabled(slot_id, flag);
         Ok(())
     }
@@ -312,6 +331,7 @@ impl EngineHandle {
             return Err(EngineError::Rejected);
         }
 
+        project.next_revision();
         project.instrument_graph.set_key_transform(slot_id, transform);
         Ok(())
     }
@@ -327,6 +347,7 @@ impl EngineHandle {
             return Err(EngineError::Rejected);
         }
 
+        project.next_revision();
         project.instrument_graph.set_channel_filter(slot_id, filter);
         Ok(())
     }
@@ -345,6 +366,7 @@ impl EngineHandle {
             return Err(EngineError::Rejected);
         }
 
+        project.next_revision();
         project.instrument_graph.set_cc_filter(slot_id, filter);
         Ok(())
     }
@@ -360,6 +382,7 @@ impl EngineHandle {
             return Err(EngineError::Rejected);
         }
 
+        project.next_revision();
         project.instrument_graph.set_use_global_transposition(slot_id, flag);
         Ok(())
     }
