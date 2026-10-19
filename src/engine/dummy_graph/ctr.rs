@@ -3,7 +3,9 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct Synth;
+pub struct Synth {
+    pub name: String,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct Graph {
@@ -21,5 +23,11 @@ impl Graph {
 
     pub fn remove(&mut self, synth_id: LocalId) {
         let _ = self.synths.try_remove(synth_id);
+    }
+
+    pub fn set_name(&mut self, synth_id: LocalId, name: String) {
+        if let Some(synth) = self.synths.get_mut(synth_id) {
+            synth.name = name;
+        }
     }
 }

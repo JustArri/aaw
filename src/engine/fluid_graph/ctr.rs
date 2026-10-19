@@ -9,6 +9,8 @@ use utoipa::ToSchema;
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct Synth {
+    pub name: String,
+
     #[schema(value_type = String)]
     pub file_path: PathBuf,
 
@@ -41,6 +43,12 @@ impl Graph {
     pub fn select_program(&mut self, synth_id: LocalId, program: SoundFontProgram) {
         if let Some(synth) = self.synths.get_mut(synth_id) {
             synth.program = program;
+        }
+    }
+
+    pub fn set_name(&mut self, synth_id: LocalId, name: String) {
+        if let Some(synth) = self.synths.get_mut(synth_id) {
+            synth.name = name;
         }
     }
 }

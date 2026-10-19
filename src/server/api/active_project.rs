@@ -33,17 +33,23 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(dummy_synths))
         .routes(routes!(dummy_push))
         .routes(routes!(dummy_remove))
+        .routes(routes!(dummy_set_name))
+        .routes(routes!(dummy_name))
         .routes(routes!(fluid_synths))
         .routes(routes!(fluid_push))
         .routes(routes!(fluid_replace))
         .routes(routes!(fluid_remove))
         .routes(routes!(fluid_info))
+        .routes(routes!(fluid_set_program))
+        .routes(routes!(fluid_program))
+        .routes(routes!(fluid_set_name))
+        .routes(routes!(fluid_name))
         .routes(routes!(sfizz_push))
         .routes(routes!(sfizz_replace))
         .routes(routes!(sfizz_remove))
         .routes(routes!(sfizz_info))
-        .routes(routes!(fluid_set_program))
-        .routes(routes!(fluid_program))
+        .routes(routes!(sfizz_set_name))
+        .routes(routes!(sfizz_name))
         .routes(routes!(set_global_transposition))
         .routes(routes!(global_transposition))
         .routes(routes!(instrument_slots))
@@ -225,7 +231,7 @@ async fn dummy_push(
     State(app_state): State<AppState>,
 ) -> Result<Json<LocalId>, (StatusCode, String)> {
     let sample_rate = app_state.sample_rate().await;
-    let (ctr_synth, rt_synth) = dummy_graph::prepare_synth(sample_rate);
+    let (ctr_synth, rt_synth) = dummy_graph::prepare_synth("Dummy Synth".into(), sample_rate);
     Ok(Json(app_state.engine_handle.dummy_push(ctr_synth, rt_synth).await?))
 }
 
@@ -248,6 +254,55 @@ async fn dummy_remove(
     with_dummy_synth(&app_state, path.synth_id, |_| ()).await?;
     app_state.engine_handle.dummy_remove(path.synth_id).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+//--------------------------------------------------------------------------------------------------
+
+#[utoipa::path(
+    put,
+    path = "/graph/dummy/synths/{synth_id}/name",
+    params(SynthPath),
+    request_body(
+        content = String,
+        content_type = "application/json"
+    ),
+    responses(
+        (status = NO_CONTENT, description = "Value set"),
+        (status = NOT_FOUND, body = String, description = "Synth not found"),
+        (status = INTERNAL_SERVER_ERROR, body = String, description = "Internal Server Error"),
+    )
+)]
+async fn dummy_set_name(
+    State(app_state): State<AppState>,
+    Path(path): Path<SynthPath>,
+    Json(name): Json<String>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    with_dummy_synth(&app_state, path.synth_id, |_| ()).await?;
+    app_state.engine_handle.dummy_set_name(path.synth_id, name).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+//--------------------------------------------------------------------------------------------------
+
+#[utoipa::path(
+    get,
+    path = "/graph/dummy/synths/{synth_id}/name",
+    params(SynthPath),
+    responses(
+        (
+            status = OK,
+            body = String,
+            content_type = "application/json",
+            description = "Value set"
+        ),
+        (status = NOT_FOUND, body = String, description = "Synth not found"),
+    )
+)]
+async fn dummy_name(
+    State(app_state): State<AppState>,
+    Path(path): Path<SynthPath>,
+) -> Result<Json<String>, (StatusCode, String)> {
+    Ok(Json(with_dummy_synth(&app_state, path.synth_id, |s| s.name.clone()).await?))
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -289,8 +344,13 @@ async fn fluid_push(
     Json(req): Json<SynthPushRequest>,
 ) -> Result<Json<LocalId>, (StatusCode, String)> {
     let sample_rate = app_state.sample_rate().await;
+    let name = req
+        .path
+        .file_stem()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or("Fluid Synth".into());
     let (ctr_synth, rt_synth) =
-        fluid_graph::prepare_synth(&app_state.assets_dir, req.path, sample_rate).await?;
+        fluid_graph::prepare_synth(&app_state.assets_dir, name, req.path, sample_rate).await?;
     Ok(Json(app_state.engine_handle.fluid_push(ctr_synth, rt_synth).await?))
 }
 
@@ -317,8 +377,13 @@ async fn fluid_replace(
 ) -> Result<StatusCode, (StatusCode, String)> {
     with_fluid_synth(&app_state, path.synth_id, |_| ()).await?;
     let sample_rate = app_state.sample_rate().await;
+    let name = req
+        .path
+        .file_stem()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or("Fluid Synth".into());
     let (ctr_synth, rt_synth) =
-        fluid_graph::prepare_synth(&app_state.assets_dir, req.path, sample_rate).await?;
+        fluid_graph::prepare_synth(&app_state.assets_dir, name, req.path, sample_rate).await?;
     app_state.engine_handle.fluid_replace(path.synth_id, ctr_synth, rt_synth).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -404,7 +469,7 @@ async fn fluid_set_program(
             status = OK,
             body = SoundFontProgram,
             content_type = "application/json",
-            description = "OK"
+            description = "Value set"
         ),
         (status = NOT_FOUND, body = String, description = "Synth not found"),
     )
@@ -414,6 +479,55 @@ async fn fluid_program(
     Path(path): Path<SynthPath>,
 ) -> Result<Json<SoundFontProgram>, (StatusCode, String)> {
     Ok(Json(with_fluid_synth(&app_state, path.synth_id, |s| s.program).await?))
+}
+
+//--------------------------------------------------------------------------------------------------
+
+#[utoipa::path(
+    put,
+    path = "/graph/fluid/synths/{synth_id}/name",
+    params(SynthPath),
+    request_body(
+        content = String,
+        content_type = "application/json"
+    ),
+    responses(
+        (status = NO_CONTENT, description = "Value set"),
+        (status = NOT_FOUND, body = String, description = "Synth not found"),
+        (status = INTERNAL_SERVER_ERROR, body = String, description = "Internal Server Error"),
+    )
+)]
+async fn fluid_set_name(
+    State(app_state): State<AppState>,
+    Path(path): Path<SynthPath>,
+    Json(name): Json<String>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    with_fluid_synth(&app_state, path.synth_id, |_| ()).await?;
+    app_state.engine_handle.fluid_set_name(path.synth_id, name).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+//--------------------------------------------------------------------------------------------------
+
+#[utoipa::path(
+    get,
+    path = "/graph/fluid/synths/{synth_id}/name",
+    params(SynthPath),
+    responses(
+        (
+            status = OK,
+            body = String,
+            content_type = "application/json",
+            description = "Value set"
+        ),
+        (status = NOT_FOUND, body = String, description = "Synth not found"),
+    )
+)]
+async fn fluid_name(
+    State(app_state): State<AppState>,
+    Path(path): Path<SynthPath>,
+) -> Result<Json<String>, (StatusCode, String)> {
+    Ok(Json(with_fluid_synth(&app_state, path.synth_id, |s| s.name.clone()).await?))
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -435,8 +549,13 @@ async fn sfizz_push(
     Json(req): Json<SynthPushRequest>,
 ) -> Result<Json<LocalId>, (StatusCode, String)> {
     let sample_rate = app_state.sample_rate().await;
+    let name = req
+        .path
+        .file_stem()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or("Sfizz Synth".into());
     let (ctr_synth, rt_synth) =
-        sfizz_graph::prepare_synth(&app_state.assets_dir, req.path, sample_rate).await?;
+        sfizz_graph::prepare_synth(&app_state.assets_dir, name, req.path, sample_rate).await?;
     Ok(Json(app_state.engine_handle.sfizz_push(ctr_synth, rt_synth).await?))
 }
 
@@ -463,8 +582,13 @@ async fn sfizz_replace(
 ) -> Result<StatusCode, (StatusCode, String)> {
     with_sfizz_synth(&app_state, path.synth_id, |_| ()).await?;
     let sample_rate = app_state.sample_rate().await;
+    let name = req
+        .path
+        .file_stem()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or("Sfizz Synth".into());
     let (ctr_synth, rt_synth) =
-        sfizz_graph::prepare_synth(&app_state.assets_dir, req.path, sample_rate).await?;
+        sfizz_graph::prepare_synth(&app_state.assets_dir, name, req.path, sample_rate).await?;
     app_state.engine_handle.sfizz_replace(path.synth_id, ctr_synth, rt_synth).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -511,6 +635,55 @@ async fn sfizz_info(
     Path(path): Path<SynthPath>,
 ) -> Result<Json<SfzInfo>, (StatusCode, String)> {
     Ok(Json(with_sfizz_synth(&app_state, path.synth_id, |s| s.info.clone()).await?))
+}
+
+//--------------------------------------------------------------------------------------------------
+
+#[utoipa::path(
+    put,
+    path = "/graph/sfizz/synths/{synth_id}/name",
+    params(SynthPath),
+    request_body(
+        content = String,
+        content_type = "application/json"
+    ),
+    responses(
+        (status = NO_CONTENT, description = "Value set"),
+        (status = NOT_FOUND, body = String, description = "Synth not found"),
+        (status = INTERNAL_SERVER_ERROR, body = String, description = "Internal Server Error"),
+    )
+)]
+async fn sfizz_set_name(
+    State(app_state): State<AppState>,
+    Path(path): Path<SynthPath>,
+    Json(name): Json<String>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    with_sfizz_synth(&app_state, path.synth_id, |_| ()).await?;
+    app_state.engine_handle.sfizz_set_name(path.synth_id, name).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+//--------------------------------------------------------------------------------------------------
+
+#[utoipa::path(
+    get,
+    path = "/graph/sfizz/synths/{synth_id}/name",
+    params(SynthPath),
+    responses(
+        (
+            status = OK,
+            body = String,
+            content_type = "application/json",
+            description = "Value set"
+        ),
+        (status = NOT_FOUND, body = String, description = "Synth not found"),
+    )
+)]
+async fn sfizz_name(
+    State(app_state): State<AppState>,
+    Path(path): Path<SynthPath>,
+) -> Result<Json<String>, (StatusCode, String)> {
+    Ok(Json(with_sfizz_synth(&app_state, path.synth_id, |s| s.name.clone()).await?))
 }
 
 //--------------------------------------------------------------------------------------------------
