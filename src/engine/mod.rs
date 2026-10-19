@@ -44,6 +44,7 @@ pub async fn load(
             .unwrap_or_else(|_| sfizz_graph::default(min_synths_per_graph));
 
     let ctr_project = ctr::Project {
+        revision: 0,
         name: stored.name,
         instrument_graph: ctr_instrument_graph,
         dummy_graph: ctr_dummy_graph,

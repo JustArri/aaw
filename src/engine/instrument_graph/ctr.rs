@@ -52,8 +52,8 @@ impl Graph {
         self.global_transposition = transposition;
     }
 
-    pub fn append_new(&mut self) {
-        self.slots.push(Slot::default());
+    pub fn append_new(&mut self) -> LocalId {
+        self.slots.push(Slot::default())
     }
 
     pub fn remove(&mut self, slot_id: LocalId) {
