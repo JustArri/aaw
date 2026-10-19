@@ -1,13 +1,17 @@
 use crate::{
     engine::{graph::LocalId, instrument_graph::SynthId},
     memory::Siv,
-    midi::{CompiledMidiKeyTransform, MidiEvent, MidiEventKind, MidiKeyTransform},
+    midi::{
+        CompiledMidiKeyTransform, CompiledMidiVelocityTransform, MidiEvent, MidiEventKind,
+        MidiKeyTransform, MidiVelocityTransform,
+    },
 };
 
 pub struct Slot {
     pub synth_id: Option<SynthId>,
     pub enabled: bool,
     pub key_transform: CompiledMidiKeyTransform,
+    pub velocity_transform: CompiledMidiVelocityTransform,
     pub channel_mask: u16,
     pub cc_mask: u128,
     pub use_global_transposition: bool,
@@ -18,7 +22,8 @@ impl Default for Slot {
         Self {
             synth_id: None,
             enabled: true,
-            key_transform: CompiledMidiKeyTransform::from(&MidiKeyTransform::default()),
+            key_transform: MidiKeyTransform::default().compile(),
+            velocity_transform: MidiVelocityTransform::default().compile(),
             channel_mask: u16::MAX,
             cc_mask: u128::MAX,
             use_global_transposition: true,
@@ -70,7 +75,11 @@ impl<'a> Iterator for MidiHandlerIter<'a> {
             let transposition =
                 if slot.use_global_transposition { self.global_transposition } else { 0 };
 
-            let Some(event) = self.event.transformed(&slot.key_transform, transposition) else {
+            let Some(event) = self.event.transformed(
+                &slot.key_transform,
+                &slot.velocity_transform,
+                transposition,
+            ) else {
                 continue;
             };
 
@@ -173,6 +182,19 @@ impl Graph {
     ) -> bool {
         if let Some(slot) = self.slots.get_mut(slot_id) {
             slot.key_transform = transform;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn set_velocity_transform(
+        &mut self,
+        slot_id: LocalId,
+        transform: CompiledMidiVelocityTransform,
+    ) -> bool {
+        if let Some(slot) = self.slots.get_mut(slot_id) {
+            slot.velocity_transform = transform;
             true
         } else {
             false

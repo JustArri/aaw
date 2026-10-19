@@ -1,6 +1,5 @@
 use crate::{
-    app_state::AppState,
-    engine::{
+    app_state::AppState, engine::{
         self,
         ctr::EngineError,
         dummy_graph, fluid_graph,
@@ -8,9 +7,7 @@ use crate::{
         instrument_graph::{self, SynthId},
         sfizz_graph,
         stored::Project,
-    },
-    midi::{MidiFilter, MidiKeyTransform},
-    synths::{self, SfzInfo, SoundFontInfo, SoundFontProgram},
+    }, midi::{MidiFilter, MidiKeyTransform, MidiVelocityTransform}, synths::{self, SfzInfo, SoundFontInfo, SoundFontProgram},
 };
 use axum::{
     Json,
@@ -28,6 +25,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(project))
         .routes(routes!(project_id))
         .routes(routes!(delete_project_id))
+        .routes(routes!(project_revision))
         .routes(routes!(set_project_name))
         .routes(routes!(project_name))
         .routes(routes!(dummy_synths))
@@ -62,6 +60,8 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(enabled))
         .routes(routes!(set_key_transform))
         .routes(routes!(key_transform))
+        .routes(routes!(set_velocity_transform))
+        .routes(routes!(velocity_transform))
         .routes(routes!(set_channel_filter))
         .routes(routes!(channel_filter))
         .routes(routes!(set_cc_filter))
@@ -145,6 +145,24 @@ async fn project_id(State(app_state): State<AppState>) -> Json<Option<uuid::Uuid
 async fn delete_project_id(State(app_state): State<AppState>) -> StatusCode {
     *app_state.active_project_id.write().await = None;
     StatusCode::NO_CONTENT
+}
+
+//--------------------------------------------------------------------------------------------------
+
+#[utoipa::path(
+    get,
+    path = "/revision",
+    responses(
+        (
+            status = OK,
+            body = u32,
+            content_type = "application/json",
+            description = "OK"
+        ),
+    )
+)]
+async fn project_revision(State(app_state): State<AppState>) -> Json<u32> {
+    Json(app_state.engine_handle.project.read().await.revision)
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -950,6 +968,55 @@ async fn key_transform(
     Path(path): Path<InstrumentSlotPath>,
 ) -> Result<Json<MidiKeyTransform>, (StatusCode, String)> {
     Ok(Json(with_slot(&app_state, path.slot_id, |s| s.key_transform.clone()).await?))
+}
+
+//--------------------------------------------------------------------------------------------------
+
+#[utoipa::path(
+    put,
+    path = "/graph/instrument/slots/{slot_id}/velocity-transform",
+    params(InstrumentSlotPath),
+    request_body(
+        content = MidiVelocityTransform,
+        content_type = "application/json"
+    ),
+    responses(
+        (status = NO_CONTENT, description = "Value set"),
+        (status = NOT_FOUND, body = String, description = "Slot not found"),
+        (status = INTERNAL_SERVER_ERROR, body = String, description = "Internal Server Error"),
+    )
+)]
+async fn set_velocity_transform(
+    State(app_state): State<AppState>,
+    Path(path): Path<InstrumentSlotPath>,
+    Json(transform): Json<MidiVelocityTransform>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    with_slot(&app_state, path.slot_id, |_| ()).await?;
+    app_state.engine_handle.set_velocity_transform(path.slot_id, transform).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+//--------------------------------------------------------------------------------------------------
+
+#[utoipa::path(
+    get,
+    path = "/graph/instrument/slots/{slot_id}/velocity-transform",
+    params(InstrumentSlotPath),
+    responses(
+        (
+            status = OK,
+            body = MidiVelocityTransform,
+            content_type = "application/json",
+            description = "OK"
+        ),
+        (status = NOT_FOUND, body = String, description = "Slot not found"),
+    )
+)]
+async fn velocity_transform(
+    State(app_state): State<AppState>,
+    Path(path): Path<InstrumentSlotPath>,
+) -> Result<Json<MidiVelocityTransform>, (StatusCode, String)> {
+    Ok(Json(with_slot(&app_state, path.slot_id, |s| s.velocity_transform.clone()).await?))
 }
 
 //--------------------------------------------------------------------------------------------------
