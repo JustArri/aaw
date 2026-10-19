@@ -4,10 +4,7 @@ use crate::{
         graph::LocalId,
         instrument_graph::{self, SynthId, SynthKind},
         rt, sfizz_graph,
-    },
-    midi::{MidiEvent, MidiFilter, MidiKeyTransform},
-    rt_channels::{NotifiedRtSharedProducer, RtConsumer},
-    synths::{self, SoundFontProgram},
+    }, midi::{MidiEvent, MidiFilter, MidiKeyTransform, MidiVelocityTransform}, rt_channels::{NotifiedRtSharedProducer, RtConsumer}, synths::{self, SoundFontProgram},
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -366,6 +363,25 @@ impl EngineHandle {
 
         project.next_revision();
         project.instrument_graph.set_key_transform(slot_id, transform);
+        Ok(())
+    }
+
+    pub async fn set_velocity_transform(
+        &self,
+        slot_id: LocalId,
+        transform: MidiVelocityTransform,
+    ) -> Result<(), EngineError> {
+        let mut project = self.project.write().await;
+
+        if !self
+            .command(Command::SetVelocityTransform { slot_id, transform: transform.compile() })
+            .await?
+        {
+            return Err(EngineError::Rejected);
+        }
+
+        project.next_revision();
+        project.instrument_graph.set_velocity_transform(slot_id, transform);
         Ok(())
     }
 

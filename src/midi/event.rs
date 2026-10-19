@@ -1,4 +1,4 @@
-use crate::midi::CompiledMidiKeyTransform;
+use crate::midi::{CompiledMidiKeyTransform, CompiledMidiVelocityTransform};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -40,19 +40,22 @@ impl From<TimedMidiEvent> for MidiEvent {
 impl MidiEvent {
     pub fn transformed(
         self,
-        transform: &CompiledMidiKeyTransform,
+        key_transform: &CompiledMidiKeyTransform,
+        velocity_transform: &CompiledMidiVelocityTransform,
         transposition: i8,
     ) -> Option<Self> {
         let kind = match self.kind {
-            MidiEventKind::NoteOn { key, velocity } => {
-                MidiEventKind::NoteOn { key: transform.apply(key, transposition)?, velocity }
-            }
-            MidiEventKind::NoteOff { key, velocity } => {
-                MidiEventKind::NoteOff { key: transform.apply(key, transposition)?, velocity }
-            }
+            MidiEventKind::NoteOn { key, velocity } => MidiEventKind::NoteOn {
+                key: key_transform.apply(key, transposition)?,
+                velocity: velocity_transform.apply(velocity),
+            },
+            MidiEventKind::NoteOff { key, .. } => MidiEventKind::NoteOff {
+                key: key_transform.apply(key, transposition)?,
+                velocity: 0,
+            },
             MidiEventKind::PolyphonicAftertouch { key, value } => {
                 MidiEventKind::PolyphonicAftertouch {
-                    key: transform.apply(key, transposition)?,
+                    key: key_transform.apply(key, transposition)?,
                     value,
                 }
             }

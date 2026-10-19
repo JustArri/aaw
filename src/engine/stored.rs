@@ -4,6 +4,7 @@ use migrations_derive::Migrations;
 #[derive(Default, Debug, Clone, Migrations)]
 #[migrations(version = 1, version_type = u32)]
 pub struct Project {
+    pub revision: u32,
     pub name: String,
     pub instrument_graph: instrument_graph::stored::Graph,
     pub dummy_graph: dummy_graph::stored::Graph,
@@ -14,6 +15,7 @@ pub struct Project {
 impl From<&ctr::Project> for Project {
     fn from(value: &ctr::Project) -> Self {
         Self {
+            revision: value.revision,
             name: value.name.clone(),
             instrument_graph: (&value.instrument_graph).into(),
             dummy_graph: (&value.dummy_graph).into(),
@@ -26,6 +28,7 @@ impl From<&ctr::Project> for Project {
 impl From<ctr::Project> for Project {
     fn from(value: ctr::Project) -> Self {
         Self {
+            revision: value.revision,
             name: value.name,
             instrument_graph: value.instrument_graph.into(),
             dummy_graph: value.dummy_graph.into(),

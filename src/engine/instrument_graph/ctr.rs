@@ -1,7 +1,5 @@
 use crate::{
-    engine::{graph::LocalId, instrument_graph::SynthId},
-    memory::Siv,
-    midi::{MidiFilter, MidiKeyTransform},
+    engine::{graph::LocalId, instrument_graph::SynthId}, memory::Siv, midi::{MidiFilter, MidiKeyTransform, MidiVelocityTransform},
 };
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -13,6 +11,7 @@ pub struct Slot {
 
     pub enabled: bool,
     pub key_transform: MidiKeyTransform,
+    pub velocity_transform: MidiVelocityTransform,
     pub channel_filter: MidiFilter,
     pub cc_filter: MidiFilter,
     pub use_global_transposition: bool,
@@ -25,6 +24,7 @@ impl Default for Slot {
             synth_id: None,
             enabled: true,
             key_transform: Default::default(),
+            velocity_transform: Default::default(),
             channel_filter: Default::default(),
             cc_filter: Default::default(),
             use_global_transposition: true,
@@ -75,6 +75,12 @@ impl Graph {
     pub fn set_key_transform(&mut self, slot_id: LocalId, transform: MidiKeyTransform) {
         if let Some(slot) = self.slots.get_mut(slot_id) {
             slot.key_transform = transform;
+        }
+    }
+
+    pub fn set_velocity_transform(&mut self, slot_id: LocalId, transform: MidiVelocityTransform) {
+        if let Some(slot) = self.slots.get_mut(slot_id) {
+            slot.velocity_transform = transform;
         }
     }
 

@@ -1,14 +1,10 @@
 use crate::{
-    audio::block::AudioBlock,
-    engine::{
+    audio::block::AudioBlock, engine::{
         dummy_graph, fluid_graph,
         graph::LocalId,
         instrument_graph::{self, SynthId, SynthKind},
         sfizz_graph,
-    },
-    midi::{CompiledMidiKeyTransform, MidiEvent},
-    rt_channels::{RtConsumer, RtProducer},
-    synths::{self, SoundFontProgram},
+    }, midi::{CompiledMidiKeyTransform, CompiledMidiVelocityTransform, MidiEvent}, rt_channels::{RtConsumer, RtProducer}, synths::{self, SoundFontProgram},
 };
 
 // sacrifice memory for latency (avoid allocations/deallocations in the audio thread)
@@ -37,6 +33,7 @@ pub enum Command {
     SetSynth { slot_id: LocalId, synth_id: Option<SynthId> },
     SetEnabled { slot_id: LocalId, flag: bool },
     SetKeyTransform { slot_id: LocalId, transform: CompiledMidiKeyTransform },
+    SetVelocityTransform { slot_id: LocalId, transform: CompiledMidiVelocityTransform },
     SetChannelFilter { slot_id: LocalId, mask: u16 },
     SetControlChangeFilter { slot_id: LocalId, mask: u128 },
     SetUseGlobalTransposition { slot_id: LocalId, flag: bool },
@@ -196,6 +193,9 @@ impl Engine {
             }
             Command::SetKeyTransform { slot_id, transform } => {
                 self.project.instrument_graph.set_key_transform(slot_id, transform)
+            }
+            Command::SetVelocityTransform { slot_id, transform } => {
+                self.project.instrument_graph.set_velocity_transform(slot_id, transform)
             }
             Command::SetChannelFilter { slot_id, mask } => {
                 self.project.instrument_graph.set_channel_filter(slot_id, mask)

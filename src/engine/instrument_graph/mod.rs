@@ -41,6 +41,7 @@ fn ctr_slot_to_rt((slot_id, slot): (&LocalId, &ctr::Slot)) -> (LocalId, rt::Slot
         synth_id: slot.synth_id,
         enabled: slot.enabled,
         key_transform: slot.key_transform.compile(),
+        velocity_transform: slot.velocity_transform.compile(),
         channel_mask: slot.channel_filter.as_u16(),
         cc_mask: slot.cc_filter.as_u128(),
         use_global_transposition: slot.use_global_transposition,
