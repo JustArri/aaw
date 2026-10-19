@@ -1,5 +1,6 @@
 use crate::{
-    app_state::AppState, engine::{
+    app_state::AppState,
+    engine::{
         self,
         ctr::EngineError,
         dummy_graph, fluid_graph,
@@ -7,7 +8,10 @@ use crate::{
         instrument_graph::{self, SynthId},
         sfizz_graph,
         stored::Project,
-    }, midi::{MidiFilter, MidiKeyTransform, MidiVelocityTransform}, synths::{self, SfzInfo, SoundFontInfo, SoundFontProgram},
+    },
+    midi::{MidiFilter, MidiKeyTransform, MidiVelocityTransform},
+    server::api::notifications::ProjectChangeKind,
+    synths::{self, SfzInfo, SoundFontInfo, SoundFontProgram},
 };
 use axum::{
     Json,
@@ -99,6 +103,7 @@ async fn set_project(
     .await?;
     app_state.engine_handle.replace_project(ctr_project, rt_project).await?;
     *app_state.active_project_id.write().await = None;
+    app_state.broadcast_project_change(ProjectChangeKind::Full).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -144,6 +149,7 @@ async fn project_id(State(app_state): State<AppState>) -> Json<Option<uuid::Uuid
 )]
 async fn delete_project_id(State(app_state): State<AppState>) -> StatusCode {
     *app_state.active_project_id.write().await = None;
+    app_state.broadcast_project_change(ProjectChangeKind::Id).await;
     StatusCode::NO_CONTENT
 }
 
@@ -183,7 +189,8 @@ async fn set_project_name(
     State(app_state): State<AppState>,
     Json(name): Json<String>,
 ) -> Result<StatusCode, (StatusCode, String)> {
-    app_state.engine_handle.set_project_name(name).await;
+    app_state.engine_handle.set_project_name(name.clone()).await;
+    app_state.broadcast_project_change(ProjectChangeKind::Name).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -250,7 +257,9 @@ async fn dummy_push(
 ) -> Result<Json<LocalId>, (StatusCode, String)> {
     let sample_rate = app_state.sample_rate().await;
     let (ctr_synth, rt_synth) = dummy_graph::prepare_synth("Dummy Synth".into(), sample_rate);
-    Ok(Json(app_state.engine_handle.dummy_push(ctr_synth, rt_synth).await?))
+    let id = app_state.engine_handle.dummy_push(ctr_synth, rt_synth).await?;
+    app_state.broadcast_project_change(ProjectChangeKind::DummySynth { id }).await;
+    Ok(Json(id))
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -271,6 +280,7 @@ async fn dummy_remove(
 ) -> Result<StatusCode, (StatusCode, String)> {
     with_dummy_synth(&app_state, path.synth_id, |_| ()).await?;
     app_state.engine_handle.dummy_remove(path.synth_id).await?;
+    app_state.broadcast_project_change(ProjectChangeKind::DummySynth { id: path.synth_id }).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -297,6 +307,9 @@ async fn dummy_set_name(
 ) -> Result<StatusCode, (StatusCode, String)> {
     with_dummy_synth(&app_state, path.synth_id, |_| ()).await?;
     app_state.engine_handle.dummy_set_name(path.synth_id, name).await?;
+    app_state
+        .broadcast_project_change(ProjectChangeKind::DummySynthName { id: path.synth_id })
+        .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -369,7 +382,9 @@ async fn fluid_push(
         .unwrap_or("Fluid Synth".into());
     let (ctr_synth, rt_synth) =
         fluid_graph::prepare_synth(&app_state.assets_dir, name, req.path, sample_rate).await?;
-    Ok(Json(app_state.engine_handle.fluid_push(ctr_synth, rt_synth).await?))
+    let id = app_state.engine_handle.fluid_push(ctr_synth, rt_synth).await?;
+    app_state.broadcast_project_change(ProjectChangeKind::FluidSynth { id }).await;
+    Ok(Json(id))
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -403,6 +418,7 @@ async fn fluid_replace(
     let (ctr_synth, rt_synth) =
         fluid_graph::prepare_synth(&app_state.assets_dir, name, req.path, sample_rate).await?;
     app_state.engine_handle.fluid_replace(path.synth_id, ctr_synth, rt_synth).await?;
+    app_state.broadcast_project_change(ProjectChangeKind::FluidSynth { id: path.synth_id }).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -424,6 +440,7 @@ async fn fluid_remove(
 ) -> Result<StatusCode, (StatusCode, String)> {
     with_fluid_synth(&app_state, path.synth_id, |_| ()).await?;
     app_state.engine_handle.fluid_remove(path.synth_id).await?;
+    app_state.broadcast_project_change(ProjectChangeKind::FluidSynth { id: path.synth_id }).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -473,6 +490,9 @@ async fn fluid_set_program(
 ) -> Result<StatusCode, (StatusCode, String)> {
     with_fluid_synth(&app_state, path.synth_id, |_| ()).await?;
     app_state.engine_handle.fluid_select_program(path.synth_id, program).await?;
+    app_state
+        .broadcast_project_change(ProjectChangeKind::FluidSynthProgram { id: path.synth_id })
+        .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -522,6 +542,9 @@ async fn fluid_set_name(
 ) -> Result<StatusCode, (StatusCode, String)> {
     with_fluid_synth(&app_state, path.synth_id, |_| ()).await?;
     app_state.engine_handle.fluid_set_name(path.synth_id, name).await?;
+    app_state
+        .broadcast_project_change(ProjectChangeKind::FluidSynthName { id: path.synth_id })
+        .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -574,7 +597,9 @@ async fn sfizz_push(
         .unwrap_or("Sfizz Synth".into());
     let (ctr_synth, rt_synth) =
         sfizz_graph::prepare_synth(&app_state.assets_dir, name, req.path, sample_rate).await?;
-    Ok(Json(app_state.engine_handle.sfizz_push(ctr_synth, rt_synth).await?))
+    let id = app_state.engine_handle.sfizz_push(ctr_synth, rt_synth).await?;
+    app_state.broadcast_project_change(ProjectChangeKind::SfizzSynth { id }).await;
+    Ok(Json(id))
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -608,6 +633,7 @@ async fn sfizz_replace(
     let (ctr_synth, rt_synth) =
         sfizz_graph::prepare_synth(&app_state.assets_dir, name, req.path, sample_rate).await?;
     app_state.engine_handle.sfizz_replace(path.synth_id, ctr_synth, rt_synth).await?;
+    app_state.broadcast_project_change(ProjectChangeKind::SfizzSynth { id: path.synth_id }).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -629,6 +655,7 @@ async fn sfizz_remove(
 ) -> Result<StatusCode, (StatusCode, String)> {
     with_sfizz_synth(&app_state, path.synth_id, |_| ()).await?;
     app_state.engine_handle.sfizz_remove(path.synth_id).await?;
+    app_state.broadcast_project_change(ProjectChangeKind::SfizzSynth { id: path.synth_id }).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -678,6 +705,9 @@ async fn sfizz_set_name(
 ) -> Result<StatusCode, (StatusCode, String)> {
     with_sfizz_synth(&app_state, path.synth_id, |_| ()).await?;
     app_state.engine_handle.sfizz_set_name(path.synth_id, name).await?;
+    app_state
+        .broadcast_project_change(ProjectChangeKind::SfizzSynthName { id: path.synth_id })
+        .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -723,6 +753,7 @@ async fn set_global_transposition(
     Json(transposition): Json<i8>,
 ) -> Result<StatusCode, (StatusCode, String)> {
     app_state.engine_handle.set_global_transposition(transposition).await?;
+    app_state.broadcast_project_change(ProjectChangeKind::GlobalTransposition).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -772,7 +803,9 @@ async fn instrument_slots(
 async fn instrument_slot_append_new(
     State(app_state): State<AppState>,
 ) -> Result<Json<LocalId>, (StatusCode, String)> {
-    Ok(Json(app_state.engine_handle.instrument_slot_append_new().await?))
+    let id = app_state.engine_handle.instrument_slot_append_new().await?;
+    app_state.broadcast_project_change(ProjectChangeKind::InstrumentSlot { id }).await;
+    Ok(Json(id))
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -825,6 +858,9 @@ async fn instrument_slot_remove(
 ) -> Result<StatusCode, (StatusCode, String)> {
     with_slot(&app_state, path.slot_id, |_| ()).await?;
     app_state.engine_handle.instrument_slot_remove(path.slot_id).await?;
+    app_state
+        .broadcast_project_change(ProjectChangeKind::InstrumentSlot { id: path.slot_id })
+        .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -851,6 +887,9 @@ async fn set_synth(
 ) -> Result<StatusCode, (StatusCode, String)> {
     with_slot(&app_state, path.slot_id, |_| ()).await?;
     app_state.engine_handle.set_synth(path.slot_id, synth).await?;
+    app_state
+        .broadcast_project_change(ProjectChangeKind::InstrumentSynth { id: path.slot_id })
+        .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -900,6 +939,9 @@ async fn set_enabled(
 ) -> Result<StatusCode, (StatusCode, String)> {
     with_slot(&app_state, path.slot_id, |_| ()).await?;
     app_state.engine_handle.set_enabled(path.slot_id, enabled).await?;
+    app_state
+        .broadcast_project_change(ProjectChangeKind::InstrumentEnabled { id: path.slot_id })
+        .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -944,6 +986,9 @@ async fn set_key_transform(
 ) -> Result<StatusCode, (StatusCode, String)> {
     with_slot(&app_state, path.slot_id, |_| ()).await?;
     app_state.engine_handle.set_key_transform(path.slot_id, transform).await?;
+    app_state
+        .broadcast_project_change(ProjectChangeKind::InstrumentKeyTransform { id: path.slot_id })
+        .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -993,6 +1038,11 @@ async fn set_velocity_transform(
 ) -> Result<StatusCode, (StatusCode, String)> {
     with_slot(&app_state, path.slot_id, |_| ()).await?;
     app_state.engine_handle.set_velocity_transform(path.slot_id, transform).await?;
+    app_state
+        .broadcast_project_change(ProjectChangeKind::InstrumentVelocityTransform {
+            id: path.slot_id,
+        })
+        .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1042,6 +1092,9 @@ async fn set_channel_filter(
 ) -> Result<StatusCode, (StatusCode, String)> {
     with_slot(&app_state, path.slot_id, |_| ()).await?;
     app_state.engine_handle.set_channel_filter(path.slot_id, filter).await?;
+    app_state
+        .broadcast_project_change(ProjectChangeKind::InstrumentChannelFilter { id: path.slot_id })
+        .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1086,6 +1139,9 @@ async fn set_cc_filter(
 ) -> Result<StatusCode, (StatusCode, String)> {
     with_slot(&app_state, path.slot_id, |_| ()).await?;
     app_state.engine_handle.set_cc_filter(path.slot_id, filter).await?;
+    app_state
+        .broadcast_project_change(ProjectChangeKind::InstrumentCcFilter { id: path.slot_id })
+        .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1130,6 +1186,11 @@ async fn set_use_global_transposition(
 ) -> Result<StatusCode, (StatusCode, String)> {
     with_slot(&app_state, path.slot_id, |_| ()).await?;
     app_state.engine_handle.set_use_global_transposition(path.slot_id, enabled).await?;
+    app_state
+        .broadcast_project_change(ProjectChangeKind::InstrumentUseGlobalTransposition {
+            id: path.slot_id,
+        })
+        .await;
     Ok(StatusCode::NO_CONTENT)
 }
 

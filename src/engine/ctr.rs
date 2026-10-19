@@ -4,7 +4,10 @@ use crate::{
         graph::LocalId,
         instrument_graph::{self, SynthId, SynthKind},
         rt, sfizz_graph,
-    }, midi::{MidiEvent, MidiFilter, MidiKeyTransform, MidiVelocityTransform}, rt_channels::{NotifiedRtSharedProducer, RtConsumer}, synths::{self, SoundFontProgram},
+    },
+    midi::{MidiEvent, MidiFilter, MidiKeyTransform, MidiVelocityTransform},
+    rt_channels::{NotifiedRtSharedProducer, RtConsumer},
+    synths::{self, SoundFontProgram},
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -141,11 +144,7 @@ impl EngineHandle {
         Ok(())
     }
 
-    pub async fn dummy_set_name(
-        &self,
-        synth_id: LocalId,
-        name: String,
-    ) -> Result<(), EngineError> {
+    pub async fn dummy_set_name(&self, synth_id: LocalId, name: String) -> Result<(), EngineError> {
         let mut project = self.project.write().await;
         project.next_revision();
         project.dummy_graph.set_name(synth_id, name);
@@ -215,11 +214,7 @@ impl EngineHandle {
         Ok(())
     }
 
-    pub async fn fluid_set_name(
-        &self,
-        synth_id: LocalId,
-        name: String,
-    ) -> Result<(), EngineError> {
+    pub async fn fluid_set_name(&self, synth_id: LocalId, name: String) -> Result<(), EngineError> {
         let mut project = self.project.write().await;
         project.next_revision();
         project.fluid_graph.set_name(synth_id, name);
@@ -273,11 +268,7 @@ impl EngineHandle {
         Ok(())
     }
 
-    pub async fn sfizz_set_name(
-        &self,
-        synth_id: LocalId,
-        name: String,
-    ) -> Result<(), EngineError> {
+    pub async fn sfizz_set_name(&self, synth_id: LocalId, name: String) -> Result<(), EngineError> {
         let mut project = self.project.write().await;
         project.next_revision();
         project.sfizz_graph.set_name(synth_id, name);

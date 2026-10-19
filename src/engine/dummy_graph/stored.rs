@@ -9,6 +9,12 @@ pub struct Synth {
     pub name: String,
 }
 
+impl From<&ctr::Synth> for Synth {
+    fn from(value: &ctr::Synth) -> Self {
+        Self { name: value.name.clone() }
+    }
+}
+
 impl From<ctr::Synth> for Synth {
     fn from(value: ctr::Synth) -> Self {
         Self { name: value.name }
@@ -24,7 +30,7 @@ pub struct Graph {
 
 impl From<&ctr::Graph> for Graph {
     fn from(value: &ctr::Graph) -> Self {
-        Self { synths: value.synths.map_ref(|synth| synth.clone().into()).into() }
+        Self { synths: value.synths.map_ref(|synth| synth.into()).into() }
     }
 }
 

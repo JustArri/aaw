@@ -1,4 +1,6 @@
-use crate::{app_state::AppState, midi::MidiEvent, server::WsHandlerAction};
+use crate::{
+    app_state::AppState, engine::graph::LocalId, midi::MidiEvent, server::WsHandlerAction,
+};
 use axum::{
     extract::{
         State, WebSocketUpgrade,
@@ -16,6 +18,39 @@ use utoipa::ToSchema;
 #[serde(tag = "type", content = "data")]
 pub enum Notification<'a> {
     MidiEvent(&'a MidiEvent),
+    ProjectChange(&'a ProjectChange),
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ProjectChange {
+    pub revision: u32,
+
+    #[serde(flatten)]
+    pub kind: ProjectChangeKind,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(tag = "type", content = "data")]
+pub enum ProjectChangeKind {
+    Full,
+    Id,
+    Name,
+    DummySynth { id: LocalId },
+    DummySynthName { id: LocalId },
+    FluidSynth { id: LocalId },
+    FluidSynthProgram { id: LocalId },
+    FluidSynthName { id: LocalId },
+    SfizzSynth { id: LocalId },
+    SfizzSynthName { id: LocalId },
+    GlobalTransposition,
+    InstrumentSlot { id: LocalId },
+    InstrumentSynth { id: LocalId },
+    InstrumentEnabled { id: LocalId },
+    InstrumentKeyTransform { id: LocalId },
+    InstrumentVelocityTransform { id: LocalId },
+    InstrumentChannelFilter { id: LocalId },
+    InstrumentCcFilter { id: LocalId },
+    InstrumentUseGlobalTransposition { id: LocalId },
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -43,11 +78,21 @@ pub async fn handler(
 
 async fn handle_socket(mut socket: WebSocket, state: AppState) {
     let mut midi_rx = state.midi_tx.subscribe();
+    let mut project_change_rx = state.project_change_tx.subscribe();
 
     loop {
         let action = tokio::select! {
-            midi_rx_result = midi_rx.recv() => {
-                handle_midi_rx_result(midi_rx_result, &mut socket).await
+            rx_result = midi_rx.recv() => {
+                handle_broadcast_rx_result(rx_result, &mut socket, |event| {
+                    Notification::MidiEvent(event)
+                })
+                .await
+            }
+            rx_result = project_change_rx.recv() => {
+                handle_broadcast_rx_result(rx_result, &mut socket, |change| {
+                    Notification::ProjectChange(change)
+                })
+                .await
             }
             message = socket.recv() => {
                 handle_socket_rx_result(message)
@@ -60,13 +105,17 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
     }
 }
 
-async fn handle_midi_rx_result(
-    midi_event_result: Result<Arc<MidiEvent>, RecvError>,
+async fn handle_broadcast_rx_result<T, F>(
+    rx_result: Result<Arc<T>, RecvError>,
     socket: &mut WebSocket,
-) -> WsHandlerAction {
-    match midi_event_result {
-        Ok(midi_event) => {
-            let notif = Notification::MidiEvent(&midi_event);
+    to_notif: F,
+) -> WsHandlerAction
+where
+    F: for<'a> FnOnce(&'a T) -> Notification<'a>,
+{
+    match rx_result {
+        Ok(data) => {
+            let notif = to_notif(&data);
             tracing::trace!(target: "notif", ?notif);
             let json = match serde_json::to_string(&notif) {
                 Ok(json) => json,
