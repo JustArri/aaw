@@ -9,7 +9,7 @@ resolver = "3"
 
 [features]
 default = ["desktop-audio"]
-desktop-audio = ["cpal/pulseaudio", "rtkit"]
+desktop-audio = ["cpal/pulseaudio"]
 rtkit = ["cpal/realtime-dbus"]
 
 [dependencies]
