@@ -16,7 +16,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, atomic::AtomicBool},
 };
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{Mutex, RwLock, broadcast};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
 
@@ -46,6 +46,9 @@ struct Args {
 
     #[arg(long, default_value_t = 256, help = "MIDI broadcast channel capacity")]
     midi_bc_capacity: usize,
+
+    #[arg(long, default_value_t = 256, help = "Project change broadcast channel capacity")]
+    project_change_bc_capacity: usize,
 
     #[arg(long, default_value_t = 32, help = "MIDI to-relay channel capacity")]
     midi_to_relay_capacity: usize,
@@ -182,6 +185,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
 
     let output_stream = Arc::new(Mutex::new(output_stream));
     let active_project_id = Arc::new(RwLock::new(project_id));
+    let (project_change_tx, _) = broadcast::channel(args.project_change_bc_capacity);
 
     let root_router = aaw::server::router(assets_dir.clone()).with_state(AppState {
         midi_tx: midi_bc_tx.clone(),
@@ -198,6 +202,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
         )),
         assets_dir: Arc::from(assets_dir),
         active_project_id: Arc::clone(&active_project_id),
+        project_change_tx,
     });
 
     let relay_handle = aaw::spawn_midi_relay_task(stop.clone(), midi_relay_rx, midi_bc_tx);

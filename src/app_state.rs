@@ -3,7 +3,10 @@ use crate::{
     midi::{MidiEvent, MidiRuntime},
     projects::Projects,
     rt_channels::NotifiedRtSharedProducer,
-    server::api::audio::AudioOutputStream,
+    server::api::{
+        audio::AudioOutputStream,
+        notifications::{ProjectChange, ProjectChangeKind},
+    },
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -29,6 +32,7 @@ pub struct AppState {
     pub projects: Arc<RwLock<Projects>>,
     pub assets_dir: Arc<Path>,
     pub active_project_id: Arc<RwLock<Option<uuid::Uuid>>>,
+    pub project_change_tx: broadcast::Sender<Arc<ProjectChange>>,
 }
 
 impl AppState {
@@ -43,6 +47,12 @@ impl AppState {
             .as_ref()
             .map(|s| s.1.sample_rate)
             .unwrap_or(DEFAULT_SAMPLE_RATE)
+    }
+
+    pub async fn broadcast_project_change(&self, kind: ProjectChangeKind) {
+        let change =
+            ProjectChange { revision: self.engine_handle.project.read().await.revision, kind };
+        let _ = self.project_change_tx.send(Arc::new(change));
     }
 }
 

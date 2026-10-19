@@ -1,10 +1,14 @@
 use crate::{
-    audio::block::AudioBlock, engine::{
+    audio::block::AudioBlock,
+    engine::{
         dummy_graph, fluid_graph,
         graph::LocalId,
         instrument_graph::{self, SynthId, SynthKind},
         sfizz_graph,
-    }, midi::{CompiledMidiKeyTransform, CompiledMidiVelocityTransform, MidiEvent}, rt_channels::{RtConsumer, RtProducer}, synths::{self, SoundFontProgram},
+    },
+    midi::{CompiledMidiKeyTransform, CompiledMidiVelocityTransform, MidiEvent},
+    rt_channels::{RtConsumer, RtProducer},
+    synths::{self, SoundFontProgram},
 };
 
 // sacrifice memory for latency (avoid allocations/deallocations in the audio thread)

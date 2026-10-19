@@ -12,6 +12,12 @@ pub struct Synth {
     pub file_path: PathBuf,
 }
 
+impl From<&ctr::Synth> for Synth {
+    fn from(value: &ctr::Synth) -> Self {
+        Self { name: value.name.clone(), file_path: value.file_path.clone() }
+    }
+}
+
 impl From<ctr::Synth> for Synth {
     fn from(value: ctr::Synth) -> Self {
         Self { name: value.name, file_path: value.file_path }
@@ -27,7 +33,7 @@ pub struct Graph {
 
 impl From<&ctr::Graph> for Graph {
     fn from(value: &ctr::Graph) -> Self {
-        Self { synths: value.synths.map_ref(|synth| synth.clone().into()).into() }
+        Self { synths: value.synths.map_ref(|synth| synth.into()).into() }
     }
 }
 
