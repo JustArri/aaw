@@ -46,6 +46,7 @@ impl AppState {
     }
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Serialize, Deserialize)]
 pub enum LastProject {
     Cached(engine::stored::Project),

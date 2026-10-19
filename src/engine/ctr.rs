@@ -144,6 +144,17 @@ impl EngineHandle {
         Ok(())
     }
 
+    pub async fn dummy_set_name(
+        &self,
+        synth_id: LocalId,
+        name: String,
+    ) -> Result<(), EngineError> {
+        let mut project = self.project.write().await;
+        project.next_revision();
+        project.dummy_graph.set_name(synth_id, name);
+        Ok(())
+    }
+
     pub async fn fluid_push(
         &self,
         ctr: fluid_graph::ctr::Synth,
@@ -207,6 +218,17 @@ impl EngineHandle {
         Ok(())
     }
 
+    pub async fn fluid_set_name(
+        &self,
+        synth_id: LocalId,
+        name: String,
+    ) -> Result<(), EngineError> {
+        let mut project = self.project.write().await;
+        project.next_revision();
+        project.fluid_graph.set_name(synth_id, name);
+        Ok(())
+    }
+
     pub async fn sfizz_push(
         &self,
         ctr: sfizz_graph::ctr::Synth,
@@ -251,6 +273,17 @@ impl EngineHandle {
         project
             .instrument_graph
             .remove_synth_references(SynthId { kind: SynthKind::Sfizz, id: synth_id });
+        Ok(())
+    }
+
+    pub async fn sfizz_set_name(
+        &self,
+        synth_id: LocalId,
+        name: String,
+    ) -> Result<(), EngineError> {
+        let mut project = self.project.write().await;
+        project.next_revision();
+        project.sfizz_graph.set_name(synth_id, name);
         Ok(())
     }
 

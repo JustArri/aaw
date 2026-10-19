@@ -23,7 +23,8 @@ pub async fn prepare(
 
     for (local_id, stored_synth) in stored.synths {
         let (ctr_synth, rt_synth) =
-            prepare_synth(assets_dir, stored_synth.file_path, sample_rate).await?;
+            prepare_synth(assets_dir, stored_synth.name, stored_synth.file_path, sample_rate)
+                .await?;
         ctr_synths.insert(local_id, ctr_synth);
         rt_synths.insert(local_id, rt_synth);
     }
@@ -39,6 +40,7 @@ pub async fn prepare(
 
 pub async fn prepare_synth(
     assets_dir: &Path,
+    name: String,
     relative_path: PathBuf,
     sample_rate: u32,
 ) -> synths::Result<(ctr::Synth, synths::Fluid)> {
@@ -49,7 +51,7 @@ pub async fn prepare_synth(
     let info = rt_synth.soundfont_info()?;
     let program = info.first_program().unwrap_or_default();
     let _ = rt_synth.select_program(program);
-    let ctr_synth = ctr::Synth { file_path: relative_path, info, program };
+    let ctr_synth = ctr::Synth { name, file_path: relative_path, info, program };
     Ok((ctr_synth, rt_synth))
 }
 

@@ -6,13 +6,15 @@ use std::{collections::HashMap, path::PathBuf};
 #[migrations(version = 1, version_type = u32)]
 #[schema(as = SfizzSynth)]
 pub struct Synth {
+    pub name: String,
+
     #[schema(value_type = String)]
     pub file_path: PathBuf,
 }
 
 impl From<ctr::Synth> for Synth {
     fn from(value: ctr::Synth) -> Self {
-        Self { file_path: value.file_path }
+        Self { name: value.name, file_path: value.file_path }
     }
 }
 
