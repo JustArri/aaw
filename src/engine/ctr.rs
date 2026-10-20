@@ -18,7 +18,7 @@ use std::{
         atomic::{AtomicBool, AtomicU32, Ordering},
     },
 };
-use tokio::sync::{Mutex, RwLock, broadcast, oneshot};
+use tokio::sync::{Mutex, RwLock, RwLockReadGuard, broadcast, oneshot};
 use utoipa::ToSchema;
 
 #[derive(Debug, thiserror::Error)]
@@ -40,8 +40,17 @@ pub enum EngineError {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct CtrProjectStorage {
+    pub id: uuid::Uuid,
+    pub revision: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[schema(as = Project)]
 pub struct CtrProject {
+    #[schema(required)]
+    pub storage: Option<CtrProjectStorage>,
+
     pub revision: u32,
     pub name: String,
     pub instrument_graph: instrument_graph::CtrGraph,
@@ -59,15 +68,34 @@ impl CtrProject {
 
 #[derive(Clone)]
 pub struct EngineHandle {
-    pub cmd_tx: NotifiedRtSharedProducer<(u32, Command)>,
-    pub pending_replies: Arc<Mutex<HashMap<u32, oneshot::Sender<bool>>>>,
-    pub midi_tx: NotifiedRtSharedProducer<MidiEvent>,
-    pub next_cmd_id: Arc<AtomicU32>,
-    pub project: Arc<RwLock<CtrProject>>,
-    pub project_change_tx: broadcast::Sender<Arc<ProjectChange>>,
+    cmd_tx: NotifiedRtSharedProducer<(u32, Command)>,
+    pending_replies: Arc<Mutex<HashMap<u32, oneshot::Sender<bool>>>>,
+    midi_tx: NotifiedRtSharedProducer<MidiEvent>,
+    next_cmd_id: Arc<AtomicU32>,
+    project: Arc<RwLock<CtrProject>>,
+    project_change_tx: broadcast::Sender<Arc<ProjectChange>>,
 }
 
 impl EngineHandle {
+    pub fn new(
+        cmd_tx: NotifiedRtSharedProducer<(u32, Command)>,
+        pending_replies: Arc<Mutex<HashMap<u32, oneshot::Sender<bool>>>>,
+        midi_tx: NotifiedRtSharedProducer<MidiEvent>,
+        next_cmd_id: Arc<AtomicU32>,
+        project: Arc<RwLock<CtrProject>>,
+        project_change_tx: broadcast::Sender<Arc<ProjectChange>>,
+    ) -> Self {
+        Self { cmd_tx, pending_replies, midi_tx, next_cmd_id, project, project_change_tx }
+    }
+
+    pub fn midi_sender(&self) -> NotifiedRtSharedProducer<MidiEvent> {
+        self.midi_tx.clone()
+    }
+
+    pub async fn project(&self) -> RwLockReadGuard<'_, CtrProject> {
+        self.project.read().await
+    }
+
     pub fn subscribe_project_changes(&self) -> broadcast::Receiver<Arc<ProjectChange>> {
         self.project_change_tx.subscribe()
     }
@@ -78,6 +106,13 @@ impl EngineHandle {
         }
 
         Ok(())
+    }
+
+    pub async fn change_project_storage(&self, storage: Option<CtrProjectStorage>) {
+        let mut project = self.project.write().await;
+        project.storage = storage;
+        let revision = project.revision;
+        self.broadcast_project_change(revision, ProjectChangeKind::Storage);
     }
 
     pub async fn set_project_name(&self, name: String) {

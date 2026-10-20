@@ -1,8 +1,9 @@
 use aaw::{
     APP_VERSION, PACKAGE_NAME,
     app_state::{AppState, LastProject},
+    assets::Assets,
     audio::{self, params::DeviceCfgSelection},
-    engine::{self, StoredProject, StoredProjectVersioned},
+    engine::{self, CtrProjectStorage, StoredProject, StoredProjectVersioned},
     files::{load_opt, save},
     midi::MidiRuntime,
     projects::Projects,
@@ -142,14 +143,15 @@ async fn run(args: Args) -> anyhow::Result<()> {
     let stream_error = Arc::new(AtomicBool::new(true));
 
     let project: Option<LastProject> = load_opt(&aaw_root_dir, CFG_LAST_PROJECT).await;
-    let (project, project_id) = match project {
+    let (project, project_storage) = match project {
         Some(LastProject::Cached(cached)) => (cached, None),
         Some(LastProject::Saved(id)) => {
             let path = Projects::project_path(&projects_dir, id);
             let proj = load_opt::<StoredProject>("", (&path, CFG_LAST_PROJECT_SUBJECT))
                 .await
                 .unwrap_or_default();
-            (proj, Some(id))
+            let revision = proj.revision;
+            (proj, Some(CtrProjectStorage { id, revision }))
         }
         None => (StoredProject::default(), None),
     };
@@ -158,6 +160,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
     let (engine, engine_handle, engine_runtime) = engine::create_engine(
         &assets_dir,
         project,
+        project_storage,
         Arc::clone(&stream_error),
         args.cmd_capacity,
         args.midi_to_engine_capacity,
@@ -169,7 +172,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
     .context("failed to create engine")?;
 
     let midi_auto_connections = load_opt(&aaw_root_dir, CFG_MIDI_AC).await.unwrap_or_default();
-    let midi_event_senders: Arc<[_]> = Arc::new([engine_handle.midi_tx.clone(), midi_relay_tx]);
+    let midi_event_senders: Arc<[_]> = Arc::new([engine_handle.midi_sender(), midi_relay_tx]);
 
     let midi_runtime = Arc::new(Mutex::new(
         MidiRuntime::new(16, "aaw", Arc::clone(&midi_event_senders), midi_auto_connections)
@@ -189,7 +192,6 @@ async fn run(args: Args) -> anyhow::Result<()> {
         };
 
     let output_stream = Arc::new(Mutex::new(output_stream));
-    let active_project_id = Arc::new(RwLock::new(project_id));
 
     let root_router = aaw::server::router(assets_dir.clone()).with_state(AppState {
         midi_tx: midi_bc_tx.clone(),
@@ -204,8 +206,9 @@ async fn run(args: Args) -> anyhow::Result<()> {
         projects: Arc::new(RwLock::new(
             Projects::new(projects_dir).await.context("failed to load projects")?,
         )),
-        assets_dir: Arc::from(assets_dir),
-        active_project_id: Arc::clone(&active_project_id),
+        assets: Arc::new(RwLock::new(
+            Assets::new(assets_dir).await.context("failed to load assets")?,
+        )),
     });
 
     let relay_handle = aaw::spawn_midi_relay_task(stop.clone(), midi_relay_rx, midi_bc_tx);
@@ -231,8 +234,8 @@ async fn run(args: Args) -> anyhow::Result<()> {
         drop(stream);
     }
 
-    let project = match *active_project_id.read().await {
-        Some(id) => LastProject::Saved(id),
+    let project = match &engine_handle.project().await.storage {
+        Some(storage) => LastProject::Saved(storage.id),
         None => LastProject::Cached(engine_handle.save_project().await),
     };
     save(&aaw_root_dir, CFG_LAST_PROJECT, &project).await;

@@ -1,4 +1,5 @@
 use crate::{
+    assets::Assets,
     engine::{
         self, Engine, EngineHandle,
         graph::{DEFAULT_CHANNEL_COUNT, DEFAULT_SAMPLE_RATE},
@@ -9,12 +10,8 @@ use crate::{
     server::api::audio::AudioOutputStream,
 };
 use serde::{Deserialize, Serialize};
-use std::{
-    path::Path,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
+use std::sync::{
+    Arc, atomic::{AtomicBool, Ordering},
 };
 use tokio::sync::{Mutex, RwLock, broadcast};
 
@@ -30,8 +27,7 @@ pub struct AppState {
     pub min_synths_per_graph: usize,
     pub stream_error: Arc<AtomicBool>,
     pub projects: Arc<RwLock<Projects>>,
-    pub assets_dir: Arc<Path>,
-    pub active_project_id: Arc<RwLock<Option<uuid::Uuid>>>,
+    pub assets: Arc<RwLock<Assets>>,
 }
 
 impl AppState {

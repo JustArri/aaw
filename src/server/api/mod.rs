@@ -7,6 +7,7 @@ use utoipa::OpenApi;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 pub mod active_project;
+pub mod assets;
 pub mod assets_dav;
 pub mod audio;
 pub mod midi;
@@ -28,7 +29,8 @@ pub fn router(assets_dir: impl AsRef<std::path::Path>) -> OpenApiRouter<AppState
         .nest("/system", system::router())
         .nest("/active-project", active_project::router())
         .nest("/projects", projects::router())
-        .merge(assets_dav::router("/assets", assets_dir))
+        .nest("/assets", assets::router())
+        .merge(assets_dav::router("/assets/fs", assets_dir))
         .routes(routes!(notifications::handler))
 }
 

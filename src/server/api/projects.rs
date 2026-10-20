@@ -1,6 +1,6 @@
 use crate::{
     app_state::AppState,
-    engine::{self, StoredProject},
+    engine::{self, CtrProjectStorage, StoredProject},
     projects::Projects,
 };
 use axum::{
@@ -14,13 +14,13 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 
 pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
-        .routes(routes!(save))
-        .routes(routes!(list))
-        .routes(routes!(refresh))
+        .routes(routes!(write_new_project))
+        .routes(routes!(list_projects))
+        .routes(routes!(refresh_projects))
         .routes(routes!(load_active_project))
         .routes(routes!(save_active_project))
-        .routes(routes!(delete))
-        .routes(routes!(load))
+        .routes(routes!(delete_project))
+        .routes(routes!(read_project))
 }
 
 #[derive(Deserialize, IntoParams)]
@@ -48,7 +48,7 @@ struct ProjectPath {
         (status = INTERNAL_SERVER_ERROR, body = String, description = "Internal Server Error"),
     )
 )]
-async fn save(
+async fn write_new_project(
     State(app_state): State<AppState>,
     Json(project): Json<StoredProject>,
 ) -> Result<Json<uuid::Uuid>, (StatusCode, String)> {
@@ -83,7 +83,7 @@ struct ProjectInfo {
         (status = INTERNAL_SERVER_ERROR, body = String, description = "Internal Server Error"),
     )
 )]
-async fn list(
+async fn list_projects(
     State(app_state): State<AppState>,
 ) -> Result<Json<Vec<ProjectInfo>>, (StatusCode, String)> {
     let projects = app_state.projects.read().await;
@@ -109,7 +109,9 @@ async fn list(
         (status = INTERNAL_SERVER_ERROR, body = String, description = "Internal Server Error"),
     )
 )]
-async fn refresh(State(app_state): State<AppState>) -> Result<StatusCode, (StatusCode, String)> {
+async fn refresh_projects(
+    State(app_state): State<AppState>,
+) -> Result<StatusCode, (StatusCode, String)> {
     let mut projects = app_state.projects.write().await;
     *projects = Projects::new(projects.dir.clone())
         .await
@@ -142,9 +144,13 @@ async fn load_active_project(
     let sample_rate = app_state.sample_rate().await;
     let channel_count = app_state.channel_count().await;
 
+    let revision = project.revision;
+    let id = path.project_id;
+
     let (ctr_project, rt_project) = engine::load(
-        app_state.assets_dir.as_ref(),
+        &app_state.assets.read().await.dir,
         project,
+        Some(CtrProjectStorage { id, revision }),
         app_state.min_instrument_slots,
         app_state.min_synths_per_graph,
         channel_count,
@@ -153,7 +159,6 @@ async fn load_active_project(
     .await?;
 
     app_state.engine_handle.replace_project(ctr_project, rt_project).await?;
-    *app_state.active_project_id.write().await = Some(path.project_id);
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -177,20 +182,25 @@ async fn load_active_project(
 async fn save_active_project(
     State(app_state): State<AppState>,
 ) -> Result<Json<uuid::Uuid>, (StatusCode, String)> {
+    let project = app_state.engine_handle.project().await;
+    let project_storage = project.storage.clone();
+    let revision = project.revision;
+
     let mut projects = app_state.projects.write().await;
-    let id = if let Some(id) = *app_state.active_project_id.read().await {
+    let id = if let Some(storage) = project_storage {
         projects
-            .save(id, app_state.engine_handle.save_project().await)
+            .save(storage.id, app_state.engine_handle.save_project().await)
             .await
             .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
-        id
+        storage.id
     } else {
         projects
             .save_new(app_state.engine_handle.save_project().await)
             .await
             .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?
     };
-    *app_state.active_project_id.write().await = Some(id);
+
+    app_state.engine_handle.change_project_storage(Some(CtrProjectStorage { id, revision })).await;
     Ok(Json(id))
 }
 
@@ -206,7 +216,7 @@ async fn save_active_project(
         (status = INTERNAL_SERVER_ERROR, body = String, description = "Internal Server Error"),
     )
 )]
-async fn delete(
+async fn delete_project(
     State(app_state): State<AppState>,
     Path(path): Path<ProjectPath>,
 ) -> Result<StatusCode, (StatusCode, String)> {
@@ -235,7 +245,7 @@ async fn delete(
         (status = INTERNAL_SERVER_ERROR, body = String, description = "Internal Server Error"),
     )
 )]
-async fn load(
+async fn read_project(
     State(app_state): State<AppState>,
     Path(path): Path<ProjectPath>,
 ) -> Result<Json<StoredProject>, (StatusCode, String)> {

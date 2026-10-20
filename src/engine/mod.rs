@@ -31,6 +31,7 @@ mod stored;
 pub async fn load(
     assets_dir: &Path,
     stored: StoredProject,
+    proj_storage: Option<CtrProjectStorage>,
     min_instrument_slots: usize,
     min_synths_per_graph: usize,
     channel_count: usize,
@@ -57,6 +58,7 @@ pub async fn load(
             .unwrap_or_else(|_| sfizz_graph::default(min_synths_per_graph));
 
     let ctr_project = CtrProject {
+        storage: proj_storage,
         revision: 0,
         name: stored.name,
         instrument_graph: ctr_instrument_graph,
@@ -80,6 +82,7 @@ pub async fn create_engine(
     //TODO: cleanup args
     assets_dir: &Path,
     project: StoredProject,
+    project_storage: Option<CtrProjectStorage>,
     stream_error: Arc<AtomicBool>,
     cmd_capacity: usize,
     midi_capacity: usize,
@@ -95,6 +98,7 @@ pub async fn create_engine(
     let (ctr_project, rt_project) = load(
         assets_dir,
         project,
+        project_storage,
         min_instrument_slots,
         min_synths_per_graph,
         DEFAULT_CHANNEL_COUNT,
@@ -102,14 +106,14 @@ pub async fn create_engine(
     )
     .await?;
 
-    let handle = EngineHandle {
+    let handle = EngineHandle::new(
         cmd_tx,
-        pending_replies: Arc::clone(&pending_replies),
+        Arc::clone(&pending_replies),
         midi_tx,
-        next_cmd_id: Arc::new(AtomicU32::new(0)),
-        project: Arc::new(RwLock::new(ctr_project)),
+        Arc::new(AtomicU32::new(0)),
+        Arc::new(RwLock::new(ctr_project)),
         project_change_tx,
-    };
+    );
 
     let (cmd_rx, cmd_notify) = cmd_rx.unwrap();
     let (midi_rx, midi_notify) = midi_rx.unwrap();

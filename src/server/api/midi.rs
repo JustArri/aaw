@@ -20,15 +20,15 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 
 pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
-        .routes(routes!(input_ports))
-        .routes(routes!(input_slots))
-        .routes(routes!(input_auto_connections))
-        .routes(routes!(connect_input_slot))
-        .routes(routes!(disconnect_input_slot))
-        .routes(routes!(insert_input_auto_connection))
-        .routes(routes!(delete_input_auto_connection))
-        .routes(routes!(send_event))
-        .routes(routes!(open_event_stream))
+        .routes(routes!(midi_input_ports))
+        .routes(routes!(midi_input_slots))
+        .routes(routes!(midi_input_auto_connections))
+        .routes(routes!(midi_connect_input_slot))
+        .routes(routes!(midi_disconnect_input_slot))
+        .routes(routes!(midi_insert_input_auto_connection))
+        .routes(routes!(midi_delete_input_auto_connection))
+        .routes(routes!(midi_send_event))
+        .routes(routes!(midi_open_event_stream))
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -64,7 +64,7 @@ pub struct MidiInputAutoConnection {
         (status = INTERNAL_SERVER_ERROR, description = "Internal Server Error"),
     )
 )]
-async fn input_ports(State(app_state): State<AppState>) -> Json<Vec<MidiPort>> {
+async fn midi_input_ports(State(app_state): State<AppState>) -> Json<Vec<MidiPort>> {
     let ports = app_state
         .midi_runtime
         .lock()
@@ -86,7 +86,7 @@ async fn input_ports(State(app_state): State<AppState>) -> Json<Vec<MidiPort>> {
         (status = INTERNAL_SERVER_ERROR, description = "Internal Server Error"),
     )
 )]
-async fn input_slots(
+async fn midi_input_slots(
     State(app_state): State<AppState>,
 ) -> Result<Json<Vec<MidiInputSlot>>, StatusCode> {
     use crate::midi::InputSlot;
@@ -133,7 +133,7 @@ pub struct ConnectInputSlotRequest {
         (status = INTERNAL_SERVER_ERROR, body = String, description = "Internal Server Error"),
     )
 )]
-async fn connect_input_slot(
+async fn midi_connect_input_slot(
     State(app_state): State<AppState>,
     Path(path): Path<InputSlotPath>,
     Json(req): Json<ConnectInputSlotRequest>,
@@ -159,7 +159,7 @@ async fn connect_input_slot(
         (status = INTERNAL_SERVER_ERROR, body = String, description = "Internal Server Error"),
     )
 )]
-async fn disconnect_input_slot(
+async fn midi_disconnect_input_slot(
     State(app_state): State<AppState>,
     Path(path): Path<InputSlotPath>,
 ) -> Result<StatusCode, (StatusCode, String)> {
@@ -181,7 +181,7 @@ async fn disconnect_input_slot(
         (status = OK, body = Vec<MidiInputAutoConnection>, description = "OK"),
     )
 )]
-async fn input_auto_connections(
+async fn midi_input_auto_connections(
     State(app_state): State<AppState>,
 ) -> Result<Json<Vec<MidiInputAutoConnection>>, StatusCode> {
     let auto_connections = app_state
@@ -209,7 +209,7 @@ async fn input_auto_connections(
         (status = NO_CONTENT, description = "Inserted"),
     )
 )]
-async fn insert_input_auto_connection(
+async fn midi_insert_input_auto_connection(
     State(app_state): State<AppState>,
     Json(req): Json<MidiInputAutoConnection>,
 ) -> StatusCode {
@@ -240,7 +240,7 @@ pub struct DeleteMidiAutoConnectionRequest {
         (status = NO_CONTENT, description = "Deleted"),
     )
 )]
-async fn delete_input_auto_connection(
+async fn midi_delete_input_auto_connection(
     State(app_state): State<AppState>,
     Json(req): Json<DeleteMidiAutoConnectionRequest>,
 ) -> StatusCode {
@@ -259,7 +259,7 @@ async fn delete_input_auto_connection(
         (status = INTERNAL_SERVER_ERROR, body = String, description = "Internal Server Error"),
     )
 )]
-async fn send_event(
+async fn midi_send_event(
     State(app_state): State<AppState>,
     Json(event): Json<MidiEvent>,
 ) -> Result<StatusCode, (StatusCode, String)> {
@@ -287,7 +287,7 @@ async fn send_event(
         (status = INTERNAL_SERVER_ERROR, description = "Internal Server Error"),
     )
 )]
-pub async fn open_event_stream(
+pub async fn midi_open_event_stream(
     ws: WebSocketUpgrade,
     State(state): State<AppState>,
 ) -> Result<axum::response::Response, StatusCode> {

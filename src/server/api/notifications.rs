@@ -33,7 +33,7 @@ pub struct ProjectChange {
 #[serde(tag = "type", content = "data")]
 pub enum ProjectChangeKind {
     Full,
-    Id,
+    Storage,
     Name,
     DummySynth { id: LocalId },
     DummySynthName { id: LocalId },
