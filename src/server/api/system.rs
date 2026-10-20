@@ -3,7 +3,7 @@ use axum::http::StatusCode;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 pub fn router() -> OpenApiRouter<AppState> {
-    OpenApiRouter::new().routes(routes!(shutdown)).routes(routes!(reboot))
+    OpenApiRouter::new().routes(routes!(system_shutdown)).routes(routes!(system_reboot))
 }
 
 #[utoipa::path(
@@ -15,7 +15,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         (status = INTERNAL_SERVER_ERROR, description = "Shutdown failed"),
     )
 )]
-async fn shutdown() -> StatusCode {
+async fn system_shutdown() -> StatusCode {
     action_status(system::poweroff().await, "shut down")
 }
 
@@ -28,7 +28,7 @@ async fn shutdown() -> StatusCode {
         (status = INTERNAL_SERVER_ERROR, description = "Reboot failed"),
     )
 )]
-async fn reboot() -> StatusCode {
+async fn system_reboot() -> StatusCode {
     action_status(system::reboot().await, "reboot")
 }
 

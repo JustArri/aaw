@@ -1,7 +1,7 @@
 use crate::{
     app_state::AppState,
     engine::{
-        self, CtrProject, EngineError, StoredProject, dummy_graph, fluid_graph,
+        self, CtrProject, CtrProjectStorage, EngineError, StoredProject, dummy_graph, fluid_graph,
         graph::LocalId,
         instrument_graph::{self, SynthId},
         sfizz_graph,
@@ -24,10 +24,10 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(active_project))
         .routes(routes!(import_active_project))
         .routes(routes!(export_active_project))
-        .routes(routes!(active_project_id))
-        .routes(routes!(delete_active_project_id))
+        .routes(routes!(clone_active_project))
         .routes(routes!(set_active_project_name))
         .routes(routes!(active_project_name))
+        .routes(routes!(active_project_storage))
         .routes(routes!(dummy_synths))
         .routes(routes!(dummy_push))
         .routes(routes!(dummy_remove))
@@ -86,7 +86,7 @@ pub fn router() -> OpenApiRouter<AppState> {
     )
 )]
 async fn active_project(State(app_state): State<AppState>) -> Json<CtrProject> {
-    Json(app_state.engine_handle.project.read().await.clone())
+    Json(app_state.engine_handle.project().await.clone())
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -111,15 +111,15 @@ async fn import_active_project(
     let channel_count = app_state.channel_count().await;
 
     let (ctr_project, rt_project) = engine::load(
-        &app_state.assets_dir,
+        &app_state.assets.read().await.dir,
         project,
+        None,
         app_state.min_instrument_slots,
         app_state.min_synths_per_graph,
         channel_count,
         sample_rate,
     )
     .await?;
-    *app_state.active_project_id.write().await = None;
     app_state.engine_handle.replace_project(ctr_project, rt_project).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -145,32 +145,14 @@ async fn export_active_project(State(app_state): State<AppState>) -> Json<Stored
 //--------------------------------------------------------------------------------------------------
 
 #[utoipa::path(
-    get,
-    path = "/id",
-    responses(
-        (
-            status = OK,
-            body = Option<uuid::Uuid>,
-            content_type = "application/json",
-            description = "OK"
-        ),
-    )
-)]
-async fn active_project_id(State(app_state): State<AppState>) -> Json<Option<uuid::Uuid>> {
-    Json(*app_state.active_project_id.read().await)
-}
-
-//--------------------------------------------------------------------------------------------------
-
-#[utoipa::path(
     delete,
-    path = "/id",
+    path = "/storage",
     responses(
-        (status = NO_CONTENT, description = "Project ID deleted"),
+        (status = NO_CONTENT, description = "Project cloned (storage deleted)"),
     )
 )]
-async fn delete_active_project_id(State(app_state): State<AppState>) -> StatusCode {
-    *app_state.active_project_id.write().await = None;
+async fn clone_active_project(State(app_state): State<AppState>) -> StatusCode {
+    app_state.engine_handle.change_project_storage(None).await;
     StatusCode::NO_CONTENT
 }
 
@@ -206,7 +188,27 @@ async fn set_active_project_name(
     )
 )]
 async fn active_project_name(State(app_state): State<AppState>) -> Json<String> {
-    Json(app_state.engine_handle.project.read().await.name.clone())
+    Json(app_state.engine_handle.project().await.name.clone())
+}
+
+//--------------------------------------------------------------------------------------------------
+
+#[utoipa::path(
+    get,
+    path = "/storage",
+    responses(
+        (
+            status = OK,
+            body = Option<CtrProjectStorage>,
+            content_type = "application/json",
+            description = "OK"
+        ),
+    )
+)]
+async fn active_project_storage(
+    State(app_state): State<AppState>,
+) -> Json<Option<CtrProjectStorage>> {
+    Json(app_state.engine_handle.project().await.storage.clone())
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -241,7 +243,7 @@ pub struct SynthPushRequest {
 async fn dummy_synths(
     State(app_state): State<AppState>,
 ) -> Json<HashMap<LocalId, dummy_graph::CtrSynth>> {
-    Json(app_state.engine_handle.project.read().await.dummy_graph.synths.clone().into())
+    Json(app_state.engine_handle.project().await.dummy_graph.synths.clone().into())
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -349,7 +351,7 @@ async fn dummy_name(
 async fn fluid_synths(
     State(app_state): State<AppState>,
 ) -> Json<HashMap<LocalId, fluid_graph::CtrSynth>> {
-    Json(app_state.engine_handle.project.read().await.fluid_graph.synths.clone().into())
+    Json(app_state.engine_handle.project().await.fluid_graph.synths.clone().into())
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -377,7 +379,8 @@ async fn fluid_push(
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or("Fluid Synth".into());
     let (ctr_synth, rt_synth) =
-        fluid_graph::prepare_synth(&app_state.assets_dir, name, req.path, sample_rate).await?;
+        fluid_graph::prepare_synth(&app_state.assets.read().await.dir, name, req.path, sample_rate)
+            .await?;
     Ok(Json(app_state.engine_handle.fluid_push(ctr_synth, rt_synth).await?))
 }
 
@@ -410,7 +413,8 @@ async fn fluid_replace(
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or("Fluid Synth".into());
     let (ctr_synth, rt_synth) =
-        fluid_graph::prepare_synth(&app_state.assets_dir, name, req.path, sample_rate).await?;
+        fluid_graph::prepare_synth(&app_state.assets.read().await.dir, name, req.path, sample_rate)
+            .await?;
     app_state.engine_handle.fluid_replace(path.synth_id, ctr_synth, rt_synth).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -574,7 +578,7 @@ async fn fluid_name(
 async fn sfizz_synths(
     State(app_state): State<AppState>,
 ) -> Json<HashMap<LocalId, sfizz_graph::CtrSynth>> {
-    Json(app_state.engine_handle.project.read().await.sfizz_graph.synths.clone().into())
+    Json(app_state.engine_handle.project().await.sfizz_graph.synths.clone().into())
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -602,7 +606,8 @@ async fn sfizz_push(
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or("Sfizz Synth".into());
     let (ctr_synth, rt_synth) =
-        sfizz_graph::prepare_synth(&app_state.assets_dir, name, req.path, sample_rate).await?;
+        sfizz_graph::prepare_synth(&app_state.assets.read().await.dir, name, req.path, sample_rate)
+            .await?;
     Ok(Json(app_state.engine_handle.sfizz_push(ctr_synth, rt_synth).await?))
 }
 
@@ -635,7 +640,8 @@ async fn sfizz_replace(
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or("Sfizz Synth".into());
     let (ctr_synth, rt_synth) =
-        sfizz_graph::prepare_synth(&app_state.assets_dir, name, req.path, sample_rate).await?;
+        sfizz_graph::prepare_synth(&app_state.assets.read().await.dir, name, req.path, sample_rate)
+            .await?;
     app_state.engine_handle.sfizz_replace(path.synth_id, ctr_synth, rt_synth).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -765,7 +771,7 @@ async fn set_global_transposition(
     )
 )]
 async fn global_transposition(State(app_state): State<AppState>) -> Json<i8> {
-    Json(app_state.engine_handle.project.read().await.instrument_graph.global_transposition)
+    Json(app_state.engine_handle.project().await.instrument_graph.global_transposition)
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -785,7 +791,7 @@ async fn global_transposition(State(app_state): State<AppState>) -> Json<i8> {
 async fn instrument_slots(
     State(app_state): State<AppState>,
 ) -> Json<HashMap<LocalId, instrument_graph::CtrSlot>> {
-    Json(app_state.engine_handle.project.read().await.instrument_graph.slots.clone().into())
+    Json(app_state.engine_handle.project().await.instrument_graph.slots.clone().into())
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -1207,7 +1213,7 @@ pub async fn with_slot<T>(
     slot_id: LocalId,
     f: impl FnOnce(&instrument_graph::CtrSlot) -> T,
 ) -> Result<T, (StatusCode, String)> {
-    let project = app_state.engine_handle.project.read().await;
+    let project = app_state.engine_handle.project().await;
     let result_opt = project.instrument_graph.slots.get(slot_id).map(f);
     result_opt.ok_or((StatusCode::NOT_FOUND, "not found".into()))
 }
@@ -1217,7 +1223,7 @@ pub async fn with_dummy_synth<T>(
     synth_id: LocalId,
     f: impl FnOnce(&dummy_graph::CtrSynth) -> T,
 ) -> Result<T, (StatusCode, String)> {
-    let project = app_state.engine_handle.project.read().await;
+    let project = app_state.engine_handle.project().await;
     let result_opt = project.dummy_graph.synths.get(synth_id).map(f);
     result_opt.ok_or((StatusCode::NOT_FOUND, "not found".into()))
 }
@@ -1227,7 +1233,7 @@ pub async fn with_fluid_synth<T>(
     synth_id: LocalId,
     f: impl FnOnce(&fluid_graph::CtrSynth) -> T,
 ) -> Result<T, (StatusCode, String)> {
-    let project = app_state.engine_handle.project.read().await;
+    let project = app_state.engine_handle.project().await;
     let result_opt = project.fluid_graph.synths.get(synth_id).map(f);
     result_opt.ok_or((StatusCode::NOT_FOUND, "not found".into()))
 }
@@ -1237,7 +1243,7 @@ pub async fn with_sfizz_synth<T>(
     synth_id: LocalId,
     f: impl FnOnce(&sfizz_graph::CtrSynth) -> T,
 ) -> Result<T, (StatusCode, String)> {
-    let project = app_state.engine_handle.project.read().await;
+    let project = app_state.engine_handle.project().await;
     let result_opt = project.sfizz_graph.synths.get(synth_id).map(f);
     result_opt.ok_or((StatusCode::NOT_FOUND, "not found".into()))
 }

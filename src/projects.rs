@@ -47,7 +47,6 @@ impl Projects {
     pub async fn new(dir: PathBuf) -> Result<Self, std::io::Error> {
         let mut entries = fs::read_dir(&dir).await?;
         let mut list = HashMap::new();
-        info!("loading...");
 
         while let Some(entry) = entries.next_entry().await? {
             let file_type = entry.file_type().await?;
@@ -88,6 +87,8 @@ impl Projects {
 
             list.insert(id, preview);
         }
+
+        info!(projects = list.len(), "scanned projects directory");
 
         Ok(Self { dir, list })
     }

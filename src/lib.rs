@@ -14,6 +14,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
 pub mod app_state;
+pub mod assets;
 pub mod audio;
 pub mod engine;
 pub mod ffi;
