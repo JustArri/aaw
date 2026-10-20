@@ -10,13 +10,13 @@ use crate::{
 };
 use std::time::Duration;
 
-pub struct Graph {
+pub struct RtGraph {
     pub retirer: Retirer<synths::Sfizz>,
     pub retirement_thread: RetirementThread,
     pub synths: Siv<synths::Sfizz, LocalId>,
 }
 
-impl Graph {
+impl RtGraph {
     pub fn new(synths: Siv<synths::Sfizz, LocalId>) -> Self {
         let (retirer, retirement_thread) =
             RetirementThread::spawn(RETIREMENT_QUEUE_CAPACITY, Duration::from_millis(10))

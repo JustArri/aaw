@@ -78,7 +78,7 @@ pub async fn handler(
 
 async fn handle_socket(mut socket: WebSocket, state: AppState) {
     let mut midi_rx = state.midi_tx.subscribe();
-    let mut project_change_rx = state.project_change_tx.subscribe();
+    let mut project_change_rx = state.engine_handle.subscribe_project_changes();
 
     loop {
         let action = tokio::select! {

@@ -1,19 +1,19 @@
-use crate::engine::{ctr, dummy_graph, fluid_graph, instrument_graph, sfizz_graph};
+use crate::engine::{ctr::CtrProject, dummy_graph, fluid_graph, instrument_graph, sfizz_graph};
 use migrations_derive::Migrations;
 
 #[derive(Default, Debug, Clone, Migrations)]
 #[migrations(version = 1, version_type = u32)]
-pub struct Project {
+pub struct StoredProject {
     pub revision: u32,
     pub name: String,
-    pub instrument_graph: instrument_graph::stored::Graph,
-    pub dummy_graph: dummy_graph::stored::Graph,
-    pub fluid_graph: fluid_graph::stored::Graph,
-    pub sfizz_graph: sfizz_graph::stored::Graph,
+    pub instrument_graph: instrument_graph::StoredGraph,
+    pub dummy_graph: dummy_graph::StoredGraph,
+    pub fluid_graph: fluid_graph::StoredGraph,
+    pub sfizz_graph: sfizz_graph::StoredGraph,
 }
 
-impl From<&ctr::Project> for Project {
-    fn from(value: &ctr::Project) -> Self {
+impl From<&CtrProject> for StoredProject {
+    fn from(value: &CtrProject) -> Self {
         Self {
             revision: value.revision,
             name: value.name.clone(),
@@ -25,8 +25,8 @@ impl From<&ctr::Project> for Project {
     }
 }
 
-impl From<ctr::Project> for Project {
-    fn from(value: ctr::Project) -> Self {
+impl From<CtrProject> for StoredProject {
+    fn from(value: CtrProject) -> Self {
         Self {
             revision: value.revision,
             name: value.name,

@@ -1,16 +1,12 @@
 use crate::{
     app_state::AppState,
     engine::{
-        self,
-        ctr::EngineError,
-        dummy_graph, fluid_graph,
+        self, CtrProject, EngineError, StoredProject, dummy_graph, fluid_graph,
         graph::LocalId,
         instrument_graph::{self, SynthId},
         sfizz_graph,
-        stored::Project,
     },
     midi::{MidiFilter, MidiKeyTransform, MidiVelocityTransform},
-    server::api::notifications::ProjectChangeKind,
     synths::{self, SfzInfo, SoundFontInfo, SoundFontProgram},
 };
 use axum::{
@@ -25,13 +21,13 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 
 pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
-        .routes(routes!(set_project))
-        .routes(routes!(project))
-        .routes(routes!(project_id))
-        .routes(routes!(delete_project_id))
-        .routes(routes!(project_revision))
-        .routes(routes!(set_project_name))
-        .routes(routes!(project_name))
+        .routes(routes!(active_project))
+        .routes(routes!(import_active_project))
+        .routes(routes!(export_active_project))
+        .routes(routes!(active_project_id))
+        .routes(routes!(delete_active_project_id))
+        .routes(routes!(set_active_project_name))
+        .routes(routes!(active_project_name))
         .routes(routes!(dummy_synths))
         .routes(routes!(dummy_push))
         .routes(routes!(dummy_remove))
@@ -46,6 +42,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(fluid_program))
         .routes(routes!(fluid_set_name))
         .routes(routes!(fluid_name))
+        .routes(routes!(sfizz_synths))
         .routes(routes!(sfizz_push))
         .routes(routes!(sfizz_replace))
         .routes(routes!(sfizz_remove))
@@ -77,10 +74,28 @@ pub fn router() -> OpenApiRouter<AppState> {
 //--------------------------------------------------------------------------------------------------
 
 #[utoipa::path(
-    post,
+    get,
     path = "/",
+    responses(
+        (
+            status = OK,
+            body = CtrProject,
+            content_type = "application/json",
+            description = "OK"
+        ),
+    )
+)]
+async fn active_project(State(app_state): State<AppState>) -> Json<CtrProject> {
+    Json(app_state.engine_handle.project.read().await.clone())
+}
+
+//--------------------------------------------------------------------------------------------------
+
+#[utoipa::path(
+    post,
+    path = "/import",
     request_body(
-        content = Project,
+        content = StoredProject,
         content_type = "application/json"
     ),
     responses(
@@ -88,22 +103,24 @@ pub fn router() -> OpenApiRouter<AppState> {
         (status = INTERNAL_SERVER_ERROR, body = String, description = "Internal Server Error"),
     )
 )]
-async fn set_project(
+async fn import_active_project(
     State(app_state): State<AppState>,
-    Json(project): Json<Project>,
+    Json(project): Json<StoredProject>,
 ) -> Result<StatusCode, (StatusCode, String)> {
     let sample_rate = app_state.sample_rate().await;
+    let channel_count = app_state.channel_count().await;
+
     let (ctr_project, rt_project) = engine::load(
         &app_state.assets_dir,
         project,
         app_state.min_instrument_slots,
         app_state.min_synths_per_graph,
+        channel_count,
         sample_rate,
     )
     .await?;
-    app_state.engine_handle.replace_project(ctr_project, rt_project).await?;
     *app_state.active_project_id.write().await = None;
-    app_state.broadcast_project_change(ProjectChangeKind::Full).await;
+    app_state.engine_handle.replace_project(ctr_project, rt_project).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -111,12 +128,17 @@ async fn set_project(
 
 #[utoipa::path(
     get,
-    path = "/",
+    path = "/export",
     responses(
-        (status = OK, body = Project, content_type = "application/json", description = "OK"),
+        (
+            status = OK,
+            body = StoredProject,
+            content_type = "application/json",
+            description = "OK"
+        ),
     )
 )]
-async fn project(State(app_state): State<AppState>) -> Json<Project> {
+async fn export_active_project(State(app_state): State<AppState>) -> Json<StoredProject> {
     Json(app_state.engine_handle.save_project().await)
 }
 
@@ -134,7 +156,7 @@ async fn project(State(app_state): State<AppState>) -> Json<Project> {
         ),
     )
 )]
-async fn project_id(State(app_state): State<AppState>) -> Json<Option<uuid::Uuid>> {
+async fn active_project_id(State(app_state): State<AppState>) -> Json<Option<uuid::Uuid>> {
     Json(*app_state.active_project_id.read().await)
 }
 
@@ -147,28 +169,9 @@ async fn project_id(State(app_state): State<AppState>) -> Json<Option<uuid::Uuid
         (status = NO_CONTENT, description = "Project ID deleted"),
     )
 )]
-async fn delete_project_id(State(app_state): State<AppState>) -> StatusCode {
+async fn delete_active_project_id(State(app_state): State<AppState>) -> StatusCode {
     *app_state.active_project_id.write().await = None;
-    app_state.broadcast_project_change(ProjectChangeKind::Id).await;
     StatusCode::NO_CONTENT
-}
-
-//--------------------------------------------------------------------------------------------------
-
-#[utoipa::path(
-    get,
-    path = "/revision",
-    responses(
-        (
-            status = OK,
-            body = u32,
-            content_type = "application/json",
-            description = "OK"
-        ),
-    )
-)]
-async fn project_revision(State(app_state): State<AppState>) -> Json<u32> {
-    Json(app_state.engine_handle.project.read().await.revision)
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -185,12 +188,11 @@ async fn project_revision(State(app_state): State<AppState>) -> Json<u32> {
         (status = INTERNAL_SERVER_ERROR, body = String, description = "Internal Server Error"),
     )
 )]
-async fn set_project_name(
+async fn set_active_project_name(
     State(app_state): State<AppState>,
     Json(name): Json<String>,
 ) -> Result<StatusCode, (StatusCode, String)> {
     app_state.engine_handle.set_project_name(name.clone()).await;
-    app_state.broadcast_project_change(ProjectChangeKind::Name).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -203,7 +205,7 @@ async fn set_project_name(
         (status = OK, body = String, content_type = "application/json", description = "OK"),
     )
 )]
-async fn project_name(State(app_state): State<AppState>) -> Json<String> {
+async fn active_project_name(State(app_state): State<AppState>) -> Json<String> {
     Json(app_state.engine_handle.project.read().await.name.clone())
 }
 
@@ -230,7 +232,7 @@ pub struct SynthPushRequest {
     responses(
         (
             status = OK,
-            body = HashMap<LocalId, dummy_graph::ctr::Synth>,
+            body = HashMap<LocalId, dummy_graph::CtrSynth>,
             content_type = "application/json",
             description = "OK"
         ),
@@ -238,7 +240,7 @@ pub struct SynthPushRequest {
 )]
 async fn dummy_synths(
     State(app_state): State<AppState>,
-) -> Json<HashMap<LocalId, dummy_graph::ctr::Synth>> {
+) -> Json<HashMap<LocalId, dummy_graph::CtrSynth>> {
     Json(app_state.engine_handle.project.read().await.dummy_graph.synths.clone().into())
 }
 
@@ -257,9 +259,7 @@ async fn dummy_push(
 ) -> Result<Json<LocalId>, (StatusCode, String)> {
     let sample_rate = app_state.sample_rate().await;
     let (ctr_synth, rt_synth) = dummy_graph::prepare_synth("Dummy Synth".into(), sample_rate);
-    let id = app_state.engine_handle.dummy_push(ctr_synth, rt_synth).await?;
-    app_state.broadcast_project_change(ProjectChangeKind::DummySynth { id }).await;
-    Ok(Json(id))
+    Ok(Json(app_state.engine_handle.dummy_push(ctr_synth, rt_synth).await?))
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -280,7 +280,6 @@ async fn dummy_remove(
 ) -> Result<StatusCode, (StatusCode, String)> {
     with_dummy_synth(&app_state, path.synth_id, |_| ()).await?;
     app_state.engine_handle.dummy_remove(path.synth_id).await?;
-    app_state.broadcast_project_change(ProjectChangeKind::DummySynth { id: path.synth_id }).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -307,9 +306,6 @@ async fn dummy_set_name(
 ) -> Result<StatusCode, (StatusCode, String)> {
     with_dummy_synth(&app_state, path.synth_id, |_| ()).await?;
     app_state.engine_handle.dummy_set_name(path.synth_id, name).await?;
-    app_state
-        .broadcast_project_change(ProjectChangeKind::DummySynthName { id: path.synth_id })
-        .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -344,7 +340,7 @@ async fn dummy_name(
     responses(
         (
             status = OK,
-            body = HashMap<LocalId, fluid_graph::ctr::Synth>,
+            body = HashMap<LocalId, fluid_graph::CtrSynth>,
             content_type = "application/json",
             description = "OK"
         ),
@@ -352,7 +348,7 @@ async fn dummy_name(
 )]
 async fn fluid_synths(
     State(app_state): State<AppState>,
-) -> Json<HashMap<LocalId, fluid_graph::ctr::Synth>> {
+) -> Json<HashMap<LocalId, fluid_graph::CtrSynth>> {
     Json(app_state.engine_handle.project.read().await.fluid_graph.synths.clone().into())
 }
 
@@ -382,9 +378,7 @@ async fn fluid_push(
         .unwrap_or("Fluid Synth".into());
     let (ctr_synth, rt_synth) =
         fluid_graph::prepare_synth(&app_state.assets_dir, name, req.path, sample_rate).await?;
-    let id = app_state.engine_handle.fluid_push(ctr_synth, rt_synth).await?;
-    app_state.broadcast_project_change(ProjectChangeKind::FluidSynth { id }).await;
-    Ok(Json(id))
+    Ok(Json(app_state.engine_handle.fluid_push(ctr_synth, rt_synth).await?))
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -418,7 +412,6 @@ async fn fluid_replace(
     let (ctr_synth, rt_synth) =
         fluid_graph::prepare_synth(&app_state.assets_dir, name, req.path, sample_rate).await?;
     app_state.engine_handle.fluid_replace(path.synth_id, ctr_synth, rt_synth).await?;
-    app_state.broadcast_project_change(ProjectChangeKind::FluidSynth { id: path.synth_id }).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -440,7 +433,6 @@ async fn fluid_remove(
 ) -> Result<StatusCode, (StatusCode, String)> {
     with_fluid_synth(&app_state, path.synth_id, |_| ()).await?;
     app_state.engine_handle.fluid_remove(path.synth_id).await?;
-    app_state.broadcast_project_change(ProjectChangeKind::FluidSynth { id: path.synth_id }).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -490,9 +482,6 @@ async fn fluid_set_program(
 ) -> Result<StatusCode, (StatusCode, String)> {
     with_fluid_synth(&app_state, path.synth_id, |_| ()).await?;
     app_state.engine_handle.fluid_select_program(path.synth_id, program).await?;
-    app_state
-        .broadcast_project_change(ProjectChangeKind::FluidSynthProgram { id: path.synth_id })
-        .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -542,9 +531,6 @@ async fn fluid_set_name(
 ) -> Result<StatusCode, (StatusCode, String)> {
     with_fluid_synth(&app_state, path.synth_id, |_| ()).await?;
     app_state.engine_handle.fluid_set_name(path.synth_id, name).await?;
-    app_state
-        .broadcast_project_change(ProjectChangeKind::FluidSynthName { id: path.synth_id })
-        .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -574,6 +560,26 @@ async fn fluid_name(
 //--------------------------------------------------------------------------------------------------
 
 #[utoipa::path(
+    get,
+    path = "/graph/sfizz/synths",
+    responses(
+        (
+            status = OK,
+            body = HashMap<LocalId, sfizz_graph::CtrSynth>,
+            content_type = "application/json",
+            description = "OK"
+        ),
+    )
+)]
+async fn sfizz_synths(
+    State(app_state): State<AppState>,
+) -> Json<HashMap<LocalId, sfizz_graph::CtrSynth>> {
+    Json(app_state.engine_handle.project.read().await.sfizz_graph.synths.clone().into())
+}
+
+//--------------------------------------------------------------------------------------------------
+
+#[utoipa::path(
     post,
     path = "/graph/sfizz/synths",
     request_body(
@@ -597,9 +603,7 @@ async fn sfizz_push(
         .unwrap_or("Sfizz Synth".into());
     let (ctr_synth, rt_synth) =
         sfizz_graph::prepare_synth(&app_state.assets_dir, name, req.path, sample_rate).await?;
-    let id = app_state.engine_handle.sfizz_push(ctr_synth, rt_synth).await?;
-    app_state.broadcast_project_change(ProjectChangeKind::SfizzSynth { id }).await;
-    Ok(Json(id))
+    Ok(Json(app_state.engine_handle.sfizz_push(ctr_synth, rt_synth).await?))
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -633,7 +637,6 @@ async fn sfizz_replace(
     let (ctr_synth, rt_synth) =
         sfizz_graph::prepare_synth(&app_state.assets_dir, name, req.path, sample_rate).await?;
     app_state.engine_handle.sfizz_replace(path.synth_id, ctr_synth, rt_synth).await?;
-    app_state.broadcast_project_change(ProjectChangeKind::SfizzSynth { id: path.synth_id }).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -655,7 +658,6 @@ async fn sfizz_remove(
 ) -> Result<StatusCode, (StatusCode, String)> {
     with_sfizz_synth(&app_state, path.synth_id, |_| ()).await?;
     app_state.engine_handle.sfizz_remove(path.synth_id).await?;
-    app_state.broadcast_project_change(ProjectChangeKind::SfizzSynth { id: path.synth_id }).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -705,9 +707,6 @@ async fn sfizz_set_name(
 ) -> Result<StatusCode, (StatusCode, String)> {
     with_sfizz_synth(&app_state, path.synth_id, |_| ()).await?;
     app_state.engine_handle.sfizz_set_name(path.synth_id, name).await?;
-    app_state
-        .broadcast_project_change(ProjectChangeKind::SfizzSynthName { id: path.synth_id })
-        .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -753,7 +752,6 @@ async fn set_global_transposition(
     Json(transposition): Json<i8>,
 ) -> Result<StatusCode, (StatusCode, String)> {
     app_state.engine_handle.set_global_transposition(transposition).await?;
-    app_state.broadcast_project_change(ProjectChangeKind::GlobalTransposition).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -778,7 +776,7 @@ async fn global_transposition(State(app_state): State<AppState>) -> Json<i8> {
     responses(
         (
             status = OK,
-            body = HashMap<LocalId, instrument_graph::ctr::Slot>,
+            body = HashMap<LocalId, instrument_graph::CtrSlot>,
             content_type = "application/json",
             description = "OK"
         ),
@@ -786,7 +784,7 @@ async fn global_transposition(State(app_state): State<AppState>) -> Json<i8> {
 )]
 async fn instrument_slots(
     State(app_state): State<AppState>,
-) -> Json<HashMap<LocalId, instrument_graph::ctr::Slot>> {
+) -> Json<HashMap<LocalId, instrument_graph::CtrSlot>> {
     Json(app_state.engine_handle.project.read().await.instrument_graph.slots.clone().into())
 }
 
@@ -803,9 +801,7 @@ async fn instrument_slots(
 async fn instrument_slot_append_new(
     State(app_state): State<AppState>,
 ) -> Result<Json<LocalId>, (StatusCode, String)> {
-    let id = app_state.engine_handle.instrument_slot_append_new().await?;
-    app_state.broadcast_project_change(ProjectChangeKind::InstrumentSlot { id }).await;
-    Ok(Json(id))
+    Ok(Json(app_state.engine_handle.instrument_slot_append_new().await?))
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -817,7 +813,7 @@ async fn instrument_slot_append_new(
     responses(
         (
             status = OK,
-            body = instrument_graph::ctr::Slot,
+            body = instrument_graph::CtrSlot,
             content_type = "application/json",
             description = "OK"
         ),
@@ -827,7 +823,7 @@ async fn instrument_slot_append_new(
 async fn instrument_slot(
     State(app_state): State<AppState>,
     Path(path): Path<InstrumentSlotPath>,
-) -> Result<Json<instrument_graph::ctr::Slot>, (StatusCode, String)> {
+) -> Result<Json<instrument_graph::CtrSlot>, (StatusCode, String)> {
     Ok(Json(with_slot(&app_state, path.slot_id, Clone::clone).await?))
 }
 
@@ -858,9 +854,6 @@ async fn instrument_slot_remove(
 ) -> Result<StatusCode, (StatusCode, String)> {
     with_slot(&app_state, path.slot_id, |_| ()).await?;
     app_state.engine_handle.instrument_slot_remove(path.slot_id).await?;
-    app_state
-        .broadcast_project_change(ProjectChangeKind::InstrumentSlot { id: path.slot_id })
-        .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -887,9 +880,6 @@ async fn set_synth(
 ) -> Result<StatusCode, (StatusCode, String)> {
     with_slot(&app_state, path.slot_id, |_| ()).await?;
     app_state.engine_handle.set_synth(path.slot_id, synth).await?;
-    app_state
-        .broadcast_project_change(ProjectChangeKind::InstrumentSynth { id: path.slot_id })
-        .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -939,9 +929,6 @@ async fn set_enabled(
 ) -> Result<StatusCode, (StatusCode, String)> {
     with_slot(&app_state, path.slot_id, |_| ()).await?;
     app_state.engine_handle.set_enabled(path.slot_id, enabled).await?;
-    app_state
-        .broadcast_project_change(ProjectChangeKind::InstrumentEnabled { id: path.slot_id })
-        .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -986,9 +973,6 @@ async fn set_key_transform(
 ) -> Result<StatusCode, (StatusCode, String)> {
     with_slot(&app_state, path.slot_id, |_| ()).await?;
     app_state.engine_handle.set_key_transform(path.slot_id, transform).await?;
-    app_state
-        .broadcast_project_change(ProjectChangeKind::InstrumentKeyTransform { id: path.slot_id })
-        .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1038,11 +1022,6 @@ async fn set_velocity_transform(
 ) -> Result<StatusCode, (StatusCode, String)> {
     with_slot(&app_state, path.slot_id, |_| ()).await?;
     app_state.engine_handle.set_velocity_transform(path.slot_id, transform).await?;
-    app_state
-        .broadcast_project_change(ProjectChangeKind::InstrumentVelocityTransform {
-            id: path.slot_id,
-        })
-        .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1092,9 +1071,6 @@ async fn set_channel_filter(
 ) -> Result<StatusCode, (StatusCode, String)> {
     with_slot(&app_state, path.slot_id, |_| ()).await?;
     app_state.engine_handle.set_channel_filter(path.slot_id, filter).await?;
-    app_state
-        .broadcast_project_change(ProjectChangeKind::InstrumentChannelFilter { id: path.slot_id })
-        .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1139,9 +1115,6 @@ async fn set_cc_filter(
 ) -> Result<StatusCode, (StatusCode, String)> {
     with_slot(&app_state, path.slot_id, |_| ()).await?;
     app_state.engine_handle.set_cc_filter(path.slot_id, filter).await?;
-    app_state
-        .broadcast_project_change(ProjectChangeKind::InstrumentCcFilter { id: path.slot_id })
-        .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1186,11 +1159,6 @@ async fn set_use_global_transposition(
 ) -> Result<StatusCode, (StatusCode, String)> {
     with_slot(&app_state, path.slot_id, |_| ()).await?;
     app_state.engine_handle.set_use_global_transposition(path.slot_id, enabled).await?;
-    app_state
-        .broadcast_project_change(ProjectChangeKind::InstrumentUseGlobalTransposition {
-            id: path.slot_id,
-        })
-        .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1237,7 +1205,7 @@ fn map_synth_error(error: synths::Error) -> (StatusCode, String) {
 pub async fn with_slot<T>(
     app_state: &AppState,
     slot_id: LocalId,
-    f: impl FnOnce(&instrument_graph::ctr::Slot) -> T,
+    f: impl FnOnce(&instrument_graph::CtrSlot) -> T,
 ) -> Result<T, (StatusCode, String)> {
     let project = app_state.engine_handle.project.read().await;
     let result_opt = project.instrument_graph.slots.get(slot_id).map(f);
@@ -1247,7 +1215,7 @@ pub async fn with_slot<T>(
 pub async fn with_dummy_synth<T>(
     app_state: &AppState,
     synth_id: LocalId,
-    f: impl FnOnce(&dummy_graph::ctr::Synth) -> T,
+    f: impl FnOnce(&dummy_graph::CtrSynth) -> T,
 ) -> Result<T, (StatusCode, String)> {
     let project = app_state.engine_handle.project.read().await;
     let result_opt = project.dummy_graph.synths.get(synth_id).map(f);
@@ -1257,7 +1225,7 @@ pub async fn with_dummy_synth<T>(
 pub async fn with_fluid_synth<T>(
     app_state: &AppState,
     synth_id: LocalId,
-    f: impl FnOnce(&fluid_graph::ctr::Synth) -> T,
+    f: impl FnOnce(&fluid_graph::CtrSynth) -> T,
 ) -> Result<T, (StatusCode, String)> {
     let project = app_state.engine_handle.project.read().await;
     let result_opt = project.fluid_graph.synths.get(synth_id).map(f);
@@ -1267,7 +1235,7 @@ pub async fn with_fluid_synth<T>(
 pub async fn with_sfizz_synth<T>(
     app_state: &AppState,
     synth_id: LocalId,
-    f: impl FnOnce(&sfizz_graph::ctr::Synth) -> T,
+    f: impl FnOnce(&sfizz_graph::CtrSynth) -> T,
 ) -> Result<T, (StatusCode, String)> {
     let project = app_state.engine_handle.project.read().await;
     let result_opt = project.sfizz_graph.synths.get(synth_id).map(f);

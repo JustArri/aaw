@@ -1,16 +1,19 @@
 use crate::{engine::graph::LocalId, memory::Siv, synths};
+pub use ctr::*;
+pub use rt::*;
 use std::collections::HashMap;
+pub use stored::*;
 
-pub mod ctr;
-pub mod rt;
-pub mod stored;
+mod ctr;
+mod rt;
+mod stored;
 
 pub fn prepare(
-    stored: stored::Graph,
+    stored: stored::StoredGraph,
     num_slots: usize,
     sample_rate: u32,
-) -> (ctr::Graph, rt::Graph) {
-    let mut ctr_synths: HashMap<LocalId, ctr::Synth> = HashMap::new();
+) -> (CtrGraph, RtGraph) {
+    let mut ctr_synths: HashMap<LocalId, CtrSynth> = HashMap::new();
     let mut rt_synths: HashMap<LocalId, synths::Dummy> = HashMap::new();
 
     for (local_id, stored_synth) in stored.synths {
@@ -25,9 +28,9 @@ pub fn prepare(
     ctr_synths.ensure_capacity(num_slots);
     rt_synths.ensure_capacity(num_slots);
 
-    (ctr::Graph::new(ctr_synths), rt::Graph::new(rt_synths))
+    (CtrGraph::new(ctr_synths), RtGraph::new(rt_synths))
 }
 
-pub fn prepare_synth(name: String, sample_rate: u32) -> (ctr::Synth, synths::Dummy) {
-    (ctr::Synth { name }, synths::Dummy::new(sample_rate))
+pub fn prepare_synth(name: String, sample_rate: u32) -> (CtrSynth, synths::Dummy) {
+    (CtrSynth { name }, synths::Dummy::new(sample_rate))
 }

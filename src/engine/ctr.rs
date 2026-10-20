@@ -7,6 +7,7 @@ use crate::{
     },
     midi::{MidiEvent, MidiFilter, MidiKeyTransform, MidiVelocityTransform},
     rt_channels::{NotifiedRtSharedProducer, RtConsumer},
+    server::api::notifications::{ProjectChange, ProjectChangeKind},
     synths::{self, SoundFontProgram},
 };
 use serde::{Deserialize, Serialize};
@@ -16,12 +17,9 @@ use std::{
         Arc,
         atomic::{AtomicBool, AtomicU32, Ordering},
     },
-    time::Duration,
 };
-use tokio::sync::{Mutex, RwLock, oneshot};
+use tokio::sync::{Mutex, RwLock, broadcast, oneshot};
 use utoipa::ToSchema;
-
-const REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, thiserror::Error)]
 pub enum EngineError {
@@ -42,18 +40,20 @@ pub enum EngineError {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct Project {
+#[schema(as = Project)]
+pub struct CtrProject {
     pub revision: u32,
     pub name: String,
-    pub instrument_graph: instrument_graph::ctr::Graph,
-    pub dummy_graph: dummy_graph::ctr::Graph,
-    pub fluid_graph: fluid_graph::ctr::Graph,
-    pub sfizz_graph: sfizz_graph::ctr::Graph,
+    pub instrument_graph: instrument_graph::CtrGraph,
+    pub dummy_graph: dummy_graph::CtrGraph,
+    pub fluid_graph: fluid_graph::CtrGraph,
+    pub sfizz_graph: sfizz_graph::CtrGraph,
 }
 
-impl Project {
-    fn next_revision(&mut self) {
+impl CtrProject {
+    fn next_revision(&mut self) -> u32 {
         (self.revision, _) = self.revision.overflowing_add(1);
+        self.revision
     }
 }
 
@@ -63,45 +63,38 @@ pub struct EngineHandle {
     pub pending_replies: Arc<Mutex<HashMap<u32, oneshot::Sender<bool>>>>,
     pub midi_tx: NotifiedRtSharedProducer<MidiEvent>,
     pub next_cmd_id: Arc<AtomicU32>,
-    pub project: Arc<RwLock<Project>>,
+    pub project: Arc<RwLock<CtrProject>>,
+    pub project_change_tx: broadcast::Sender<Arc<ProjectChange>>,
 }
 
 impl EngineHandle {
-    pub async fn command(&self, command: Command) -> Result<bool, EngineError> {
-        let cmd_id = self.next_cmd_id.fetch_add(1, Ordering::Relaxed);
-        let (reply_tx, reply_rx) = oneshot::channel();
+    pub fn subscribe_project_changes(&self) -> broadcast::Receiver<Arc<ProjectChange>> {
+        self.project_change_tx.subscribe()
+    }
 
-        self.pending_replies.lock().await.insert(cmd_id, reply_tx);
-
-        if self.cmd_tx.push((cmd_id, command)).await.is_err() {
-            self.pending_replies.lock().await.remove(&cmd_id);
-            return Err(EngineError::QueueFull);
+    pub async fn silence(&self) -> Result<(), EngineError> {
+        if !self.command(Command::Silence).await? {
+            return Err(EngineError::Rejected);
         }
 
-        match tokio::time::timeout(REPLY_TIMEOUT, reply_rx).await {
-            Ok(Ok(reply)) => Ok(reply),
-            Ok(Err(_)) => Err(EngineError::ReplyChannelClosed),
-            Err(_) => {
-                self.pending_replies.lock().await.remove(&cmd_id);
-                Err(EngineError::Timeout)
-            }
-        }
+        Ok(())
     }
 
     pub async fn set_project_name(&self, name: String) {
         let mut project = self.project.write().await;
-        project.next_revision();
+        let revision = project.next_revision();
         project.name = name;
+        self.broadcast_project_change(revision, ProjectChangeKind::Name);
     }
 
-    pub async fn save_project(&self) -> engine::stored::Project {
+    pub async fn save_project(&self) -> engine::StoredProject {
         (&*self.project.read().await).into()
     }
 
     pub async fn replace_project(
         &self,
-        ctr: engine::ctr::Project,
-        rt: engine::rt::Project,
+        ctr: engine::CtrProject,
+        rt: engine::RtProject,
     ) -> Result<(), EngineError> {
         let mut project = self.project.write().await;
 
@@ -111,12 +104,13 @@ impl EngineHandle {
 
         self.pending_replies.lock().await.clear();
         *project = ctr;
+        self.broadcast_project_change(project.revision, ProjectChangeKind::Full);
         Ok(())
     }
 
     pub async fn dummy_push(
         &self,
-        ctr: dummy_graph::ctr::Synth,
+        ctr: dummy_graph::CtrSynth,
         rt: synths::Dummy,
     ) -> Result<LocalId, EngineError> {
         let mut project = self.project.write().await;
@@ -125,8 +119,10 @@ impl EngineHandle {
             return Err(EngineError::Rejected);
         }
 
-        project.next_revision();
-        Ok(project.dummy_graph.push(ctr))
+        let revision = project.next_revision();
+        let id = project.dummy_graph.push(ctr);
+        self.broadcast_project_change(revision, ProjectChangeKind::DummySynth { id });
+        Ok(id)
     }
 
     pub async fn dummy_remove(&self, synth_id: LocalId) -> Result<(), EngineError> {
@@ -136,24 +132,26 @@ impl EngineHandle {
             return Err(EngineError::Rejected);
         }
 
-        project.next_revision();
+        let revision = project.next_revision();
         project.dummy_graph.remove(synth_id);
         project
             .instrument_graph
             .remove_synth_references(SynthId { kind: SynthKind::Dummy, id: synth_id });
+        self.broadcast_project_change(revision, ProjectChangeKind::DummySynth { id: synth_id });
         Ok(())
     }
 
     pub async fn dummy_set_name(&self, synth_id: LocalId, name: String) -> Result<(), EngineError> {
         let mut project = self.project.write().await;
-        project.next_revision();
+        let revision = project.next_revision();
         project.dummy_graph.set_name(synth_id, name);
+        self.broadcast_project_change(revision, ProjectChangeKind::DummySynthName { id: synth_id });
         Ok(())
     }
 
     pub async fn fluid_push(
         &self,
-        ctr: fluid_graph::ctr::Synth,
+        ctr: fluid_graph::CtrSynth,
         rt: synths::Fluid,
     ) -> Result<LocalId, EngineError> {
         let mut project = self.project.write().await;
@@ -162,14 +160,16 @@ impl EngineHandle {
             return Err(EngineError::Rejected);
         }
 
-        project.next_revision();
-        Ok(project.fluid_graph.push(ctr))
+        let revision = project.next_revision();
+        let id = project.fluid_graph.push(ctr);
+        self.broadcast_project_change(revision, ProjectChangeKind::FluidSynth { id });
+        Ok(id)
     }
 
     pub async fn fluid_replace(
         &self,
         synth_id: LocalId,
-        ctr: fluid_graph::ctr::Synth,
+        ctr: fluid_graph::CtrSynth,
         rt: synths::Fluid,
     ) -> Result<(), EngineError> {
         let mut project = self.project.write().await;
@@ -178,8 +178,9 @@ impl EngineHandle {
             return Err(EngineError::Rejected);
         }
 
-        project.next_revision();
+        let revision = project.next_revision();
         project.fluid_graph.replace(synth_id, ctr);
+        self.broadcast_project_change(revision, ProjectChangeKind::FluidSynth { id: synth_id });
         Ok(())
     }
 
@@ -190,11 +191,12 @@ impl EngineHandle {
             return Err(EngineError::Rejected);
         }
 
-        project.next_revision();
+        let revision = project.next_revision();
         project.fluid_graph.remove(synth_id);
         project
             .instrument_graph
             .remove_synth_references(SynthId { kind: SynthKind::Fluid, id: synth_id });
+        self.broadcast_project_change(revision, ProjectChangeKind::FluidSynth { id: synth_id });
         Ok(())
     }
 
@@ -209,21 +211,26 @@ impl EngineHandle {
             return Err(EngineError::Rejected);
         }
 
-        project.next_revision();
+        let revision = project.next_revision();
         project.fluid_graph.select_program(synth_id, program);
+        self.broadcast_project_change(
+            revision,
+            ProjectChangeKind::FluidSynthProgram { id: synth_id },
+        );
         Ok(())
     }
 
     pub async fn fluid_set_name(&self, synth_id: LocalId, name: String) -> Result<(), EngineError> {
         let mut project = self.project.write().await;
-        project.next_revision();
+        let revision = project.next_revision();
         project.fluid_graph.set_name(synth_id, name);
+        self.broadcast_project_change(revision, ProjectChangeKind::FluidSynthName { id: synth_id });
         Ok(())
     }
 
     pub async fn sfizz_push(
         &self,
-        ctr: sfizz_graph::ctr::Synth,
+        ctr: sfizz_graph::CtrSynth,
         rt: synths::Sfizz,
     ) -> Result<LocalId, EngineError> {
         let mut project = self.project.write().await;
@@ -232,14 +239,16 @@ impl EngineHandle {
             return Err(EngineError::Rejected);
         }
 
-        project.next_revision();
-        Ok(project.sfizz_graph.push(ctr))
+        let revision = project.next_revision();
+        let id = project.sfizz_graph.push(ctr);
+        self.broadcast_project_change(revision, ProjectChangeKind::SfizzSynth { id });
+        Ok(id)
     }
 
     pub async fn sfizz_replace(
         &self,
         synth_id: LocalId,
-        ctr: sfizz_graph::ctr::Synth,
+        ctr: sfizz_graph::CtrSynth,
         rt: synths::Sfizz,
     ) -> Result<(), EngineError> {
         let mut project = self.project.write().await;
@@ -248,8 +257,9 @@ impl EngineHandle {
             return Err(EngineError::Rejected);
         }
 
-        project.next_revision();
+        let revision = project.next_revision();
         project.sfizz_graph.replace(synth_id, ctr);
+        self.broadcast_project_change(revision, ProjectChangeKind::SfizzSynth { id: synth_id });
         Ok(())
     }
 
@@ -260,18 +270,20 @@ impl EngineHandle {
             return Err(EngineError::Rejected);
         }
 
-        project.next_revision();
+        let revision = project.next_revision();
         project.sfizz_graph.remove(synth_id);
         project
             .instrument_graph
             .remove_synth_references(SynthId { kind: SynthKind::Sfizz, id: synth_id });
+        self.broadcast_project_change(revision, ProjectChangeKind::SfizzSynth { id: synth_id });
         Ok(())
     }
 
     pub async fn sfizz_set_name(&self, synth_id: LocalId, name: String) -> Result<(), EngineError> {
         let mut project = self.project.write().await;
-        project.next_revision();
+        let revision = project.next_revision();
         project.sfizz_graph.set_name(synth_id, name);
+        self.broadcast_project_change(revision, ProjectChangeKind::SfizzSynthName { id: synth_id });
         Ok(())
     }
 
@@ -282,8 +294,9 @@ impl EngineHandle {
             return Err(EngineError::Rejected);
         }
 
-        project.next_revision();
+        let revision = project.next_revision();
         project.instrument_graph.set_global_transposition(transposition);
+        self.broadcast_project_change(revision, ProjectChangeKind::GlobalTransposition);
         Ok(())
     }
 
@@ -294,8 +307,10 @@ impl EngineHandle {
             return Err(EngineError::Rejected);
         }
 
-        project.next_revision();
-        Ok(project.instrument_graph.append_new())
+        let revision = project.next_revision();
+        let id = project.instrument_graph.append_new();
+        self.broadcast_project_change(revision, ProjectChangeKind::InstrumentSlot { id });
+        Ok(id)
     }
 
     pub async fn instrument_slot_remove(&self, slot_id: LocalId) -> Result<(), EngineError> {
@@ -305,8 +320,9 @@ impl EngineHandle {
             return Err(EngineError::Rejected);
         }
 
-        project.next_revision();
+        let revision = project.next_revision();
         project.instrument_graph.remove(slot_id);
+        self.broadcast_project_change(revision, ProjectChangeKind::InstrumentSlot { id: slot_id });
         Ok(())
     }
 
@@ -321,8 +337,9 @@ impl EngineHandle {
             return Err(EngineError::Rejected);
         }
 
-        project.next_revision();
+        let revision = project.next_revision();
         project.instrument_graph.set_synth(slot_id, synth_id);
+        self.broadcast_project_change(revision, ProjectChangeKind::InstrumentSynth { id: slot_id });
         Ok(())
     }
 
@@ -333,8 +350,12 @@ impl EngineHandle {
             return Err(EngineError::Rejected);
         }
 
-        project.next_revision();
+        let revision = project.next_revision();
         project.instrument_graph.set_enabled(slot_id, flag);
+        self.broadcast_project_change(
+            revision,
+            ProjectChangeKind::InstrumentEnabled { id: slot_id },
+        );
         Ok(())
     }
 
@@ -352,8 +373,12 @@ impl EngineHandle {
             return Err(EngineError::Rejected);
         }
 
-        project.next_revision();
+        let revision = project.next_revision();
         project.instrument_graph.set_key_transform(slot_id, transform);
+        self.broadcast_project_change(
+            revision,
+            ProjectChangeKind::InstrumentKeyTransform { id: slot_id },
+        );
         Ok(())
     }
 
@@ -371,8 +396,12 @@ impl EngineHandle {
             return Err(EngineError::Rejected);
         }
 
-        project.next_revision();
+        let revision = project.next_revision();
         project.instrument_graph.set_velocity_transform(slot_id, transform);
+        self.broadcast_project_change(
+            revision,
+            ProjectChangeKind::InstrumentVelocityTransform { id: slot_id },
+        );
         Ok(())
     }
 
@@ -387,8 +416,12 @@ impl EngineHandle {
             return Err(EngineError::Rejected);
         }
 
-        project.next_revision();
+        let revision = project.next_revision();
         project.instrument_graph.set_channel_filter(slot_id, filter);
+        self.broadcast_project_change(
+            revision,
+            ProjectChangeKind::InstrumentChannelFilter { id: slot_id },
+        );
         Ok(())
     }
 
@@ -406,8 +439,12 @@ impl EngineHandle {
             return Err(EngineError::Rejected);
         }
 
-        project.next_revision();
+        let revision = project.next_revision();
         project.instrument_graph.set_cc_filter(slot_id, filter);
+        self.broadcast_project_change(
+            revision,
+            ProjectChangeKind::InstrumentCcFilter { id: slot_id },
+        );
         Ok(())
     }
 
@@ -422,9 +459,44 @@ impl EngineHandle {
             return Err(EngineError::Rejected);
         }
 
-        project.next_revision();
+        let revision = project.next_revision();
         project.instrument_graph.set_use_global_transposition(slot_id, flag);
+        self.broadcast_project_change(
+            revision,
+            ProjectChangeKind::InstrumentUseGlobalTransposition { id: slot_id },
+        );
         Ok(())
+    }
+
+    async fn command(&self, command: Command) -> Result<bool, EngineError> {
+        let cmd_id = self.next_cmd_id.fetch_add(1, Ordering::Relaxed);
+        let (reply_tx, reply_rx) = oneshot::channel();
+
+        self.pending_replies.lock().await.insert(cmd_id, reply_tx);
+
+        if self.cmd_tx.push((cmd_id, command)).await.is_err() {
+            self.pending_replies.lock().await.remove(&cmd_id);
+            return Err(EngineError::QueueFull);
+        }
+
+        // match tokio::time::timeout(REPLY_TIMEOUT, reply_rx).await {
+        //     Ok(Ok(reply)) => Ok(reply),
+        //     Ok(Err(_)) => Err(EngineError::ReplyChannelClosed),
+        //     Err(_) => {
+        //         self.pending_replies.lock().await.remove(&cmd_id);
+        //         Err(EngineError::Timeout)
+        //     }
+        // }
+
+        match reply_rx.await {
+            Ok(reply) => Ok(reply),
+            Err(_) => Err(EngineError::ReplyChannelClosed),
+        }
+    }
+
+    fn broadcast_project_change(&self, revision: u32, kind: ProjectChangeKind) {
+        let change = ProjectChange { revision, kind };
+        let _ = self.project_change_tx.send(Arc::new(change));
     }
 }
 

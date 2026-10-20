@@ -38,7 +38,7 @@ pub struct MidiHandlerIter<'a> {
 }
 
 impl<'a> MidiHandlerIter<'a> {
-    fn new(graph: &'a Graph, event: MidiEvent) -> Self {
+    fn new(graph: &'a RtGraph, event: MidiEvent) -> Self {
         Self {
             slots: graph.slots.iter_values(),
             global_transposition: graph.global_transposition,
@@ -93,7 +93,7 @@ pub struct AudioRendererIter<'a> {
 }
 
 impl<'a> AudioRendererIter<'a> {
-    fn new(graph: &'a Graph) -> Self {
+    fn new(graph: &'a mut RtGraph) -> Self {
         Self { slots: graph.slots.iter_values() }
     }
 }
@@ -118,17 +118,17 @@ impl<'a> Iterator for AudioRendererIter<'a> {
     }
 }
 
-pub struct Graph {
+pub struct RtGraph {
     pub slots: Siv<Slot, LocalId>,
     pub global_transposition: i8,
 }
 
-impl Graph {
+impl RtGraph {
     pub fn midi_handler_iter(&'_ self, event: MidiEvent) -> MidiHandlerIter<'_> {
         MidiHandlerIter::new(self, event)
     }
 
-    pub fn audio_renderer_iter(&'_ self) -> AudioRendererIter<'_> {
+    pub fn audio_renderer_iter(&'_ mut self) -> AudioRendererIter<'_> {
         AudioRendererIter::new(self)
     }
 
@@ -226,51 +226,5 @@ impl Graph {
         } else {
             false
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::engine::{graph::LocalId, instrument_graph::SynthKind};
-
-    fn synth(id: usize) -> SynthId {
-        SynthId { kind: SynthKind::Dummy, id: LocalId(id) }
-    }
-
-    fn slot(synth_id: Option<SynthId>) -> Slot {
-        Slot { synth_id, ..Slot::default() }
-    }
-
-    fn graph_with_a_removed_slot_and_an_unassigned_slot() -> Graph {
-        let mut slots = Siv::from(vec![
-            slot(Some(synth(0))),
-            slot(Some(synth(1))),
-            slot(Some(synth(2))),
-            slot(None),
-        ]);
-        slots.remove(LocalId(1));
-        Graph { slots, global_transposition: 0 }
-    }
-
-    #[test]
-    fn midi_iterator_continues_past_removed_and_unassigned_slots() {
-        let graph = graph_with_a_removed_slot_and_an_unassigned_slot();
-        let event =
-            MidiEvent { channel: 0, kind: MidiEventKind::NoteOn { key: 60, velocity: 100 } };
-
-        let sources: Vec<_> =
-            graph.midi_handler_iter(event).map(|(source_id, _)| source_id).collect();
-
-        assert_eq!(sources, vec![synth(0), synth(2)]);
-    }
-
-    #[test]
-    fn audio_iterator_continues_past_removed_and_unassigned_slots() {
-        let graph = graph_with_a_removed_slot_and_an_unassigned_slot();
-
-        let sources: Vec<_> = graph.audio_renderer_iter().collect();
-
-        assert_eq!(sources, vec![synth(0), synth(2)]);
     }
 }

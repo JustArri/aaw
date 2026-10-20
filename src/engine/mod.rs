@@ -1,5 +1,12 @@
-use crate::{engine::graph::DEFAULT_SAMPLE_RATE, rt_channels, synths};
-use rt::Command;
+use crate::{
+    engine::graph::{DEFAULT_CHANNEL_COUNT, DEFAULT_SAMPLE_RATE},
+    rt_channels,
+    server::api::notifications::ProjectChange,
+    synths,
+};
+pub use CtrProject;
+pub use ctr::*;
+pub use rt::*;
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -8,27 +15,32 @@ use std::{
         atomic::{AtomicBool, AtomicU32},
     },
 };
-use tokio::sync::{Mutex, RwLock};
+pub use stored::*;
+use tokio::sync::{Mutex, RwLock, broadcast};
 
-pub mod ctr;
+mod ctr;
 pub mod dummy_graph;
-pub mod effect;
 pub mod fluid_graph;
 pub mod graph;
 pub mod instrument_graph;
-pub mod rt;
+mod rt;
 pub mod sfizz_graph;
-pub mod stored;
+mod stored;
 
 pub async fn load(
     assets_dir: &Path,
-    stored: stored::Project,
+    stored: StoredProject,
     min_instrument_slots: usize,
     min_synths_per_graph: usize,
+    channel_count: usize,
     sample_rate: u32,
-) -> synths::Result<(ctr::Project, rt::Project)> {
-    let (ctr_instrument_graph, rt_instrument_graph) =
-        instrument_graph::prepare(stored.instrument_graph, min_instrument_slots);
+) -> synths::Result<(CtrProject, RtProject)> {
+    let (ctr_instrument_graph, rt_instrument_graph) = instrument_graph::prepare(
+        stored.instrument_graph,
+        min_instrument_slots,
+        channel_count,
+        sample_rate,
+    );
 
     let (ctr_dummy_graph, rt_dummy_graph) =
         dummy_graph::prepare(stored.dummy_graph, min_synths_per_graph, sample_rate);
@@ -43,7 +55,7 @@ pub async fn load(
             .await
             .unwrap_or_else(|_| sfizz_graph::default(min_synths_per_graph));
 
-    let ctr_project = ctr::Project {
+    let ctr_project = CtrProject {
         revision: 0,
         name: stored.name,
         instrument_graph: ctr_instrument_graph,
@@ -52,7 +64,7 @@ pub async fn load(
         sfizz_graph: ctr_sfizz_graph,
     };
 
-    let rt_project = rt::Project {
+    let rt_project = RtProject {
         instrument_graph: rt_instrument_graph,
         dummy_graph: rt_dummy_graph,
         fluid_graph: rt_fluid_graph,
@@ -62,38 +74,47 @@ pub async fn load(
     Ok((ctr_project, rt_project))
 }
 
-pub async fn create_engine(
+#[allow(clippy::too_many_arguments)]
+pub async fn create_engine( //TODO: cleanup args
     assets_dir: &Path,
-    project: stored::Project,
+    project: StoredProject,
     stream_error: Arc<AtomicBool>,
     cmd_capacity: usize,
     midi_capacity: usize,
     min_instrument_slots: usize,
     min_synths_per_graph: usize,
-) -> synths::Result<(Arc<Mutex<rt::Engine>>, ctr::EngineHandle, ctr::Runtime)> {
+    project_change_tx: broadcast::Sender<Arc<ProjectChange>>,
+) -> synths::Result<(Arc<Mutex<Engine>>, EngineHandle, Runtime)> {
     let (cmd_tx, cmd_rx) = rt_channels::create_notified_mpsc(cmd_capacity);
     let (reply_tx, reply_rx) = rt_channels::create_spsc(cmd_capacity);
     let (midi_tx, midi_rx) = rt_channels::create_notified_mpsc(midi_capacity);
     let pending_replies = Arc::new(Mutex::new(HashMap::new()));
 
-    let (ctr_project, rt_project) =
-        load(assets_dir, project, min_instrument_slots, min_synths_per_graph, DEFAULT_SAMPLE_RATE)
-            .await?;
+    let (ctr_project, rt_project) = load(
+        assets_dir,
+        project,
+        min_instrument_slots,
+        min_synths_per_graph,
+        DEFAULT_CHANNEL_COUNT,
+        DEFAULT_SAMPLE_RATE,
+    )
+    .await?;
 
-    let handle = ctr::EngineHandle {
+    let handle = EngineHandle {
         cmd_tx,
         pending_replies: Arc::clone(&pending_replies),
         midi_tx,
         next_cmd_id: Arc::new(AtomicU32::new(0)),
         project: Arc::new(RwLock::new(ctr_project)),
+        project_change_tx,
     };
 
     let (cmd_rx, cmd_notify) = cmd_rx.unwrap();
     let (midi_rx, midi_notify) = midi_rx.unwrap();
-    let engine = rt::Engine { project: rt_project, audio_blocks: None, midi_rx, cmd_rx, reply_tx };
+    let engine = Engine { project: rt_project, audio_blocks: None, midi_rx, cmd_rx, reply_tx };
     let engine = Arc::new(Mutex::new(engine));
 
-    let runtime = ctr::Runtime {
+    let runtime = Runtime {
         pending_replies,
         reply_rx,
         cmd_notify,

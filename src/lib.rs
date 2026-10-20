@@ -15,7 +15,6 @@ use tracing::{error, info};
 
 pub mod app_state;
 pub mod audio;
-pub mod effects;
 pub mod engine;
 pub mod ffi;
 pub mod files;
@@ -80,7 +79,7 @@ pub fn spawn_midi_runtime_task(
 
 pub fn spawn_engine_runtime_task(
     stop: CancellationToken,
-    mut runtime: engine::ctr::Runtime,
+    mut runtime: engine::Runtime,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_millis(1));

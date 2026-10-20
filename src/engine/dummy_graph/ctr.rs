@@ -3,21 +3,23 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct Synth {
+#[schema(as = DummySynth)]
+pub struct CtrSynth {
     pub name: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct Graph {
-    pub synths: Siv<Synth, LocalId>,
+#[schema(as = DummyGraph)]
+pub struct CtrGraph {
+    pub synths: Siv<CtrSynth, LocalId>,
 }
 
-impl Graph {
-    pub fn new(synths: Siv<Synth, LocalId>) -> Self {
+impl CtrGraph {
+    pub fn new(synths: Siv<CtrSynth, LocalId>) -> Self {
         Self { synths }
     }
 
-    pub fn push(&mut self, synth: Synth) -> LocalId {
+    pub fn push(&mut self, synth: CtrSynth) -> LocalId {
         self.synths.push(synth)
     }
 
