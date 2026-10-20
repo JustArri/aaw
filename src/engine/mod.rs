@@ -20,6 +20,7 @@ use tokio::sync::{Mutex, RwLock, broadcast};
 
 mod ctr;
 pub mod dummy_graph;
+pub mod effects;
 pub mod fluid_graph;
 pub mod graph;
 pub mod instrument_graph;
@@ -75,7 +76,8 @@ pub async fn load(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub async fn create_engine( //TODO: cleanup args
+pub async fn create_engine(
+    //TODO: cleanup args
     assets_dir: &Path,
     project: StoredProject,
     stream_error: Arc<AtomicBool>,
