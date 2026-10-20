@@ -1,5 +1,6 @@
 use crate::{
     app_state::AppState,
+    engine::effects::{self, EffectsTuning},
 };
 use axum::{Json, extract::State, http::StatusCode};
 use utoipa::OpenApi;
@@ -21,6 +22,7 @@ pub fn router(assets_dir: impl AsRef<std::path::Path>) -> OpenApiRouter<AppState
     OpenApiRouter::with_openapi(Api::openapi())
         .routes(routes!(health))
         .routes(routes!(silence))
+        .routes(routes!(effects_tuning))
         .nest("/midi", midi::router())
         .nest("/audio", audio::router())
         .nest("/system", system::router())
@@ -61,6 +63,20 @@ async fn silence(State(app_state): State<AppState>) -> Result<StatusCode, (Statu
         .await
         .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, format!("command failed: {err}")))?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+//--------------------------------------------------------------------------------------------------
+
+#[utoipa::path(
+    get,
+    path = "/effects-tuning",
+    responses(
+        (status = OK, body = EffectsTuning, content_type = "application/json", description = "OK"),
+        (status = INTERNAL_SERVER_ERROR, description = "Internal Server Error"),
+    )
+)]
+async fn effects_tuning() -> Json<EffectsTuning> {
+    Json(effects::EFFECTS_TUNING)
 }
 
 //--------------------------------------------------------------------------------------------------
