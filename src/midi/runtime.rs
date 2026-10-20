@@ -40,6 +40,7 @@ pub enum InputSlot {
 }
 
 pub struct ConnectedInputSlot {
+    id: usize,
     inner: MidiInputConnection<()>,
     senders: Arc<[NotifiedRtSharedProducer<MidiEvent>]>,
     name: String,
@@ -57,6 +58,7 @@ impl ConnectedInputSlot {
 
     pub fn disconnect(self) -> DisconnectedInputSlot {
         DisconnectedInputSlot {
+            id: self.id,
             inner: self.inner.close().0,
             senders: self.senders,
             name: self.name,
@@ -65,6 +67,7 @@ impl ConnectedInputSlot {
 }
 
 pub struct DisconnectedInputSlot {
+    id: usize,
     inner: MidiInput,
     senders: Arc<[NotifiedRtSharedProducer<MidiEvent>]>,
     name: String,
@@ -72,12 +75,13 @@ pub struct DisconnectedInputSlot {
 
 impl DisconnectedInputSlot {
     pub fn new(
+        id: usize,
         name: impl Into<String>,
         senders: Arc<[NotifiedRtSharedProducer<MidiEvent>]>,
     ) -> Result<Self, InitError> {
         let name = name.into();
 
-        Ok(Self { inner: MidiInput::new(&name)?, senders, name })
+        Ok(Self { id, inner: MidiInput::new(&name)?, senders, name })
     }
 
     pub fn name(&self) -> &String {
@@ -99,7 +103,7 @@ impl DisconnectedInputSlot {
             port,
             &self.name,
             move |_, msg, _| {
-                if let Some(event) = super::event::parse_midi_message(msg) {
+                if let Some(event) = super::event::parse_midi_message(self.id, msg) {
                     for sender in senders.iter() {
                         if let Err(event) = sender.blocking_push(event.into()) {
                             warn!(
@@ -115,6 +119,7 @@ impl DisconnectedInputSlot {
 
         match connect_result {
             Ok(con) => Ok(ConnectedInputSlot {
+                id: self.id,
                 inner: con,
                 senders: self.senders,
                 name: self.name,
@@ -125,7 +130,12 @@ impl DisconnectedInputSlot {
                 let inner = err.into_inner();
                 Err(ConnectError::new(
                     kind,
-                    DisconnectedInputSlot { inner, senders: self.senders, name: self.name },
+                    DisconnectedInputSlot {
+                        id: self.id,
+                        inner,
+                        senders: self.senders,
+                        name: self.name,
+                    },
                 ))
             }
         }
@@ -162,7 +172,7 @@ impl MidiRuntime {
 
         let inputs = (0..input_count)
             .map(|i| {
-                DisconnectedInputSlot::new(format!("{client_name}-{i}"), Arc::clone(&senders))
+                DisconnectedInputSlot::new(i, format!("{client_name}-{i}"), Arc::clone(&senders))
                     .map(InputSlot::Disconnected)
             })
             .collect::<Result<_, _>>()?;

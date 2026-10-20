@@ -1,4 +1,4 @@
-use crate::engine;
+use crate::engine::{StoredProject, StoredProjectVersioned};
 use serde::Deserialize;
 use std::{
     collections::HashMap,
@@ -94,7 +94,7 @@ impl Projects {
 
     pub async fn save_new(
         &mut self,
-        project: engine::stored::Project,
+        project: StoredProject,
     ) -> Result<uuid::Uuid, CachedProjectError> {
         if self.list.iter().any(|p| p.1.name == project.name) {
             return Err(CachedProjectError::ProjectAlreadyExists);
@@ -109,7 +109,7 @@ impl Projects {
         self.list.insert(
             id,
             ProjectPreview {
-                version: engine::stored::ProjectVersioned::CURRENT_VERSION,
+                version: StoredProjectVersioned::CURRENT_VERSION,
                 name: project.name.clone(),
             },
         );
@@ -120,7 +120,7 @@ impl Projects {
     pub async fn save(
         &mut self,
         id: uuid::Uuid,
-        project: engine::stored::Project,
+        project: StoredProject,
     ) -> Result<(), StoredProjectError> {
         let path = self.dir.join(format!("{id}.json"));
 
@@ -130,7 +130,7 @@ impl Projects {
         self.list.insert(
             id,
             ProjectPreview {
-                version: engine::stored::ProjectVersioned::CURRENT_VERSION,
+                version: StoredProjectVersioned::CURRENT_VERSION,
                 name: project.name.clone(),
             },
         );
@@ -138,18 +138,15 @@ impl Projects {
         Ok(())
     }
 
-    pub async fn load(
-        &mut self,
-        id: uuid::Uuid,
-    ) -> Result<engine::stored::Project, StoredProjectError> {
+    pub async fn load(&mut self, id: uuid::Uuid) -> Result<StoredProject, StoredProjectError> {
         let path = Self::project_path(&self.dir, id);
         let content = fs::read_to_string(path).await?;
-        let project: engine::stored::Project = serde_json::from_str(&content)?;
+        let project: StoredProject = serde_json::from_str(&content)?;
 
         self.list.insert(
             id,
             ProjectPreview {
-                version: engine::stored::ProjectVersioned::CURRENT_VERSION,
+                version: StoredProjectVersioned::CURRENT_VERSION,
                 name: project.name.clone(),
             },
         );

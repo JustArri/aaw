@@ -1,41 +1,44 @@
-use crate::engine::{dummy_graph::ctr, graph::LocalId};
+use crate::engine::{
+    dummy_graph::{CtrGraph, CtrSynth},
+    graph::LocalId,
+};
 use migrations_derive::Migrations;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Migrations)]
 #[migrations(version = 1, version_type = u32)]
-#[schema(as = FluidSynth)]
-pub struct Synth {
+#[schema(as = StoredDummySynth)]
+pub struct StoredSynth {
     pub name: String,
 }
 
-impl From<&ctr::Synth> for Synth {
-    fn from(value: &ctr::Synth) -> Self {
+impl From<&CtrSynth> for StoredSynth {
+    fn from(value: &CtrSynth) -> Self {
         Self { name: value.name.clone() }
     }
 }
 
-impl From<ctr::Synth> for Synth {
-    fn from(value: ctr::Synth) -> Self {
+impl From<CtrSynth> for StoredSynth {
+    fn from(value: CtrSynth) -> Self {
         Self { name: value.name }
     }
 }
 
 #[derive(Default, Debug, Clone, Migrations)]
 #[migrations(version = 1, version_type = u32)]
-#[schema(as = FluidGraph)]
-pub struct Graph {
-    pub synths: HashMap<LocalId, Synth>,
+#[schema(as = StoredDummyGraph)]
+pub struct StoredGraph {
+    pub synths: HashMap<LocalId, StoredSynth>,
 }
 
-impl From<&ctr::Graph> for Graph {
-    fn from(value: &ctr::Graph) -> Self {
+impl From<&CtrGraph> for StoredGraph {
+    fn from(value: &CtrGraph) -> Self {
         Self { synths: value.synths.map_ref(|synth| synth.into()).into() }
     }
 }
 
-impl From<ctr::Graph> for Graph {
-    fn from(value: ctr::Graph) -> Self {
+impl From<CtrGraph> for StoredGraph {
+    fn from(value: CtrGraph) -> Self {
         Self { synths: value.synths.map(|synth| synth.into()).into() }
     }
 }

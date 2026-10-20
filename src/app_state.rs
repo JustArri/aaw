@@ -1,12 +1,12 @@
 use crate::{
-    engine::{self, ctr::EngineHandle, graph::DEFAULT_SAMPLE_RATE, rt::Engine},
+    engine::{
+        self, Engine, EngineHandle,
+        graph::{DEFAULT_CHANNEL_COUNT, DEFAULT_SAMPLE_RATE},
+    },
     midi::{MidiEvent, MidiRuntime},
     projects::Projects,
     rt_channels::NotifiedRtSharedProducer,
-    server::api::{
-        audio::AudioOutputStream,
-        notifications::{ProjectChange, ProjectChangeKind},
-    },
+    server::api::audio::AudioOutputStream,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -32,7 +32,6 @@ pub struct AppState {
     pub projects: Arc<RwLock<Projects>>,
     pub assets_dir: Arc<Path>,
     pub active_project_id: Arc<RwLock<Option<uuid::Uuid>>>,
-    pub project_change_tx: broadcast::Sender<Arc<ProjectChange>>,
 }
 
 impl AppState {
@@ -49,16 +48,19 @@ impl AppState {
             .unwrap_or(DEFAULT_SAMPLE_RATE)
     }
 
-    pub async fn broadcast_project_change(&self, kind: ProjectChangeKind) {
-        let change =
-            ProjectChange { revision: self.engine_handle.project.read().await.revision, kind };
-        let _ = self.project_change_tx.send(Arc::new(change));
+    pub async fn channel_count(&self) -> usize {
+        self.output_stream
+            .lock()
+            .await
+            .as_ref()
+            .map(|s| s.1.channel_count as usize)
+            .unwrap_or(DEFAULT_CHANNEL_COUNT)
     }
 }
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Serialize, Deserialize)]
 pub enum LastProject {
-    Cached(engine::stored::Project),
+    Cached(engine::StoredProject),
     Saved(uuid::Uuid),
 }

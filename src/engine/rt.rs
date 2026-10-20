@@ -14,7 +14,7 @@ use crate::{
 // sacrifice memory for latency (avoid allocations/deallocations in the audio thread)
 #[allow(clippy::large_enum_variant)]
 pub enum Command {
-    ReplaceProject { project: Box<Project> },
+    ReplaceProject { project: Box<RtProject> },
 
     Silence,
 
@@ -48,15 +48,15 @@ pub struct AudioBlocks {
     pub temp: AudioBlock,
 }
 
-pub struct Project {
-    pub instrument_graph: instrument_graph::rt::Graph,
-    pub dummy_graph: dummy_graph::rt::Graph,
-    pub fluid_graph: fluid_graph::rt::Graph,
-    pub sfizz_graph: sfizz_graph::rt::Graph,
+pub struct RtProject {
+    pub instrument_graph: instrument_graph::RtGraph,
+    pub dummy_graph: dummy_graph::RtGraph,
+    pub fluid_graph: fluid_graph::RtGraph,
+    pub sfizz_graph: sfizz_graph::RtGraph,
 }
 
 pub struct Engine {
-    pub project: Project,
+    pub project: RtProject,
     pub audio_blocks: Option<AudioBlocks>,
     pub midi_rx: RtConsumer<MidiEvent>,
     pub cmd_rx: RtConsumer<(u32, Command)>,

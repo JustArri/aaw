@@ -2,7 +2,7 @@ use aaw::{
     APP_VERSION, PACKAGE_NAME,
     app_state::{AppState, LastProject},
     audio::{self, params::DeviceCfgSelection},
-    engine::{self, stored::ProjectVersioned},
+    engine::{self, StoredProject, StoredProjectVersioned},
     files::{load_opt, save},
     midi::MidiRuntime,
     projects::Projects,
@@ -98,11 +98,14 @@ async fn migrate_project(path: &Path) -> anyhow::Result<()> {
     let content = tokio::fs::read(&path).await.context("failed to load file")?;
     let content = String::from_utf8_lossy(&content);
 
-    let orig_project: ProjectVersioned =
+    let orig_project: StoredProjectVersioned =
         serde_json::from_str(&content).context("failed to parse file")?;
 
-    info!("old version: {}", orig_project.version().unwrap_or(ProjectVersioned::CURRENT_VERSION));
-    info!("new version: {}", ProjectVersioned::CURRENT_VERSION);
+    info!(
+        "old version: {}",
+        orig_project.version().unwrap_or(StoredProjectVersioned::CURRENT_VERSION)
+    );
+    info!("new version: {}", StoredProjectVersioned::CURRENT_VERSION);
 
     let migrated_project = orig_project.migrate();
     let value = serde_json::to_string_pretty(&migrated_project).context("failed to serialize:")?;
@@ -143,14 +146,15 @@ async fn run(args: Args) -> anyhow::Result<()> {
         Some(LastProject::Cached(cached)) => (cached, None),
         Some(LastProject::Saved(id)) => {
             let path = Projects::project_path(&projects_dir, id);
-            let proj = load_opt::<engine::stored::Project>("", (&path, CFG_LAST_PROJECT_SUBJECT))
+            let proj = load_opt::<StoredProject>("", (&path, CFG_LAST_PROJECT_SUBJECT))
                 .await
                 .unwrap_or_default();
             (proj, Some(id))
         }
-        None => (engine::stored::Project::default(), None),
+        None => (StoredProject::default(), None),
     };
 
+    let (project_change_tx, _) = broadcast::channel(args.project_change_bc_capacity);
     let (engine, engine_handle, engine_runtime) = engine::create_engine(
         &assets_dir,
         project,
@@ -159,6 +163,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
         args.midi_to_engine_capacity,
         args.min_instrument_slots,
         args.min_synths_per_graph,
+        project_change_tx,
     )
     .await
     .context("failed to create engine")?;
@@ -185,7 +190,6 @@ async fn run(args: Args) -> anyhow::Result<()> {
 
     let output_stream = Arc::new(Mutex::new(output_stream));
     let active_project_id = Arc::new(RwLock::new(project_id));
-    let (project_change_tx, _) = broadcast::channel(args.project_change_bc_capacity);
 
     let root_router = aaw::server::router(assets_dir.clone()).with_state(AppState {
         midi_tx: midi_bc_tx.clone(),
@@ -202,7 +206,6 @@ async fn run(args: Args) -> anyhow::Result<()> {
         )),
         assets_dir: Arc::from(assets_dir),
         active_project_id: Arc::clone(&active_project_id),
-        project_change_tx,
     });
 
     let relay_handle = aaw::spawn_midi_relay_task(stop.clone(), midi_relay_rx, midi_bc_tx);
@@ -270,7 +273,7 @@ fn aaw_root_dir() -> anyhow::Result<PathBuf> {
 
 async fn try_start_stream(
     stream_info: AudioOutputStream,
-    engine: Arc<Mutex<engine::rt::Engine>>,
+    engine: Arc<Mutex<engine::Engine>>,
     stream_error: Arc<AtomicBool>,
 ) -> anyhow::Result<(cpal::Stream, AudioOutputStream)> {
     let device_config = audio::output::ResolvedConfig::find(DeviceCfgSelection {

@@ -4,7 +4,8 @@ use std::path::PathBuf;
 use utoipa::ToSchema;
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct Synth {
+#[schema(as = SfizzSynth)]
+pub struct CtrSynth {
     pub name: String,
 
     #[schema(value_type = String)]
@@ -14,20 +15,21 @@ pub struct Synth {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct Graph {
-    pub synths: Siv<Synth, LocalId>,
+#[schema(as = SfizzGraph)]
+pub struct CtrGraph {
+    pub synths: Siv<CtrSynth, LocalId>,
 }
 
-impl Graph {
-    pub fn new(synths: Siv<Synth, LocalId>) -> Self {
+impl CtrGraph {
+    pub fn new(synths: Siv<CtrSynth, LocalId>) -> Self {
         Self { synths }
     }
 
-    pub fn push(&mut self, synth: Synth) -> LocalId {
+    pub fn push(&mut self, synth: CtrSynth) -> LocalId {
         self.synths.push(synth)
     }
 
-    pub fn replace(&mut self, synth_id: LocalId, synth: Synth) {
+    pub fn replace(&mut self, synth_id: LocalId, synth: CtrSynth) {
         let _ = self.synths.try_replace(synth_id, synth);
     }
 

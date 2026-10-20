@@ -7,6 +7,7 @@ pub struct TimedMidiEvent {
     #[schema(required)]
     pub timestamp: Option<u64>,
 
+    pub slot: usize,
     pub channel: u8,
 
     #[serde(flatten)]
@@ -19,12 +20,13 @@ impl TimedMidiEvent {
     }
 
     pub fn split(self) -> (Option<u64>, MidiEvent) {
-        (self.timestamp, MidiEvent { channel: self.channel, kind: self.kind })
+        (self.timestamp, MidiEvent { slot: self.slot, channel: self.channel, kind: self.kind })
     }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, ToSchema)]
 pub struct MidiEvent {
+    pub slot: usize,
     pub channel: u8,
 
     #[serde(flatten)]
@@ -33,7 +35,7 @@ pub struct MidiEvent {
 
 impl From<TimedMidiEvent> for MidiEvent {
     fn from(value: TimedMidiEvent) -> Self {
-        Self { channel: value.channel, kind: value.kind }
+        Self { slot: value.slot, channel: value.channel, kind: value.kind }
     }
 }
 
@@ -77,7 +79,7 @@ pub enum MidiEventKind {
     PolyphonicAftertouch { key: u8, value: u8 },
 }
 
-pub fn parse_midi_message(message: &[u8]) -> Option<TimedMidiEvent> {
+pub fn parse_midi_message(slot: usize, message: &[u8]) -> Option<TimedMidiEvent> {
     let status = *message.first()?;
     let channel = status & 0x0f;
     let data = &message[1..];
@@ -113,5 +115,5 @@ pub fn parse_midi_message(message: &[u8]) -> Option<TimedMidiEvent> {
         _ => return None,
     };
 
-    Some(TimedMidiEvent { timestamp: None, channel, kind })
+    Some(TimedMidiEvent { timestamp: None, slot, channel, kind })
 }

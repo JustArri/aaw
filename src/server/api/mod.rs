@@ -1,5 +1,7 @@
-use crate::{app_state::AppState, engine::rt::Command};
-use axum::{extract::State, http::StatusCode};
+use crate::{
+    app_state::AppState,
+};
+use axum::{Json, extract::State, http::StatusCode};
 use utoipa::OpenApi;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
@@ -55,7 +57,7 @@ async fn health() -> &'static str {
 async fn silence(State(app_state): State<AppState>) -> Result<StatusCode, (StatusCode, String)> {
     app_state
         .engine_handle
-        .command(Command::Silence)
+        .silence()
         .await
         .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, format!("command failed: {err}")))?;
     Ok(StatusCode::NO_CONTENT)

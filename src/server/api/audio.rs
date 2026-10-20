@@ -11,9 +11,9 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 
 pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
-        .routes(routes!(outputs))
-        .routes(routes!(output_stream))
-        .routes(routes!(set_output_stream))
+        .routes(routes!(audio_host_outputs))
+        .routes(routes!(audio_output_stream))
+        .routes(routes!(set_audio_output_stream))
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -53,11 +53,16 @@ pub struct AudioOutputStream {
     get,
     path = "/outputs",
     responses(
-        (status = OK, body = Vec<AudioOutput>, description = "OK"),
+        (
+            status = OK,
+            body = Vec<AudioHostOutputs>,
+            content_type = "aplication/json",
+            description = "OK"
+        ),
         (status = INTERNAL_SERVER_ERROR, description = "Internal Server Error"),
     )
 )]
-async fn outputs() -> Result<Json<Vec<AudioHostOutputs>>, (StatusCode, String)> {
+async fn audio_host_outputs() -> Result<Json<Vec<AudioHostOutputs>>, (StatusCode, String)> {
     let outputs = crate::audio::info::list_hosts()
         .iter()
         .filter_map(|h| {
@@ -91,7 +96,7 @@ async fn outputs() -> Result<Json<Vec<AudioHostOutputs>>, (StatusCode, String)> 
         (status = OK, body = Option<AudioOutputStream>, description = "OK"),
     )
 )]
-async fn output_stream(State(app_state): State<AppState>) -> Json<Option<AudioOutputStream>> {
+async fn audio_output_stream(State(app_state): State<AppState>) -> Json<Option<AudioOutputStream>> {
     Json(app_state.output_stream.lock().await.as_ref().map(|s| s.1.clone()))
 }
 
@@ -153,7 +158,7 @@ impl From<OutputStreamSampleRate> for SampleRateSelection {
         (status = INTERNAL_SERVER_ERROR, body = String, description = "Internal Server Error"),
     )
 )]
-async fn set_output_stream(
+async fn set_audio_output_stream(
     State(app_state): State<AppState>,
     Json(req): Json<Option<SetOutputStreamRequest>>,
 ) -> Result<Json<Option<AudioOutputStream>>, (StatusCode, String)> {

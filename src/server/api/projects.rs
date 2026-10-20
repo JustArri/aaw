@@ -1,6 +1,6 @@
 use crate::{
     app_state::AppState,
-    engine::{self, stored::Project},
+    engine::{self, StoredProject},
     projects::Projects,
 };
 use axum::{
@@ -34,7 +34,7 @@ struct ProjectPath {
     post,
     path = "/",
     request_body(
-        content = Project,
+        content = StoredProject,
         content_type = "application/json"
     ),
     responses(
@@ -50,7 +50,7 @@ struct ProjectPath {
 )]
 async fn save(
     State(app_state): State<AppState>,
-    Json(project): Json<Project>,
+    Json(project): Json<StoredProject>,
 ) -> Result<Json<uuid::Uuid>, (StatusCode, String)> {
     let mut projects = app_state.projects.write().await;
     let id = projects
@@ -138,17 +138,23 @@ async fn load_active_project(
         .load(path.project_id)
         .await
         .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
+
     let sample_rate = app_state.sample_rate().await;
+    let channel_count = app_state.channel_count().await;
+
     let (ctr_project, rt_project) = engine::load(
         app_state.assets_dir.as_ref(),
         project,
         app_state.min_instrument_slots,
         app_state.min_synths_per_graph,
+        channel_count,
         sample_rate,
     )
     .await?;
+
     app_state.engine_handle.replace_project(ctr_project, rt_project).await?;
     *app_state.active_project_id.write().await = Some(path.project_id);
+
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -221,7 +227,7 @@ async fn delete(
     responses(
         (
             status = OK,
-            body = Project,
+            body = StoredProject,
             content_type = "application/json",
             description = "Project deleted"
         ),
@@ -232,7 +238,7 @@ async fn delete(
 async fn load(
     State(app_state): State<AppState>,
     Path(path): Path<ProjectPath>,
-) -> Result<Json<Project>, (StatusCode, String)> {
+) -> Result<Json<StoredProject>, (StatusCode, String)> {
     let mut projects = app_state.projects.write().await;
     let project = projects
         .load(path.project_id)

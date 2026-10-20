@@ -7,7 +7,8 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct Slot {
+#[schema(as = InstrumentSlot)]
+pub struct CtrSlot {
     #[schema(required)]
     pub synth_id: Option<SynthId>,
 
@@ -20,7 +21,7 @@ pub struct Slot {
     pub name: String,
 }
 
-impl Default for Slot {
+impl Default for CtrSlot {
     fn default() -> Self {
         Self {
             synth_id: None,
@@ -36,12 +37,13 @@ impl Default for Slot {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct Graph {
-    pub slots: Siv<Slot, LocalId>,
+#[schema(as = InstrumentGraph)]
+pub struct CtrGraph {
+    pub slots: Siv<CtrSlot, LocalId>,
     pub global_transposition: i8,
 }
 
-impl Graph {
+impl CtrGraph {
     pub fn remove_synth_references(&mut self, synth_id: SynthId) {
         for slot in self.slots.iter_values_mut() {
             if slot.synth_id == Some(synth_id) {
@@ -55,7 +57,7 @@ impl Graph {
     }
 
     pub fn append_new(&mut self) -> LocalId {
-        self.slots.push(Slot::default())
+        self.slots.push(CtrSlot::default())
     }
 
     pub fn remove(&mut self, slot_id: LocalId) {
