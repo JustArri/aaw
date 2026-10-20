@@ -11,7 +11,8 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::{
-    Arc, atomic::{AtomicBool, Ordering},
+    Arc,
+    atomic::{AtomicBool, Ordering},
 };
 use tokio::sync::{Mutex, RwLock, broadcast};
 

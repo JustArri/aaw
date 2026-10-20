@@ -182,20 +182,21 @@ async fn load_active_project(
 async fn save_active_project(
     State(app_state): State<AppState>,
 ) -> Result<Json<uuid::Uuid>, (StatusCode, String)> {
-    let project = app_state.engine_handle.project().await;
-    let project_storage = project.storage.clone();
-    let revision = project.revision;
+    let (stored_project, project_storage, revision) = {
+        let project = app_state.engine_handle.project().await;
+        (StoredProject::from(&*project), project.storage.clone(), project.revision)
+    };
 
     let mut projects = app_state.projects.write().await;
     let id = if let Some(storage) = project_storage {
         projects
-            .save(storage.id, app_state.engine_handle.save_project().await)
+            .save(storage.id, stored_project)
             .await
             .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
         storage.id
     } else {
         projects
-            .save_new(app_state.engine_handle.save_project().await)
+            .save_new(stored_project)
             .await
             .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?
     };
