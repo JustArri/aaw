@@ -214,19 +214,20 @@
 
             <fieldset class="m-0 grid min-w-0 gap-3 border-0 p-0 min-[37.5rem]:col-span-2">
                 <legend class="text-foreground mb-1 text-sm font-semibold">Latency</legend>
-                <div class="grid grid-cols-2 gap-2 min-[37.5rem]:grid-cols-4">
-                    {#each latencyModes as mode}
-                        <label class="cursor-pointer">
+                <div
+                    class="border-border-strong bg-surface-inset grid grid-cols-2 overflow-hidden rounded-lg border min-[37.5rem]:grid-cols-4"
+                    role="radiogroup"
+                    aria-label="Latency">
+                    {#each latencyModes as mode, index}
+                        <label
+                            class={`has-focus-visible:outline-accent grid min-h-10 cursor-pointer place-items-center px-2 text-center text-sm font-semibold transition-colors has-focus-visible:z-1 has-focus-visible:outline-2 has-focus-visible:outline-offset-[-0.125rem] ${index % 2 === 1 ? 'border-border-strong border-l' : ''} ${index >= 2 ? 'border-border-strong border-t min-[37.5rem]:border-t-0' : ''} ${index === 2 ? 'min-[37.5rem]:border-l' : ''} ${latencyMode === mode.value ? 'bg-accent/12 text-accent' : 'text-foreground-muted hover:bg-surface-hover hover:text-foreground'}`}>
                             <input
                                 class="sr-only"
                                 type="radio"
                                 name="audio-latency"
                                 value={mode.value}
                                 bind:group={latencyMode} />
-                            <span
-                                class={`grid min-h-11 place-items-center rounded-lg border px-2 text-center text-sm font-semibold transition-colors ${latencyMode === mode.value ? 'border-accent/50 bg-accent/10 text-accent' : 'border-border-strong bg-surface-inset text-foreground-strong hover:bg-surface-hover'}`}>
-                                {mode.label}
-                            </span>
+                            <span>{mode.label}</span>
                         </label>
                     {/each}
                 </div>
@@ -247,19 +248,20 @@
 
             <fieldset class="m-0 grid min-w-0 gap-3 border-0 p-0 min-[37.5rem]:col-span-2">
                 <legend class="text-foreground mb-1 text-sm font-semibold">Sample rate</legend>
-                <div class="grid grid-cols-2 gap-2">
-                    {#each sampleRateModes as mode}
-                        <label class="cursor-pointer">
+                <div
+                    class="border-border-strong bg-surface-inset grid grid-cols-2 overflow-hidden rounded-lg border"
+                    role="radiogroup"
+                    aria-label="Sample rate">
+                    {#each sampleRateModes as mode, index}
+                        <label
+                            class={`has-focus-visible:outline-accent grid min-h-10 cursor-pointer place-items-center px-2 text-center text-sm font-semibold transition-colors has-focus-visible:z-1 has-focus-visible:outline-2 has-focus-visible:outline-offset-[-0.125rem] ${index > 0 ? 'border-border-strong border-l' : ''} ${sampleRateMode === mode.value ? 'bg-accent/12 text-accent' : 'text-foreground-muted hover:bg-surface-hover hover:text-foreground'}`}>
                             <input
                                 class="sr-only"
                                 type="radio"
                                 name="audio-sample-rate"
                                 value={mode.value}
                                 bind:group={sampleRateMode} />
-                            <span
-                                class={`grid min-h-11 place-items-center rounded-lg border px-2 text-center text-sm font-semibold transition-colors ${sampleRateMode === mode.value ? 'border-accent/50 bg-accent/10 text-accent' : 'border-border-strong bg-surface-inset text-foreground-strong hover:bg-surface-hover'}`}>
-                                {mode.label}
-                            </span>
+                            <span>{mode.label}</span>
                         </label>
                     {/each}
                 </div>

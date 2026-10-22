@@ -4,6 +4,7 @@ use utoipa_axum::router::OpenApiRouter;
 use utoipa_scalar::{Scalar, Servable};
 
 pub mod api;
+mod frontend;
 
 pub fn router(assets_dir: impl AsRef<std::path::Path>) -> axum::Router<AppState> {
     let root_router = api_router(assets_dir);
@@ -13,7 +14,8 @@ pub fn router(assets_dir: impl AsRef<std::path::Path>) -> axum::Router<AppState>
         "/api/openapi.json",
         axum::routing::get(move || async move { axum::Json(openapi_json) }),
     );
-    let root_router = root_router.merge(Scalar::with_url("/api/docs", openapi));
+    let root_router =
+        root_router.merge(Scalar::with_url("/api/docs", openapi)).fallback(frontend::serve);
     let compression_layer = CompressionLayer::new();
     root_router.layer(compression_layer)
 }

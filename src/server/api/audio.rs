@@ -4,6 +4,7 @@ use crate::{
     audio::params::{DeviceCfgSelection, LatencySelection, SampleRateSelection},
 };
 use axum::{Json, extract::State, http::StatusCode};
+use cpal::traits::StreamTrait;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::ToSchema;
@@ -48,9 +49,7 @@ pub struct AudioOutputStreamInfo {
     pub sample_rate: u32,
     pub max_block_size: usize,
     pub sample_format: String,
-
-    #[schema(required)]
-    pub buffer_size: Option<u32>,
+    pub buffer_size: u32,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, ToSchema)]
@@ -205,12 +204,12 @@ async fn set_audio_output_stream(
     let sample_format = resolved_config.sample_format().to_string();
     let stream_cfg = resolved_config.config();
 
-    let stream_info = AudioOutputStreamInfo {
+    let mut stream_info = AudioOutputStreamInfo {
         host_id: req.host_id,
         output_id: req.output_id,
         buffer_size: match stream_cfg.buffer_size {
-            cpal::BufferSize::Default => None,
-            cpal::BufferSize::Fixed(size) => Some(size),
+            cpal::BufferSize::Default => 0,
+            cpal::BufferSize::Fixed(size) => size,
         },
         channel_count: stream_cfg.channels as u32,
         sample_rate: stream_cfg.sample_rate,
@@ -226,6 +225,10 @@ async fn set_audio_output_stream(
         .start_stream(Arc::clone(&app_state.engine), Arc::clone(&app_state.stream_error))
         .await
         .map_err(map_audio_error)?;
+
+    if stream_info.buffer_size == 0 {
+        stream_info.buffer_size = stream.buffer_size().unwrap_or_default();
+    }
 
     *app_state.output_stream.lock().await =
         Some(AudioOutputStream { stream, info: stream_info.clone() });

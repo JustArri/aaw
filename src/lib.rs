@@ -1,6 +1,5 @@
 use crate::{
-    midi::{MidiEvent, MidiRuntime},
-    rt_channels::NotifiedRtConsumer,
+    midi::{MidiEvent, MidiRuntime}, rt_channels::NotifiedRtConsumer,
 };
 use serde::Serialize;
 use serde_json::{Serializer, ser::PrettyFormatter};
@@ -134,3 +133,4 @@ pub fn to_pretty_string<T: Serialize>(value: &T) -> serde_json::Result<String> {
     value.serialize(&mut serializer)?;
     Ok(String::from_utf8_lossy(&buf).into())
 }
+

@@ -15,6 +15,7 @@ use aaw::{
 };
 use anyhow::Context;
 use clap::{ArgAction, Parser};
+use cpal::traits::StreamTrait;
 use std::{
     env,
     path::{Path, PathBuf},
@@ -287,8 +288,8 @@ async fn try_start_stream(
     let device_config = audio::output::ResolvedConfig::find(DeviceCfgSelection {
         host: audio::params::HostSelection::Id(stream_info.host_id.as_str()),
         device: audio::params::DeviceSelection::Id(stream_info.output_id.as_str()),
-        latency: if let Some(buffer_size) = stream_info.buffer_size {
-            audio::params::LatencySelection::CustomBufferSize(buffer_size)
+        latency: if stream_info.buffer_size != 0 {
+            audio::params::LatencySelection::CustomBufferSize(stream_info.buffer_size)
         } else {
             audio::params::LatencySelection::Automatic
         },
@@ -299,12 +300,12 @@ async fn try_start_stream(
     let sample_format = resolved_config.sample_format().to_string();
     let stream_cfg = resolved_config.config();
 
-    let stream_info = AudioOutputStreamInfo {
+    let mut stream_info = AudioOutputStreamInfo {
         host_id: stream_info.host_id,
         output_id: stream_info.output_id,
         buffer_size: match stream_cfg.buffer_size {
-            cpal::BufferSize::Default => None,
-            cpal::BufferSize::Fixed(size) => Some(size),
+            cpal::BufferSize::Default => 0,
+            cpal::BufferSize::Fixed(size) => size,
         },
         channel_count: stream_cfg.channels as u32,
         sample_rate: stream_cfg.sample_rate,
@@ -316,6 +317,10 @@ async fn try_start_stream(
         .start_stream(Arc::clone(&engine), stream_error)
         .await
         .context("failed to start audio stream")?;
+
+    if stream_info.buffer_size == 0 {
+        stream_info.buffer_size = stream.buffer_size().unwrap_or_default();
+    }
 
     Ok(AudioOutputStream { stream, info: stream_info })
 }
