@@ -1,10 +1,12 @@
 use crate::{
-    engine::graph::{DEFAULT_CHANNEL_COUNT, DEFAULT_SAMPLE_RATE},
+    DEFAULT_CHANNEL_COUNT, DEFAULT_MAX_BLOCK_SIZE, DEFAULT_SAMPLE_RATE,
+    engine::{
+        project::{ProjectAsset, ProjectContext},
+        synth_graph::SynthGraphError,
+    },
     rt_channels,
-    server::api::notifications::ProjectChange,
-    synths,
+    server::api::{audio::AudioOutputStreamConfig, notifications::ProjectChange},
 };
-pub use CtrProject;
 pub use ctr::*;
 pub use rt::*;
 use std::{
@@ -15,96 +17,53 @@ use std::{
         atomic::{AtomicBool, AtomicU32},
     },
 };
-pub use stored::*;
 use tokio::sync::{Mutex, RwLock, broadcast};
 
 mod ctr;
-pub mod dummy_graph;
 pub mod effects;
-pub mod fluid_graph;
 pub mod graph;
 pub mod instrument_graph;
+pub mod project;
 mod rt;
-pub mod sfizz_graph;
-mod stored;
+pub mod synth_graph;
+pub mod user_presets;
 
-pub async fn load(
-    assets_dir: &Path,
-    stored: StoredProject,
-    proj_storage: Option<CtrProjectStorage>,
-    min_instrument_slots: usize,
-    min_synths_per_graph: usize,
-    channel_count: usize,
-    sample_rate: u32,
-) -> synths::Result<(CtrProject, RtProject)> {
-    let (ctr_instrument_graph, rt_instrument_graph) = instrument_graph::prepare(
-        stored.instrument_graph,
-        min_instrument_slots,
-        channel_count,
-        sample_rate,
-    );
-
-    let (ctr_dummy_graph, rt_dummy_graph) =
-        dummy_graph::prepare(stored.dummy_graph, min_synths_per_graph, sample_rate);
-
-    let (ctr_fluid_graph, rt_fluid_graph) =
-        fluid_graph::prepare(assets_dir, stored.fluid_graph, min_synths_per_graph, sample_rate)
-            .await
-            .unwrap_or_else(|_| fluid_graph::default(min_synths_per_graph));
-
-    let (ctr_sfizz_graph, rt_sfizz_graph) =
-        sfizz_graph::prepare(assets_dir, stored.sfizz_graph, min_synths_per_graph, sample_rate)
-            .await
-            .unwrap_or_else(|_| sfizz_graph::default(min_synths_per_graph));
-
-    let ctr_project = CtrProject {
-        storage: proj_storage,
-        revision: 0,
-        name: stored.name,
-        instrument_graph: ctr_instrument_graph,
-        dummy_graph: ctr_dummy_graph,
-        fluid_graph: ctr_fluid_graph,
-        sfizz_graph: ctr_sfizz_graph,
-    };
-
-    let rt_project = RtProject {
-        instrument_graph: rt_instrument_graph,
-        dummy_graph: rt_dummy_graph,
-        fluid_graph: rt_fluid_graph,
-        sfizz_graph: rt_sfizz_graph,
-    };
-
-    Ok((ctr_project, rt_project))
+#[derive(Clone)]
+pub struct EngineContext<'a> {
+    pub assets_dir: &'a Path,
+    pub stream_error: Arc<AtomicBool>,
+    pub cmd_capacity: usize,
+    pub midi_capacity: usize,
+    pub min_instruments: usize,
+    pub min_synths: usize,
+    pub project_change_tx: broadcast::Sender<Arc<ProjectChange>>,
 }
 
-#[allow(clippy::too_many_arguments)]
-pub async fn create_engine(
-    //TODO: cleanup args
-    assets_dir: &Path,
-    project: StoredProject,
-    project_storage: Option<CtrProjectStorage>,
-    stream_error: Arc<AtomicBool>,
-    cmd_capacity: usize,
-    midi_capacity: usize,
-    min_instrument_slots: usize,
-    min_synths_per_graph: usize,
-    project_change_tx: broadcast::Sender<Arc<ProjectChange>>,
-) -> synths::Result<(Arc<Mutex<Engine>>, EngineHandle, Runtime)> {
-    let (cmd_tx, cmd_rx) = rt_channels::create_notified_mpsc(cmd_capacity);
-    let (reply_tx, reply_rx) = rt_channels::create_spsc(cmd_capacity);
-    let (midi_tx, midi_rx) = rt_channels::create_notified_mpsc(midi_capacity);
+impl<'a> From<&EngineContext<'a>> for ProjectContext<'a> {
+    fn from(value: &EngineContext<'a>) -> Self {
+        Self {
+            assets_dir: value.assets_dir,
+            min_instruments: value.min_instruments,
+            min_synths: value.min_synths,
+            stream_config: AudioOutputStreamConfig {
+                channel_count: DEFAULT_CHANNEL_COUNT,
+                sample_rate: DEFAULT_SAMPLE_RATE,
+                max_block_size: DEFAULT_MAX_BLOCK_SIZE,
+            },
+        }
+    }
+}
+
+pub async fn create_engine<'a>(
+    project: ProjectAsset,
+    ctx: EngineContext<'a>,
+) -> Result<(Arc<Mutex<Engine>>, EngineHandle, Runtime), SynthGraphError> {
+    let (cmd_tx, cmd_rx) = rt_channels::create_notified_mpsc(ctx.cmd_capacity);
+    let (reply_tx, reply_rx) = rt_channels::create_spsc(ctx.cmd_capacity);
+    let (midi_tx, midi_rx) = rt_channels::create_notified_mpsc(ctx.midi_capacity);
     let pending_replies = Arc::new(Mutex::new(HashMap::new()));
 
-    let (ctr_project, rt_project) = load(
-        assets_dir,
-        project,
-        project_storage,
-        min_instrument_slots,
-        min_synths_per_graph,
-        DEFAULT_CHANNEL_COUNT,
-        DEFAULT_SAMPLE_RATE,
-    )
-    .await?;
+    let (ctr_project, rt_project) = project::prepare(project, (&ctx).into()).await?;
 
     let handle = EngineHandle::new(
         cmd_tx,
@@ -112,7 +71,7 @@ pub async fn create_engine(
         midi_tx,
         Arc::new(AtomicU32::new(0)),
         Arc::new(RwLock::new(ctr_project)),
-        project_change_tx,
+        ctx.project_change_tx,
     );
 
     let (cmd_rx, cmd_notify) = cmd_rx.unwrap();
@@ -125,7 +84,7 @@ pub async fn create_engine(
         reply_rx,
         cmd_notify,
         midi_notify,
-        stream_error,
+        stream_error: ctx.stream_error,
         engine: Arc::clone(&engine),
     };
 

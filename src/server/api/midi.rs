@@ -21,7 +21,7 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(midi_input_ports))
-        .routes(routes!(midi_input_slots))
+        .routes(routes!(midi_input_instruments))
         .routes(routes!(midi_input_auto_connections))
         .routes(routes!(midi_connect_input_slot))
         .routes(routes!(midi_disconnect_input_slot))
@@ -80,13 +80,13 @@ async fn midi_input_ports(State(app_state): State<AppState>) -> Json<Vec<MidiPor
 
 #[utoipa::path(
     get,
-    path = "/input/slots",
+    path = "/input/instruments",
     responses(
         (status = OK, body = Vec<MidiInputSlot>, description = "OK"),
         (status = INTERNAL_SERVER_ERROR, description = "Internal Server Error"),
     )
 )]
-async fn midi_input_slots(
+async fn midi_input_instruments(
     State(app_state): State<AppState>,
 ) -> Result<Json<Vec<MidiInputSlot>>, StatusCode> {
     use crate::midi::InputSlot;
@@ -124,7 +124,7 @@ pub struct ConnectInputSlotRequest {
 
 #[utoipa::path(
     post,
-    path = "/input/slots/connect/{slot_id}",
+    path = "/input/instruments/connect/{slot_id}",
     params(InputSlotPath),
     request_body = ConnectInputSlotRequest,
     responses(
@@ -151,7 +151,7 @@ async fn midi_connect_input_slot(
 
 #[utoipa::path(
     post,
-    path = "/input/slots/disconnect/{slot_id}",
+    path = "/input/instruments/disconnect/{slot_id}",
     params(InputSlotPath),
     responses(
         (status = NO_CONTENT, description = "Disconnected"),

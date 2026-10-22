@@ -30,7 +30,9 @@ pub mod system;
 pub const PACKAGE_NAME: &str = env!("CARGO_PKG_NAME");
 pub const APP_VERSION: &str = env!("APP_VERSION");
 
-pub const MAX_BLOCK_SIZE: usize = 16384;
+pub const DEFAULT_CHANNEL_COUNT: usize = 2;
+pub const DEFAULT_SAMPLE_RATE: u32 = 48000;
+pub const DEFAULT_MAX_BLOCK_SIZE: usize = 16384;
 
 pub fn subscribe_tracing(default_filter: &str) {
     tracing_subscriber::fmt()

@@ -1,99 +1,84 @@
-use crate::engine::effects::{StoredEffect, StoredEffects, StoredEqualizerBand};
+use migrations_derive::Migrations;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub enum CtrEffect {
-    Gain { value: f32 },
-    LowPassFilter { frequency: f32, resonance: f32 },
-    Equalizer { bands: Vec<CtrEqualizerBand> },
-    LoadFailed { description: String },
+#[derive(Default, Debug, Clone, Migrations)]
+#[migrations(version = 1, version_type = u32)]
+pub struct Effects {
+    pub effects: Vec<Effect>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub enum CtrEqualizerBand {
+pub struct Effect {
+    #[serde(default = "effect_enabled_by_default")]
+    #[schema(required)]
+    pub enabled: bool,
+
+    #[serde(flatten)]
+    pub kind: EffectKind,
+}
+
+const fn effect_enabled_by_default() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(tag = "type", content = "data")]
+pub enum EffectKind {
+    Gain {
+        value: f32,
+    },
+    LowPassFilter {
+        frequency: f32,
+        resonance: f32,
+    },
+    HighPassFilter {
+        frequency: f32,
+        resonance: f32,
+    },
+    Equalizer {
+        bands: Vec<EqualizerBand>,
+    },
+    Compressor {
+        threshold_db: f32,
+        ratio: f32,
+        attack_ms: f32,
+        release_ms: f32,
+        makeup_gain_db: f32,
+    },
+    Limiter {
+        threshold_db: f32,
+        release_ms: f32,
+    },
+    Delay {
+        time_ms: f32,
+        feedback: f32,
+        mix: f32,
+    },
+    Reverb {
+        room_size: f32,
+        damping: f32,
+        mix: f32,
+    },
+    Chorus {
+        rate_hz: f32,
+        depth_ms: f32,
+        delay_ms: f32,
+        mix: f32,
+    },
+    Distortion {
+        drive_db: f32,
+        mix: f32,
+    },
+    LoadFailed {
+        description: String,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(tag = "type", content = "data")]
+pub enum EqualizerBand {
     LowShelf { frequency: f32, gain_db: f32, resonance: f32 },
     Peaking { frequency: f32, gain_db: f32, resonance: f32 },
     HighShelf { frequency: f32, gain_db: f32, resonance: f32 },
-}
-
-impl From<&CtrEffect> for StoredEffect {
-    fn from(value: &CtrEffect) -> Self {
-        match value {
-            CtrEffect::Gain { value } => Self::Gain { value: *value },
-            CtrEffect::LowPassFilter { frequency, resonance } => {
-                Self::LowPassFilter { frequency: *frequency, resonance: *resonance }
-            }
-            CtrEffect::Equalizer { bands } => {
-                Self::Equalizer { bands: bands.iter().map(Into::into).collect() }
-            }
-            CtrEffect::LoadFailed { description } => {
-                Self::LoadFailed { description: description.clone() }
-            }
-        }
-    }
-}
-
-impl From<StoredEffect> for CtrEffect {
-    fn from(value: StoredEffect) -> Self {
-        match value {
-            StoredEffect::Gain { value } => Self::Gain { value },
-            StoredEffect::LowPassFilter { frequency, resonance } => {
-                Self::LowPassFilter { frequency, resonance }
-            }
-            StoredEffect::Equalizer { bands } => {
-                Self::Equalizer { bands: bands.into_iter().map(Into::into).collect() }
-            }
-            StoredEffect::LoadFailed { description } => Self::LoadFailed { description },
-        }
-    }
-}
-
-impl From<&CtrEqualizerBand> for StoredEqualizerBand {
-    fn from(value: &CtrEqualizerBand) -> Self {
-        match *value {
-            CtrEqualizerBand::LowShelf { frequency, gain_db, resonance } => {
-                Self::LowShelf { frequency, gain_db, resonance }
-            }
-            CtrEqualizerBand::Peaking { frequency, gain_db, resonance } => {
-                Self::Peaking { frequency, gain_db, resonance }
-            }
-            CtrEqualizerBand::HighShelf { frequency, gain_db, resonance } => {
-                Self::HighShelf { frequency, gain_db, resonance }
-            }
-        }
-    }
-}
-
-impl From<StoredEqualizerBand> for CtrEqualizerBand {
-    fn from(value: StoredEqualizerBand) -> Self {
-        match value {
-            StoredEqualizerBand::LowShelf { frequency, gain_db, resonance } => {
-                Self::LowShelf { frequency, gain_db, resonance }
-            }
-            StoredEqualizerBand::Peaking { frequency, gain_db, resonance } => {
-                Self::Peaking { frequency, gain_db, resonance }
-            }
-            StoredEqualizerBand::HighShelf { frequency, gain_db, resonance } => {
-                Self::HighShelf { frequency, gain_db, resonance }
-            }
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct CtrEffects {
-    pub effects: Vec<CtrEffect>,
-}
-
-impl From<&CtrEffects> for StoredEffects {
-    fn from(value: &CtrEffects) -> Self {
-        Self { effects: value.effects.iter().map(Into::into).collect() }
-    }
-}
-
-impl From<StoredEffects> for CtrEffects {
-    fn from(value: StoredEffects) -> Self {
-        Self { effects: value.effects.into_iter().map(Into::into).collect() }
-    }
 }

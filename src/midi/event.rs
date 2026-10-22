@@ -42,24 +42,25 @@ impl From<TimedMidiEvent> for MidiEvent {
 impl MidiEvent {
     pub fn transformed(
         self,
-        key_transform: &CompiledMidiKeyTransform,
-        velocity_transform: &CompiledMidiVelocityTransform,
+        key_transform: Option<&CompiledMidiKeyTransform>,
+        velocity_transform: Option<&CompiledMidiVelocityTransform>,
         transposition: i8,
     ) -> Option<Self> {
+        let transform_key = |key| match key_transform {
+            Some(t) => t.apply(key, transposition),
+            None => Some(key),
+        };
+
         let kind = match self.kind {
             MidiEventKind::NoteOn { key, velocity } => MidiEventKind::NoteOn {
-                key: key_transform.apply(key, transposition)?,
-                velocity: velocity_transform.apply(velocity),
+                key: transform_key(key)?,
+                velocity: velocity_transform.map(|t| t.apply(velocity)).unwrap_or(velocity),
             },
-            MidiEventKind::NoteOff { key, .. } => MidiEventKind::NoteOff {
-                key: key_transform.apply(key, transposition)?,
-                velocity: 0,
-            },
+            MidiEventKind::NoteOff { key, .. } => {
+                MidiEventKind::NoteOff { key: transform_key(key)?, velocity: 0 }
+            }
             MidiEventKind::PolyphonicAftertouch { key, value } => {
-                MidiEventKind::PolyphonicAftertouch {
-                    key: key_transform.apply(key, transposition)?,
-                    value,
-                }
+                MidiEventKind::PolyphonicAftertouch { key: transform_key(key)?, value }
             }
             kind => kind,
         };

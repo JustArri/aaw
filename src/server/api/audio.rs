@@ -1,4 +1,4 @@
-use crate::audio;
+use crate::{DEFAULT_MAX_BLOCK_SIZE, audio};
 use crate::{
     app_state::AppState,
     audio::params::{DeviceCfgSelection, LatencySelection, SampleRateSelection},
@@ -35,16 +35,39 @@ pub struct AudioOutput {
     pub is_default: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct AudioOutputStream {
+    pub stream: cpal::Stream,
+    pub info: AudioOutputStreamInfo,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct AudioOutputStreamInfo {
     pub host_id: String,
     pub output_id: String,
     pub channel_count: u32,
     pub sample_rate: u32,
+    pub max_block_size: usize,
     pub sample_format: String,
 
     #[schema(required)]
     pub buffer_size: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, ToSchema)]
+pub struct AudioOutputStreamConfig {
+    pub channel_count: usize,
+    pub sample_rate: u32,
+    pub max_block_size: usize,
+}
+
+impl From<&AudioOutputStreamInfo> for AudioOutputStreamConfig {
+    fn from(value: &AudioOutputStreamInfo) -> Self {
+        Self {
+            channel_count: value.channel_count as usize,
+            sample_rate: value.sample_rate,
+            max_block_size: value.max_block_size,
+        }
+    }
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -93,11 +116,13 @@ async fn audio_host_outputs() -> Result<Json<Vec<AudioHostOutputs>>, (StatusCode
     get,
     path = "/output/stream",
     responses(
-        (status = OK, body = Option<AudioOutputStream>, description = "OK"),
+        (status = OK, body = Option<AudioOutputStreamInfo>, description = "OK"),
     )
 )]
-async fn audio_output_stream(State(app_state): State<AppState>) -> Json<Option<AudioOutputStream>> {
-    Json(app_state.output_stream.lock().await.as_ref().map(|s| s.1.clone()))
+async fn audio_output_stream(
+    State(app_state): State<AppState>,
+) -> Json<Option<AudioOutputStreamInfo>> {
+    Json(app_state.output_stream.lock().await.as_ref().map(|s| s.info.clone()))
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -153,7 +178,7 @@ impl From<OutputStreamSampleRate> for SampleRateSelection {
     path = "/output/stream",
     request_body = Option<SetOutputStreamRequest>,
     responses(
-        (status = OK, body = Option<AudioOutputStream>, description = "OK"),
+        (status = OK, body = Option<AudioOutputStreamInfo>, description = "OK"),
         (status = BAD_REQUEST, body = String, description = "Bad Request"),
         (status = INTERNAL_SERVER_ERROR, body = String, description = "Internal Server Error"),
     )
@@ -161,21 +186,13 @@ impl From<OutputStreamSampleRate> for SampleRateSelection {
 async fn set_audio_output_stream(
     State(app_state): State<AppState>,
     Json(req): Json<Option<SetOutputStreamRequest>>,
-) -> Result<Json<Option<AudioOutputStream>>, (StatusCode, String)> {
+) -> Result<Json<Option<AudioOutputStreamInfo>>, (StatusCode, String)> {
     let Some(req) = req else {
-        if let Some((stream, _)) = app_state.output_stream.lock().await.take() {
+        if let Some(stream) = app_state.output_stream.lock().await.take() {
             drop(stream);
         }
         return Ok(Json(None));
     };
-
-    // #[cfg(debug_assertions)]
-    // const LATENCY_SEL: audio::params::LatencySelection =
-    //     audio::params::LatencySelection::CustomBufferSize(1024);
-
-    // #[cfg(not(debug_assertions))]
-    // const LATENCY_SEL: audio::params::LatencySelection =
-    //     audio::params::LatencySelection::CustomBufferSize(256);
 
     let device_config = audio::output::ResolvedConfig::find(DeviceCfgSelection {
         host: audio::params::HostSelection::Id(req.host_id.as_str()),
@@ -188,7 +205,7 @@ async fn set_audio_output_stream(
     let sample_format = resolved_config.sample_format().to_string();
     let stream_cfg = resolved_config.config();
 
-    let stream_info = AudioOutputStream {
+    let stream_info = AudioOutputStreamInfo {
         host_id: req.host_id,
         output_id: req.output_id,
         buffer_size: match stream_cfg.buffer_size {
@@ -197,10 +214,11 @@ async fn set_audio_output_stream(
         },
         channel_count: stream_cfg.channels as u32,
         sample_rate: stream_cfg.sample_rate,
+        max_block_size: DEFAULT_MAX_BLOCK_SIZE,
         sample_format,
     };
 
-    if let Some((stream, _)) = app_state.output_stream.lock().await.take() {
+    if let Some(stream) = app_state.output_stream.lock().await.take() {
         drop(stream);
     }
 
@@ -209,7 +227,8 @@ async fn set_audio_output_stream(
         .await
         .map_err(map_audio_error)?;
 
-    *app_state.output_stream.lock().await = Some((stream, stream_info.clone()));
+    *app_state.output_stream.lock().await =
+        Some(AudioOutputStream { stream, info: stream_info.clone() });
 
     Ok(Json(Some(stream_info)))
 }
@@ -228,7 +247,7 @@ fn map_audio_error(err: audio::output::Error) -> (StatusCode, String) {
         Error::UnsupportedSampleFormat(_) => StatusCode::BAD_REQUEST,
         Error::FailedToBuildStream(_) => StatusCode::INTERNAL_SERVER_ERROR,
         Error::FailedToStartStream(_) => StatusCode::INTERNAL_SERVER_ERROR,
-        Error::EngineInit(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        Error::EngineReconfiguration(_) => StatusCode::INTERNAL_SERVER_ERROR,
     };
     (code, err.to_string())
 }
