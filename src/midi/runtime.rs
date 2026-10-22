@@ -276,7 +276,7 @@ impl MidiRuntime {
             let Some((slot_id, slot)) = auto_slot_mut(&mut self.inputs, state) else {
                 info!(
                     target: LOG_TARGET,
-                    "no available slots for auto-connect of port: {}", port_id
+                    "no available instruments for auto-connect of port: {}", port_id
                 );
                 continue;
             };

@@ -1,4 +1,7 @@
-use crate::engine::{ctr::CtrProject, dummy_graph, fluid_graph, instrument_graph, sfizz_graph};
+use crate::engine::{
+    instrument_graph::StoredInstrumentGraph, project::CtrProject, synth_graph::StoredSynthGraph,
+    user_presets::StoredUserPresets,
+};
 use migrations_derive::Migrations;
 
 #[derive(Default, Debug, Clone, Migrations)]
@@ -6,10 +9,9 @@ use migrations_derive::Migrations;
 pub struct StoredProject {
     pub revision: u32,
     pub name: String,
-    pub instrument_graph: instrument_graph::StoredGraph,
-    pub dummy_graph: dummy_graph::StoredGraph,
-    pub fluid_graph: fluid_graph::StoredGraph,
-    pub sfizz_graph: sfizz_graph::StoredGraph,
+    pub instrument_graph: StoredInstrumentGraph,
+    pub synth_graph: StoredSynthGraph,
+    pub user_presets: StoredUserPresets,
 }
 
 impl From<&CtrProject> for StoredProject {
@@ -18,9 +20,8 @@ impl From<&CtrProject> for StoredProject {
             revision: value.revision,
             name: value.name.clone(),
             instrument_graph: (&value.instrument_graph).into(),
-            dummy_graph: (&value.dummy_graph).into(),
-            fluid_graph: (&value.fluid_graph).into(),
-            sfizz_graph: (&value.sfizz_graph).into(),
+            synth_graph: (&value.synth_graph).into(),
+            user_presets: (&value.user_presets).into(),
         }
     }
 }
@@ -31,9 +32,8 @@ impl From<CtrProject> for StoredProject {
             revision: value.revision,
             name: value.name,
             instrument_graph: value.instrument_graph.into(),
-            dummy_graph: value.dummy_graph.into(),
-            fluid_graph: value.fluid_graph.into(),
-            sfizz_graph: value.sfizz_graph.into(),
+            synth_graph: value.synth_graph.into(),
+            user_presets: value.user_presets.into(),
         }
     }
 }

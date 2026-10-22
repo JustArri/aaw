@@ -1,5 +1,5 @@
 use crate::{
-    MAX_BLOCK_SIZE,
+    DEFAULT_MAX_BLOCK_SIZE,
     audio::{
         self,
         params::{
@@ -7,8 +7,7 @@ use crate::{
             SampleRateSelection,
         },
     },
-    engine::Engine,
-    synths,
+    engine::{Engine, synth_graph::SynthGraphError},
 };
 use cpal::{
     BufferSize,
@@ -47,7 +46,7 @@ pub enum Error {
     FailedToStartStream(#[source] cpal::Error),
 
     #[error("failed to init engine: {0}")]
-    EngineInit(#[source] synths::Error),
+    EngineReconfiguration(#[source] SynthGraphError),
 }
 
 type StdResult<T, E> = std::result::Result<T, E>;
@@ -123,10 +122,10 @@ where
     engine
         .lock()
         .await
-        .init(channel_count, config.sample_rate, MAX_BLOCK_SIZE)
-        .map_err(Error::EngineInit)?;
+        .reconfigure(channel_count, config.sample_rate, DEFAULT_MAX_BLOCK_SIZE)
+        .map_err(Error::EngineReconfiguration)?;
 
-    let mut scratch = vec![0.0_f32; channel_count * MAX_BLOCK_SIZE];
+    let mut scratch = vec![0.0_f32; channel_count * DEFAULT_MAX_BLOCK_SIZE];
 
     let stream = device
         .build_output_stream(

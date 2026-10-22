@@ -1,6 +1,9 @@
 use crate::{
     app_state::AppState,
-    engine::{self, CtrProjectStorage, StoredProject},
+    engine::{
+        project::{self, CtrProjectStorage, ProjectAsset, ProjectContext, StoredProject},
+        synth_graph::SynthGraphError,
+    },
     projects::Projects,
 };
 use axum::{
@@ -141,25 +144,23 @@ async fn load_active_project(
         .await
         .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
 
-    let sample_rate = app_state.sample_rate().await;
-    let channel_count = app_state.channel_count().await;
+    let stream_config = app_state.stream_config().await;
 
     let revision = project.revision;
     let id = path.project_id;
 
-    let (ctr_project, rt_project) = engine::load(
-        &app_state.assets.read().await.dir,
-        project,
-        Some(CtrProjectStorage { id, revision }),
-        app_state.min_instrument_slots,
-        app_state.min_synths_per_graph,
-        channel_count,
-        sample_rate,
+    let (ctr_project, rt_project) = project::prepare(
+        ProjectAsset { project, storage: Some(CtrProjectStorage { id, revision }) },
+        ProjectContext {
+            assets_dir: &app_state.assets.read().await.dir,
+            min_instruments: app_state.min_instruments,
+            min_synths: app_state.min_synths,
+            stream_config,
+        },
     )
     .await?;
 
     app_state.engine_handle.replace_project(ctr_project, rt_project).await?;
-
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -221,11 +222,25 @@ async fn delete_project(
     State(app_state): State<AppState>,
     Path(path): Path<ProjectPath>,
 ) -> Result<StatusCode, (StatusCode, String)> {
+    let is_active_id = app_state
+        .engine_handle
+        .project()
+        .await
+        .storage
+        .as_ref()
+        .is_some_and(|s| s.id == path.project_id);
+
     let mut projects = app_state.projects.write().await;
     projects
         .delete(path.project_id)
         .await
         .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
+    drop(projects);
+
+    if is_active_id {
+        app_state.engine_handle.change_project_storage(None).await;
+    }
+
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -259,3 +274,9 @@ async fn read_project(
 }
 
 //--------------------------------------------------------------------------------------------------
+
+impl From<SynthGraphError> for (StatusCode, String) {
+    fn from(value: SynthGraphError) -> Self {
+        (StatusCode::INTERNAL_SERVER_ERROR, value.to_string())
+    }
+}

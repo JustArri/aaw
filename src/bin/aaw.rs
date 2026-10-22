@@ -1,14 +1,17 @@
 use aaw::{
-    APP_VERSION, PACKAGE_NAME,
+    APP_VERSION, DEFAULT_MAX_BLOCK_SIZE, PACKAGE_NAME,
     app_state::{AppState, LastProject},
     assets::Assets,
     audio::{self, params::DeviceCfgSelection},
-    engine::{self, CtrProjectStorage, StoredProject, StoredProjectVersioned},
+    engine::{
+        self, EngineContext,
+        project::{CtrProjectStorage, ProjectAsset, StoredProject, StoredProjectVersioned},
+    },
     files::{load_opt, save},
     midi::MidiRuntime,
     projects::Projects,
     rt_channels,
-    server::api::audio::AudioOutputStream,
+    server::api::audio::{AudioOutputStream, AudioOutputStreamInfo},
 };
 use anyhow::Context;
 use clap::{ArgAction, Parser};
@@ -65,14 +68,14 @@ struct Args {
         default_value_t = 32,
         help = "Minimum instrument capacity (can be overriden by a project)"
     )]
-    min_instrument_slots: usize,
+    min_instruments: usize,
 
     #[arg(
         long,
         default_value_t = 32,
-        help = "Minimum synths-per-graph capacity (can be overriden by a project)"
+        help = "Minimum synth capacity (can be overriden by a project)"
     )]
-    min_synths_per_graph: usize,
+    min_synths: usize,
 
     #[arg(long, help = "Create a migrated copy of specified project")]
     migrate_project: Option<PathBuf>,
@@ -158,15 +161,16 @@ async fn run(args: Args) -> anyhow::Result<()> {
 
     let (project_change_tx, _) = broadcast::channel(args.project_change_bc_capacity);
     let (engine, engine_handle, engine_runtime) = engine::create_engine(
-        &assets_dir,
-        project,
-        project_storage,
-        Arc::clone(&stream_error),
-        args.cmd_capacity,
-        args.midi_to_engine_capacity,
-        args.min_instrument_slots,
-        args.min_synths_per_graph,
-        project_change_tx,
+        ProjectAsset { project, storage: project_storage },
+        EngineContext {
+            assets_dir: &assets_dir,
+            stream_error: Arc::clone(&stream_error),
+            cmd_capacity: args.cmd_capacity,
+            midi_capacity: args.midi_to_engine_capacity,
+            min_instruments: args.min_instruments,
+            min_synths: args.min_synths,
+            project_change_tx,
+        },
     )
     .await
     .context("failed to create engine")?;
@@ -181,15 +185,16 @@ async fn run(args: Args) -> anyhow::Result<()> {
 
     let stop = CancellationToken::new();
 
-    let output_stream =
-        if let Some(info) = load_opt::<AudioOutputStream>(&aaw_root_dir, CFG_AUDIO_OUTPUT).await {
-            try_start_stream(info, Arc::clone(&engine), Arc::clone(&stream_error))
-                .await
-                .inspect_err(|err| warn!("{err}"))
-                .ok()
-        } else {
-            None
-        };
+    let output_stream = if let Some(info) =
+        load_opt::<AudioOutputStreamInfo>(&aaw_root_dir, CFG_AUDIO_OUTPUT).await
+    {
+        try_start_stream(info, Arc::clone(&engine), Arc::clone(&stream_error))
+            .await
+            .inspect_err(|err| warn!("{err}"))
+            .ok()
+    } else {
+        None
+    };
 
     let output_stream = Arc::new(Mutex::new(output_stream));
 
@@ -200,8 +205,8 @@ async fn run(args: Args) -> anyhow::Result<()> {
         engine,
         engine_handle: engine_handle.clone(),
         output_stream: Arc::clone(&output_stream),
-        min_instrument_slots: args.min_instrument_slots,
-        min_synths_per_graph: args.min_synths_per_graph,
+        min_instruments: args.min_instruments,
+        min_synths: args.min_synths,
         stream_error: Arc::clone(&stream_error),
         projects: Arc::new(RwLock::new(
             Projects::new(projects_dir).await.context("failed to load projects")?,
@@ -229,8 +234,8 @@ async fn run(args: Args) -> anyhow::Result<()> {
 
     info!("stopping...");
 
-    if let Some((stream, stream_info)) = output_stream.lock().await.take() {
-        save(&aaw_root_dir, CFG_AUDIO_OUTPUT, &stream_info).await;
+    if let Some(stream) = output_stream.lock().await.take() {
+        save(&aaw_root_dir, CFG_AUDIO_OUTPUT, &stream.info).await;
         drop(stream);
     }
 
@@ -275,10 +280,10 @@ fn aaw_root_dir() -> anyhow::Result<PathBuf> {
 }
 
 async fn try_start_stream(
-    stream_info: AudioOutputStream,
+    stream_info: AudioOutputStreamInfo,
     engine: Arc<Mutex<engine::Engine>>,
     stream_error: Arc<AtomicBool>,
-) -> anyhow::Result<(cpal::Stream, AudioOutputStream)> {
+) -> anyhow::Result<AudioOutputStream> {
     let device_config = audio::output::ResolvedConfig::find(DeviceCfgSelection {
         host: audio::params::HostSelection::Id(stream_info.host_id.as_str()),
         device: audio::params::DeviceSelection::Id(stream_info.output_id.as_str()),
@@ -294,7 +299,7 @@ async fn try_start_stream(
     let sample_format = resolved_config.sample_format().to_string();
     let stream_cfg = resolved_config.config();
 
-    let stream_info = AudioOutputStream {
+    let stream_info = AudioOutputStreamInfo {
         host_id: stream_info.host_id,
         output_id: stream_info.output_id,
         buffer_size: match stream_cfg.buffer_size {
@@ -303,6 +308,7 @@ async fn try_start_stream(
         },
         channel_count: stream_cfg.channels as u32,
         sample_rate: stream_cfg.sample_rate,
+        max_block_size: DEFAULT_MAX_BLOCK_SIZE,
         sample_format,
     };
 
@@ -310,5 +316,6 @@ async fn try_start_stream(
         .start_stream(Arc::clone(&engine), stream_error)
         .await
         .context("failed to start audio stream")?;
-    Ok((stream, stream_info))
+
+    Ok(AudioOutputStream { stream, info: stream_info })
 }

@@ -1,4 +1,4 @@
-use crate::engine::{StoredProject, StoredProjectVersioned};
+use crate::engine::project::{StoredProject, StoredProjectVersioned};
 use serde::Deserialize;
 use std::{
     collections::HashMap,
