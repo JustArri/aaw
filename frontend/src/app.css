@@ -1,1 +1,183 @@
 @import 'tailwindcss';
+
+:root {
+    --base: #f6f7f9;
+    --surface-1: #eef1f4;
+    --surface-control: #ffffff;
+    --surface-inset: #f2f4f6;
+    --surface-inset-deep: #e9edf1;
+    --surface-card: #ffffff;
+    --surface-disabled: #edf0f3;
+    --surface-overlay: #ffffff;
+    --surface-item: #f7f8fa;
+    --surface-item-active: #eef6fb;
+    --surface-hover: #e8edf1;
+    --surface-raised: #f0f3f6;
+    --surface-button: #e8edf2;
+    --surface-icon: #e2e7ec;
+    --surface-badge-muted: #dde3e8;
+    --surface-badge: #d8dfe5;
+    --surface-count: #d3dbe2;
+    --border: #d9e0e6;
+    --border-strong: #c9d2da;
+    --handle: #aeb9c3;
+    --indicator-off: #9ba7b1;
+    --foreground: #111820;
+    --foreground-strong: #303b45;
+    --foreground-muted: #5f6c78;
+    --foreground-disabled: #78848e;
+    --foreground-label: #687581;
+    --foreground-dim: #74808b;
+    --foreground-meta: #707c87;
+    --foreground-subtle: #65717c;
+    --foreground-nav: #65717d;
+    --foreground-inactive: #77838e;
+    --foreground-icon: #6f7b86;
+    --foreground-icon-muted: #7e8993;
+    --foreground-off: #87929c;
+    --foreground-caption: #818c96;
+    --foreground-index: #7c8791;
+    --accent-rgb: 96 199 255;
+    --accent: rgb(var(--accent-rgb));
+    --accent-glow: rgb(var(--accent-rgb) / 0.7);
+    --accent-glow-soft: rgb(var(--accent-rgb) / 0.2);
+    --accent-foreground: #061017;
+    --success: #19875d;
+    --success-glow: rgb(25 135 93 / 0.45);
+    --danger: #b74758;
+    --danger-border: #b14d5c;
+    --danger-foreground: #be4054;
+    --contrast: #000000;
+    --scrim: #000000;
+    --overlay-shadow: rgb(0 0 0 / 0.45);
+    --synth-fluid: #60c7ff;
+    --synth-sfizz: #a696ff;
+    --synth-dummy: #50d4a0;
+    --synth-warm: #ffad72;
+    --synth-unassigned: #747d88;
+    --preset-rose: #ff7088;
+    color-scheme: light;
+}
+
+.dark {
+    --base: #090b0e;
+    --surface-1: #0d1014;
+    --surface-control: #0c1014;
+    --surface-inset: #0d1115;
+    --surface-inset-deep: #101419;
+    --surface-card: #11151a;
+    --surface-disabled: #11161b;
+    --surface-overlay: #12161b;
+    --surface-item: #151a20;
+    --surface-item-active: #151b20;
+    --surface-hover: #161b21;
+    --surface-raised: #181e24;
+    --surface-button: #1a2027;
+    --surface-icon: #1b2229;
+    --surface-badge-muted: #20262d;
+    --surface-badge: #20272e;
+    --surface-count: #222931;
+    --border: #1c2229;
+    --border-strong: #252c34;
+    --handle: #3a424c;
+    --indicator-off: #3d4650;
+    --foreground: #f3f5f7;
+    --foreground-strong: #b3bac3;
+    --foreground-muted: #8b95a1;
+    --foreground-disabled: #8b949f;
+    --foreground-label: #78828d;
+    --foreground-dim: #7c8692;
+    --foreground-meta: #68727e;
+    --foreground-subtle: #717b86;
+    --foreground-nav: #717b87;
+    --foreground-inactive: #626c77;
+    --foreground-icon: #66717d;
+    --foreground-icon-muted: #59636f;
+    --foreground-off: #5e6873;
+    --foreground-caption: #5f6872;
+    --foreground-index: #606a75;
+    --accent-rgb: 96 199 255;
+    --accent: rgb(var(--accent-rgb));
+    --accent-glow: rgb(var(--accent-rgb) / 0.7);
+    --accent-glow-soft: rgb(var(--accent-rgb) / 0.2);
+    --accent-foreground: #061017;
+    --success: #55ca96;
+    --success-glow: rgb(85 202 150 / 0.65);
+    --danger: #d17784;
+    --danger-border: #a74f5c;
+    --danger-foreground: #dc7d89;
+    --contrast: #ffffff;
+    --scrim: #000000;
+    --overlay-shadow: rgb(0 0 0 / 0.45);
+    color-scheme: dark;
+}
+
+@layer base {
+    html {
+        background-color: var(--base);
+        color: var(--foreground);
+    }
+
+    body,
+    button,
+    input,
+    optgroup,
+    option,
+    select,
+    textarea {
+        color: var(--foreground);
+    }
+}
+
+@theme inline {
+    --color-app-background: var(--base);
+    --color-surface-1: var(--surface-1);
+    --color-surface-control: var(--surface-control);
+    --color-surface-inset: var(--surface-inset);
+    --color-surface-inset-deep: var(--surface-inset-deep);
+    --color-surface-card: var(--surface-card);
+    --color-surface-disabled: var(--surface-disabled);
+    --color-surface-overlay: var(--surface-overlay);
+    --color-surface-item: var(--surface-item);
+    --color-surface-item-active: var(--surface-item-active);
+    --color-surface-hover: var(--surface-hover);
+    --color-surface-raised: var(--surface-raised);
+    --color-surface-button: var(--surface-button);
+    --color-surface-icon: var(--surface-icon);
+    --color-surface-badge-muted: var(--surface-badge-muted);
+    --color-surface-badge: var(--surface-badge);
+    --color-surface-count: var(--surface-count);
+    --color-border: var(--border);
+    --color-border-strong: var(--border-strong);
+    --color-handle: var(--handle);
+    --color-indicator-off: var(--indicator-off);
+    --color-foreground: var(--foreground);
+    --color-foreground-strong: var(--foreground-strong);
+    --color-foreground-muted: var(--foreground-muted);
+    --color-foreground-disabled: var(--foreground-disabled);
+    --color-foreground-label: var(--foreground-label);
+    --color-foreground-dim: var(--foreground-dim);
+    --color-foreground-meta: var(--foreground-meta);
+    --color-foreground-subtle: var(--foreground-subtle);
+    --color-foreground-nav: var(--foreground-nav);
+    --color-foreground-inactive: var(--foreground-inactive);
+    --color-foreground-icon: var(--foreground-icon);
+    --color-foreground-icon-muted: var(--foreground-icon-muted);
+    --color-foreground-off: var(--foreground-off);
+    --color-foreground-caption: var(--foreground-caption);
+    --color-foreground-index: var(--foreground-index);
+    --color-accent: var(--accent);
+    --color-accent-foreground: var(--accent-foreground);
+    --color-success: var(--success);
+    --color-danger: var(--danger);
+    --color-danger-border: var(--danger-border);
+    --color-danger-foreground: var(--danger-foreground);
+    --color-contrast: var(--contrast);
+    --color-scrim: var(--scrim);
+    --color-synth-fluid: var(--synth-fluid);
+    --color-synth-sfizz: var(--synth-sfizz);
+    --color-synth-dummy: var(--synth-dummy);
+    --color-synth-warm: var(--synth-warm);
+    --color-synth-unassigned: var(--synth-unassigned);
+    --color-preset-rose: var(--preset-rose);
+}
