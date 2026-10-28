@@ -187,8 +187,8 @@
                 smallStep={0.5}
                 largeStep={5}
                 resetValue={0}
-                min={-60}
-                max={12}
+                min={-100}
+                max={100}
                 precision={1}
                 onchange={setGlobalGain} />
         </section>
@@ -198,12 +198,15 @@
         <section
             class="border-border bg-surface-card order-2 overflow-hidden rounded-xl border min-[56.25rem]:order-0">
             <header
-                class="border-border [&_small]:text-foreground-muted [&_b]:bg-surface-badge [&_b]:text-foreground-strong flex min-h-13.5 items-center justify-between border-b px-3.25 min-[56.25rem]:min-h-14.75 min-[56.25rem]:px-3.75 [&_b]:grid [&_b]:h-5.75 [&_b]:min-w-6.75 [&_b]:place-items-center [&_b]:rounded-md [&_b]:font-mono [&_b]:text-xs [&_b]:font-semibold min-[56.25rem]:[&_b]:text-sm [&_small]:mt-1 [&_small]:block [&_small]:text-xs min-[56.25rem]:[&_small]:text-sm [&_span]:block [&_span]:text-sm [&_span]:font-bold min-[56.25rem]:[&_span]:text-sm">
+                class="border-border flex min-h-13.5 items-center justify-between border-b px-3.25 min-[56.25rem]:min-h-14.75 min-[56.25rem]:px-3.75">
                 <div>
-                    <span>Scene presets</span>
-                    <small>Instrument states saved with this project</small>
+                    <span class="block text-sm font-bold">Scene presets</span>
+                    <small class="text-foreground-muted mt-1 block text-xs min-[56.25rem]:text-sm">
+                        Instrument states saved with this project
+                    </small>
                 </div>
-                <b class="min-w-0! px-1.5 text-center font-sans! leading-none tabular-nums">
+                <b
+                    class="bg-surface-badge text-foreground-strong grid h-5.75 min-w-0! place-items-center rounded-md px-1.5 text-center font-sans! text-xs leading-none font-semibold tabular-nums min-[56.25rem]:text-sm">
                     <span>{livePresets.length}</span>
                 </b>
             </header>
@@ -238,12 +241,15 @@
         <section
             class="border-border bg-surface-card order-3 overflow-hidden rounded-xl border min-[56.25rem]:order-0">
             <header
-                class="border-border [&_small]:text-foreground-muted [&_b]:bg-surface-badge [&_b]:text-foreground-strong flex min-h-13.5 items-center justify-between border-b px-3.25 min-[56.25rem]:min-h-14.75 min-[56.25rem]:px-3.75 [&_b]:grid [&_b]:h-5.75 [&_b]:min-w-6.75 [&_b]:place-items-center [&_b]:rounded-md [&_b]:font-mono [&_b]:text-xs [&_b]:font-semibold min-[56.25rem]:[&_b]:text-sm [&_small]:mt-1 [&_small]:block [&_small]:text-xs min-[56.25rem]:[&_small]:text-sm [&_span]:block [&_span]:text-sm [&_span]:font-bold min-[56.25rem]:[&_span]:text-sm">
+                class="border-border flex min-h-13.5 items-center justify-between border-b px-3.25 min-[56.25rem]:min-h-14.75 min-[56.25rem]:px-3.75">
                 <div>
-                    <span>Instruments</span>
-                    <small>Tap an instrument to toggle it</small>
+                    <span class="block text-sm font-bold">Instruments</span>
+                    <small class="text-foreground-muted mt-1 block text-xs min-[56.25rem]:text-sm">
+                        Tap an instrument to toggle it
+                    </small>
                 </div>
-                <b class="min-w-0! px-1.5 text-center font-sans! leading-none tabular-nums">
+                <b
+                    class="bg-surface-badge text-foreground-strong grid h-5.75 min-w-0! place-items-center rounded-md px-1.5 text-center font-sans! text-xs leading-none font-semibold tabular-nums min-[56.25rem]:text-sm">
                     <span>
                         {instruments.filter((item) => item.enabled).length} / {instruments.length}
                     </span>

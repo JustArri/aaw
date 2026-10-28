@@ -24,8 +24,8 @@ pub struct CtrProject {
 }
 
 impl CtrProject {
-    pub fn next_revision(&mut self) -> u32 {
-        (self.revision, _) = self.revision.overflowing_add(1);
-        self.revision
+    pub fn next_revision(revision: &mut u32) -> u32 {
+        (*revision, _) = revision.overflowing_add(1);
+        *revision
     }
 }

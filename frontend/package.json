@@ -4,7 +4,7 @@
     "version": "0.0.1",
     "type": "module",
     "scripts": {
-        "dev": "bun run generate:api && vite dev",
+        "dev": "bun run generate:api && vite dev --host 0.0.0.0",
         "build": "bun run generate:api && vite build",
         "preview": "vite preview",
         "prepare": "svelte-kit sync || echo ''",

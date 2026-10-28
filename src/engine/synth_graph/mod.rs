@@ -5,7 +5,7 @@ use crate::{
         resolve_asset_path,
     },
     memory::Siv,
-    synths,
+    synths::{self, SoundFontProgram},
 };
 pub use ctr::*;
 pub use rt::*;
@@ -44,6 +44,17 @@ pub struct SynthGraphContext<'a> {
     pub channel_count: usize,
     pub sample_rate: u32,
     pub max_block_size: usize,
+}
+
+#[derive(Clone, Copy)]
+pub struct DummySynthContext {
+    pub sample_rate: f32,
+}
+
+impl<'a> From<&SynthGraphContext<'a>> for DummySynthContext {
+    fn from(value: &SynthGraphContext<'a>) -> Self {
+        Self { sample_rate: value.sample_rate as f32 }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -93,17 +104,28 @@ pub async fn prepare<'a>(
         let (effects, rt_effects) = effects::prepare(stored_synth.effects, (&ctx).into())?;
 
         let (parameters, kind) = match stored_synth.parameters {
-            StoredSynthParameters::Dummy => prepare_dummy_synth(ctx.sample_rate),
-            StoredSynthParameters::Fluid { file_path } => {
-                prepare_fluid_synth(file_path, (&ctx).into()).await?
+            StoredSynthParameters::Dummy { max_voices } => {
+                prepare_dummy_synth(max_voices, (&ctx).into())
             }
-            StoredSynthParameters::Sfizz { file_path } => {
-                prepare_sfizz_synth(file_path, (&ctx).into()).await?
+            StoredSynthParameters::Fluid { file_path, program, max_voices } => {
+                prepare_fluid_synth(file_path, Some(program), max_voices, (&ctx).into()).await?
+            }
+            StoredSynthParameters::Sfizz { file_path, max_voices } => {
+                prepare_sfizz_synth(file_path, max_voices, (&ctx).into()).await?
             }
         };
 
-        ctr_synths.insert(local_id, CtrSynth { name, parameters, effects });
-        rt_synths.insert(local_id, RtSynth { kind, effects: rt_effects });
+        ctr_synths.insert(
+            local_id,
+            CtrSynth {
+                name,
+                parameters,
+                effects,
+                gain: stored_synth.gain,
+                last_controller_values: stored_synth.last_controller_values,
+            },
+        );
+        rt_synths.insert(local_id, RtSynth { kind, effects: rt_effects, gain: stored_synth.gain });
     }
 
     let mut ctr_synths: Siv<_, _> = ctr_synths.into();
@@ -112,42 +134,62 @@ pub async fn prepare<'a>(
     ctr_synths.ensure_capacity(ctx.num_synths);
     rt_synths.ensure_capacity(ctx.num_synths);
 
-    let (effects, rt_effects) = effects::prepare(stored.effects, (&ctx).into())?;
+    let (effects, rt_effects) = effects::prepare(stored.global_effects, (&ctx).into())?;
 
-    Ok((CtrSynthGraph::new(ctr_synths, effects), RtSynthGraph::new(rt_synths, rt_effects)))
+    Ok((
+        CtrSynthGraph::new(ctr_synths, effects, stored.global_gain),
+        RtSynthGraph::new(rt_synths, rt_effects, stored.global_gain),
+    ))
 }
 
-pub fn prepare_dummy_synth(sample_rate: u32) -> (CtrSynthParameters, RtSynthKind) {
-    (CtrSynthParameters::Dummy, RtSynthKind::Dummy(synths::Dummy::new(sample_rate)))
+pub fn prepare_dummy_synth(
+    max_voices: usize,
+    ctx: DummySynthContext,
+) -> (CtrSynthParameters, RtSynthKind) {
+    (
+        CtrSynthParameters::Dummy { max_voices },
+        RtSynthKind::Dummy(synths::Dummy::new(ctx.sample_rate, max_voices)),
+    )
 }
 
 pub async fn prepare_fluid_synth<'a>(
     relative_path: PathBuf,
+    program: Option<SoundFontProgram>,
+    max_voices: usize,
     ctx: FluidSynthContext<'a>,
 ) -> synths::Result<(CtrSynthParameters, RtSynthKind)> {
     let file_path = resolve_asset_path(ctx.assets_dir, &relative_path).await.map_err(|source| {
         synths::Error::AssetPathResolution { relative_path: relative_path.clone(), source }
     })?;
-    let mut synth = synths::Fluid::load(ctx.sample_rate, &file_path).await?;
+    let mut synth = synths::Fluid::load(ctx.sample_rate, max_voices, &file_path).await?;
     let info = synth.soundfont_info()?;
-    let program = info.first_program().unwrap_or_default();
+
+    let program = program
+        .filter(|&p| info.has_program(p))
+        .unwrap_or_else(|| info.first_program().unwrap_or_default());
     let _ = synth.select_program(program);
+
     Ok((
-        CtrSynthParameters::Fluid { file_path: relative_path, info, program },
+        CtrSynthParameters::Fluid { file_path: relative_path, info, program, max_voices },
         RtSynthKind::Fluid(synth),
     ))
 }
 
 pub async fn prepare_sfizz_synth<'a>(
     relative_path: PathBuf,
+    max_voices: usize,
     ctx: SfizzSynthContext<'a>,
 ) -> synths::Result<(CtrSynthParameters, RtSynthKind)> {
     let file_path = resolve_asset_path(ctx.assets_dir, &relative_path).await.map_err(|source| {
         synths::Error::AssetPathResolution { relative_path: relative_path.clone(), source }
     })?;
-    let mut synth = synths::Sfizz::load(ctx.sample_rate, ctx.max_block_size, &file_path).await?;
+    let mut synth =
+        synths::Sfizz::load(ctx.sample_rate, ctx.max_block_size, max_voices, &file_path).await?;
     let info = synth.sfz_info()?;
-    Ok((CtrSynthParameters::Sfizz { file_path: relative_path, info }, RtSynthKind::Sfizz(synth)))
+    Ok((
+        CtrSynthParameters::Sfizz { file_path: relative_path, info, max_voices },
+        RtSynthKind::Sfizz(synth),
+    ))
 }
 
 pub fn default(
@@ -157,5 +199,8 @@ pub fn default(
     let rt_synths = Siv::with_capacity(num_instruments);
     let ctr_synths = Siv::with_capacity(num_instruments);
     let (effects, rt_effects) = effects::default(ctx)?;
-    Ok((CtrSynthGraph::new(ctr_synths, effects), RtSynthGraph::new(rt_synths, rt_effects)))
+    Ok((
+        CtrSynthGraph::new(ctr_synths, effects, 1.0),
+        RtSynthGraph::new(rt_synths, rt_effects, 1.0),
+    ))
 }

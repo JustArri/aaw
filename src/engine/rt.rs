@@ -1,5 +1,5 @@
 use crate::{
-    audio::block::AudioBlock,
+    audio::{AudioBlock, AudioRecordingChunk},
     engine::{
         effects::RtEffects,
         graph::{InstrumentId, SynthId},
@@ -10,6 +10,10 @@ use crate::{
     rt_channels::{RtConsumer, RtProducer},
     synths::SoundFontProgram,
 };
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 
 // sacrifice memory for latency (avoid allocations/deallocations in the audio thread)
 #[allow(clippy::large_enum_variant)]
@@ -17,13 +21,15 @@ pub enum Command {
     ReplaceProject { project: Box<RtProject> },
 
     Silence,
-    SetEffects { effects: RtEffects },
+    SetGlobalEffects { effects: RtEffects },
+    SetGlobalGain { gain: f32 },
 
     SynthPush { synth: RtSynth },
     SynthReplace { id: SynthId, kind: RtSynthKind },
     SynthRemove { id: SynthId },
     SynthSelectSoundfontProgram { id: SynthId, program: SoundFontProgram },
     SynthSetEffects { id: SynthId, effects: RtEffects },
+    SynthSetGain { id: SynthId, gain: f32 },
 
     SetGlobalTransposition { transposition: i8 },
 
@@ -55,6 +61,9 @@ pub struct Engine {
     pub midi_rx: RtConsumer<MidiEvent>,
     pub cmd_rx: RtConsumer<(u32, Command)>,
     pub reply_tx: RtProducer<(u32, bool)>,
+    pub recording_tx: RtProducer<AudioRecordingChunk>,
+    pub sample_rate: f32,
+    pub audio_rec_capture_enabled: Arc<AtomicBool>,
 }
 
 impl Engine {
@@ -64,6 +73,7 @@ impl Engine {
         sample_rate: u32,
         max_block_size: usize,
     ) -> Result<(), SynthGraphError> {
+        self.sample_rate = sample_rate as f32;
         self.silence();
         self.create_buffers(channel_count, max_block_size);
         self.project.synth_graph.reconfigure(channel_count, sample_rate, max_block_size)?;
@@ -114,8 +124,12 @@ impl Engine {
                 self.silence();
                 true
             }
-            Command::SetEffects { effects } => {
-                self.project.synth_graph.set_effects(effects);
+            Command::SetGlobalEffects { effects } => {
+                self.project.synth_graph.set_global_effects(effects);
+                true
+            }
+            Command::SetGlobalGain { gain } => {
+                self.project.synth_graph.set_global_gain(gain);
                 true
             }
 
@@ -134,6 +148,7 @@ impl Engine {
             Command::SynthSetEffects { id, effects } => {
                 self.project.synth_graph.set_synth_effects(id, effects)
             }
+            Command::SynthSetGain { id, gain } => self.project.synth_graph.set_synth_gain(id, gain),
 
             Command::SetGlobalTransposition { transposition } => {
                 self.project.instrument_graph.set_global_transposition(transposition);
@@ -213,6 +228,26 @@ impl Engine {
             audio_blocks.main.add_samples_from_unchecked(&audio_blocks.temp);
         }
 
+        let smoothing_time = 0.5;
+        let alpha = 1.0 - (-1.0 / (self.sample_rate * smoothing_time)).exp();
+        let synth_graph = &mut self.project.synth_graph;
+
+        synth_graph.global_effects.apply(&mut audio_blocks.main);
+
+        synth_graph.global_gain = audio_blocks.main.multiply_samples_transition(
+            synth_graph.global_gain,
+            synth_graph.target_global_gain,
+            alpha,
+        );
+
         audio_blocks.main.write_interleaved_f32(buffer);
+
+        if self.audio_rec_capture_enabled.load(Ordering::Relaxed)
+            && let Ok(mut chunk) = self.recording_tx.write_chunk(1)
+        {
+            let (slots, _) = chunk.as_mut_slices();
+            slots[0].fill_from(&audio_blocks.main);
+            chunk.commit_all();
+        }
     }
 }

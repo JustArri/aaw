@@ -1,10 +1,13 @@
-pub use dummy::Dummy;
+pub use dummy::{DEFAULT_VOICE_COUNT as DUMMY_DEFAULT_VOICE_COUNT, Dummy};
 pub use error::{Error, Result};
 pub use fluidsynth::{
-    SoundFontBankInfo, SoundFontInfo, SoundFontNoteRange, SoundFontPresetInfo, SoundFontProgram,
-    Synth as Fluid,
+    DEFAULT_VOICE_COUNT as FLUID_DEFAULT_VOICE_COUNT, SoundFontBankInfo, SoundFontInfo,
+    SoundFontNoteRange, SoundFontPresetInfo, SoundFontProgram, Synth as Fluid,
 };
-pub use sfizz::{SfzInfo, SfzKeyRange, Synth as Sfizz};
+pub use sfizz::{
+    DEFAULT_VOICE_COUNT as SFIZZ_DEFAULT_VOICE_COUNT, MAX_VOICE_COUNT as SFIZZ_MAX_VOICE_COUNT,
+    SfzInfo, SfzKeyRange, Synth as Sfizz,
+};
 
 mod dummy;
 mod error;

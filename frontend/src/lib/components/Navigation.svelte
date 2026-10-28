@@ -40,12 +40,12 @@
     class="min-[56.25rem]:border-border min-[56.25rem]:bg-surface-1 hidden min-[56.25rem]:sticky min-[56.25rem]:top-0 min-[56.25rem]:flex min-[56.25rem]:h-screen min-[56.25rem]:flex-col min-[56.25rem]:border-r min-[56.25rem]:px-3.25 min-[56.25rem]:pt-6 min-[56.25rem]:pb-3.75">
     <div class="flex items-center gap-3 px-2 pt-0 pb-8">
         <div
-            class="border-accent/40 bg-accent/9 [&_i]:bg-accent flex size-8.5 items-center justify-center gap-0.5 rounded-[0.5625rem] border [&_i]:w-0.5 [&_i]:rounded-full"
+            class="border-accent/40 bg-accent/9 flex size-8.5 items-center justify-center gap-0.5 rounded-[0.5625rem] border"
             aria-hidden="true">
-            <i class="h-2"></i>
-            <i class="h-4.5"></i>
-            <i class="h-3"></i>
-            <i class="h-5"></i>
+            <i class="bg-accent h-2 w-0.5 rounded-full"></i>
+            <i class="bg-accent h-4.5 w-0.5 rounded-full"></i>
+            <i class="bg-accent h-3 w-0.5 rounded-full"></i>
+            <i class="bg-accent h-5 w-0.5 rounded-full"></i>
         </div>
         <div class="flex flex-col">
             <strong class="leading-none">AAW</strong>
@@ -74,13 +74,14 @@
     </nav>
 
     <div class="mt-auto">
-        <div
-            class="border-border [&_small]:text-foreground-muted mb-1.5 flex items-center gap-2.5 border-b px-2.5 py-4 [&_small]:mt-1 [&_small]:block [&_small]:text-xs [&_strong]:block [&_strong]:text-xs">
+        <div class="border-border mb-1.5 flex items-center gap-2.5 border-b px-2.5 py-4">
             <EngineStatusIndicator />
             <div class="min-w-0 flex-1">
-                <strong>Engine {gatewayOnline() ? 'online' : 'offline'}</strong>
+                <strong class="block text-xs">
+                    Engine {gatewayOnline() ? 'online' : 'offline'}
+                </strong>
                 {#if gatewayOnline()}
-                    <small>
+                    <small class="text-foreground-muted mt-1 block text-xs">
                         {#if outputStream}
                             <span
                                 class="block truncate"
@@ -89,8 +90,8 @@
                             </span>
                             <span class="block">
                                 {formatSampleRate(outputStream.sample_rate)} · {outputStream.buffer_size ===
-                                null
-                                    ? 'default buffer'
+                                0
+                                    ? 'buffer unavailable'
                                     : `${outputStream.buffer_size} frames`}
                             </span>
                         {:else}
@@ -114,10 +115,10 @@
     aria-label="Primary navigation">
     {#each links as item}
         <a
-            class={`relative flex min-w-17 flex-1 cursor-pointer flex-col items-center justify-center gap-1 border-0 bg-transparent text-xs ${activeLabel === item.label ? 'text-accent' : 'text-foreground-nav'}`}
+            class={`relative flex min-w-16 flex-none cursor-pointer flex-col items-center justify-center gap-1 border-0 bg-transparent px-3 text-xs ${activeLabel === item.label ? 'text-accent' : 'text-foreground-nav'}`}
             href={item.href}>
-            <Icon icon={item.icon} width="1.1875rem" />
-            <span>{item.label}</span>
+            <Icon class="shrink-0" icon={item.icon} width="1.1875rem" />
+            <span class="whitespace-nowrap">{item.label}</span>
         </a>
     {/each}
 </nav>

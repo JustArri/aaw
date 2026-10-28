@@ -45,7 +45,7 @@ export async function fetchEffectsTuning() {
 }
 
 export async function setGlobalEffects(effects: Effects) {
-    const response = await request(() => api.setEffects(effects));
+    const response = await request(() => api.setGlobalEffects(effects));
     if (response.status !== 204) {
         responseError(response.status, response.data);
     }

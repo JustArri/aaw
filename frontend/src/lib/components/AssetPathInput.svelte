@@ -1,5 +1,6 @@
 <script lang="ts">
     import Icon from '@iconify/svelte';
+    import SelectDropdown from '$lib/components/SelectDropdown.svelte';
     import { notify } from '$lib/push-notifications.svelte';
 
     type Props = {
@@ -24,16 +25,8 @@
         onreload
     }: Props = $props();
 
-    let open = $state(false);
-    let activeIndex = $state(-1);
     let reloading = $state(false);
     let reloadDone = $state(false);
-    let inputElement: HTMLInputElement;
-    let suggestions = $derived(
-        assets
-            .filter((asset) => asset.toLocaleLowerCase().includes(value.toLocaleLowerCase()))
-            .slice(0, 12)
-    );
 
     function fileName(path: string) {
         return path.split('/').at(-1) ?? path;
@@ -44,35 +37,14 @@
         return separator < 0 ? '' : path.slice(0, separator);
     }
 
-    function select(asset: string) {
-        value = asset;
-        open = false;
-        activeIndex = -1;
-    }
-
-    function clear() {
-        value = '';
-        open = true;
-        activeIndex = -1;
-        inputElement.focus();
-    }
-
-    function handleKeydown(event: KeyboardEvent) {
-        if (event.key === 'ArrowDown') {
-            event.preventDefault();
-            open = true;
-            activeIndex = Math.min(activeIndex + 1, suggestions.length - 1);
-        } else if (event.key === 'ArrowUp') {
-            event.preventDefault();
-            activeIndex = Math.max(activeIndex - 1, 0);
-        } else if (event.key === 'Enter' && open && activeIndex >= 0) {
-            event.preventDefault();
-            select(suggestions[activeIndex]);
-        } else if (event.key === 'Escape') {
-            open = false;
-            activeIndex = -1;
-        }
-    }
+    let options = $derived(
+        [value && !assets.includes(value) ? value : '', ...assets].filter(Boolean).map((asset) => ({
+            value: asset,
+            label: fileName(asset),
+            selectionLabel: asset,
+            description: directory(asset) || undefined
+        }))
+    );
 
     async function reload() {
         if (reloading) {
@@ -80,7 +52,6 @@
         }
         reloading = true;
         reloadDone = false;
-        open = false;
         try {
             await onreload?.();
             reloadDone = true;
@@ -99,65 +70,35 @@
 
 <div class="flex min-w-0 gap-2">
     <div class="relative min-w-0 flex-1">
-        <input
-            bind:this={inputElement}
+        <SelectDropdown
             {id}
-            class={`border-border-strong bg-surface-inset text-foreground w-full min-w-0 rounded-lg border pr-9 pl-2.5 font-mono ${compact ? 'h-9 text-xs' : 'h-10'}`}
-            type="text"
-            role="combobox"
-            aria-autocomplete="list"
-            aria-controls={`${id}-suggestions`}
-            aria-expanded={open && suggestions.length > 0}
-            aria-activedescendant={activeIndex >= 0 ? `${id}-suggestion-${activeIndex}` : undefined}
+            {options}
             {placeholder}
             {disabled}
-            {required}
-            bind:value
-            onfocus={() => (open = true)}
-            onblur={() => (open = false)}
-            oninput={() => {
-                open = true;
-                activeIndex = -1;
-            }}
-            onkeydown={handleKeydown} />
-
+            {compact}
+            searchable
+            searchPlaceholder="Search assets"
+            noMatchesText="No matching assets"
+            ariaLabel="Asset path"
+            bind:value />
         {#if value && !disabled}
             <button
-                class="text-foreground-muted hover:bg-surface-hover hover:text-foreground absolute top-1/2 right-1 grid size-7 -translate-y-1/2 cursor-pointer place-items-center rounded-md border-0 bg-transparent transition-colors"
+                class={`text-foreground-muted hover:bg-surface-hover hover:text-foreground absolute top-1/2 z-10 grid -translate-y-1/2 cursor-pointer place-items-center rounded-md border-0 bg-transparent transition-colors ${compact ? 'right-7 size-7' : 'right-8 size-8'}`}
                 type="button"
                 aria-label="Clear asset path"
                 title="Clear asset path"
-                onpointerdown={(event) => event.preventDefault()}
-                onclick={clear}>
+                onclick={() => (value = '')}>
                 <Icon icon="lucide:x" width="1rem" />
             </button>
         {/if}
-
-        {#if open && !disabled && suggestions.length > 0}
-            <div
-                id={`${id}-suggestions`}
-                class="border-border-strong bg-surface-card absolute top-[calc(100%+0.25rem)] right-0 left-0 z-20 max-h-56 overflow-y-auto rounded-lg border p-1 shadow-lg"
-                role="listbox">
-                {#each suggestions as asset, index}
-                    <button
-                        id={`${id}-suggestion-${index}`}
-                        class={`text-foreground hover:bg-surface-hover block w-full cursor-pointer rounded-md border-0 px-2.5 py-2 text-left ${index === activeIndex ? 'bg-surface-hover' : 'bg-transparent'}`}
-                        type="button"
-                        role="option"
-                        aria-selected={index === activeIndex}
-                        onpointerdown={(event) => {
-                            event.preventDefault();
-                            select(asset);
-                        }}>
-                        <span class="block truncate text-sm font-semibold">{fileName(asset)}</span>
-                        {#if directory(asset)}
-                            <span class="text-foreground-muted mt-0.5 block truncate text-xs">
-                                {directory(asset)}
-                            </span>
-                        {/if}
-                    </button>
-                {/each}
-            </div>
+        {#if required}
+            <input
+                class="pointer-events-none absolute size-px opacity-0"
+                type="text"
+                tabindex="-1"
+                aria-hidden="true"
+                {value}
+                required />
         {/if}
     </div>
 

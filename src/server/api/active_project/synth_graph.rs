@@ -5,8 +5,8 @@ use crate::{
         effects::{self, Effects, EffectsContext, RtEffects},
         graph::SynthId,
         synth_graph::{
-            CtrSynth, CtrSynthParameters, FluidSynthContext, RtSynth, RtSynthKind,
-            SfizzSynthContext,
+            CtrSynth, CtrSynthParameters, DummySynthContext, FluidSynthContext, RtSynth,
+            RtSynthKind, SfizzSynthContext,
         },
     },
     server::api::audio::AudioOutputStreamConfig,
@@ -24,16 +24,22 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 
 pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
-        .routes(routes!(set_effects))
+        .routes(routes!(set_global_effects))
+        .routes(routes!(global_effects))
+        .routes(routes!(set_global_gain))
+        .routes(routes!(global_gain))
         .routes(routes!(synth_list))
         .routes(routes!(synth_push))
         .routes(routes!(synth_replace))
         .routes(routes!(synth_remove))
         .routes(routes!(synth_parameters))
-        .routes(routes!(synth_set_effects))
         .routes(routes!(synth_set_soundfont_program))
         .routes(routes!(synth_set_name))
         .routes(routes!(synth_name))
+        .routes(routes!(synth_set_effects))
+        .routes(routes!(synth_effects))
+        .routes(routes!(synth_set_gain))
+        .routes(routes!(synth_gain))
 }
 
 #[derive(Deserialize, IntoParams)]
@@ -52,14 +58,20 @@ struct SynthPushRequest {
 #[derive(Deserialize, ToSchema)]
 #[serde(tag = "type", content = "data")]
 enum SynthPushParams {
-    Dummy,
+    Dummy {
+        max_voices: usize,
+    },
     Fluid {
         #[schema(value_type = String)]
         path: PathBuf,
+
+        max_voices: usize,
     },
     Sfizz {
         #[schema(value_type = String)]
         path: PathBuf,
+
+        max_voices: usize,
     },
 }
 
@@ -67,7 +79,7 @@ enum SynthPushParams {
 
 #[utoipa::path(
     put,
-    path = "/effects",
+    path = "/global-effects",
     request_body(
         content = Effects,
         content_type = "application/json"
@@ -77,7 +89,7 @@ enum SynthPushParams {
         (status = INTERNAL_SERVER_ERROR, body = String, description = "Internal Server Error"),
     )
 )]
-async fn set_effects(
+async fn set_global_effects(
     State(app_state): State<AppState>,
     Json(effects): Json<Effects>,
 ) -> Result<StatusCode, (StatusCode, String)> {
@@ -86,9 +98,57 @@ async fn set_effects(
     let rt_effects =
         RtEffects::new(&effects, stream_config.channel_count, stream_config.sample_rate)?;
 
-    app_state.engine_handle.set_effects(effects, rt_effects).await?;
+    app_state.engine_handle.set_global_effects(effects, rt_effects).await?;
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+//--------------------------------------------------------------------------------------------------
+
+#[utoipa::path(
+    get,
+    path = "/global-effects",
+    responses(
+        (status = OK, body = Effects, content_type = "application/json", description = "OK"),
+    )
+)]
+async fn global_effects(State(app_state): State<AppState>) -> Json<Effects> {
+    Json(app_state.engine_handle.project().await.synth_graph.global_effects.clone())
+}
+
+//--------------------------------------------------------------------------------------------------
+
+#[utoipa::path(
+    put,
+    path = "/global-gain",
+    request_body(
+        content = f32,
+        content_type = "application/json"
+    ),
+    responses(
+        (status = NO_CONTENT, description = "Value set"),
+        (status = INTERNAL_SERVER_ERROR, body = String, description = "Internal Server Error"),
+    )
+)]
+async fn set_global_gain(
+    State(app_state): State<AppState>,
+    Json(gain): Json<f32>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    app_state.engine_handle.set_global_gain(gain).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+//--------------------------------------------------------------------------------------------------
+
+#[utoipa::path(
+    get,
+    path = "/global-gain",
+    responses(
+        (status = OK, body = f32, content_type = "application/json", description = "OK"),
+    )
+)]
+async fn global_gain(State(app_state): State<AppState>) -> Json<f32> {
+    Json(app_state.engine_handle.project().await.synth_graph.global_gain)
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -130,15 +190,21 @@ async fn synth_push(
     let stream_config = app_state.stream_config().await;
 
     let (name, parameters, kind) =
-        create_synth(&app_state.assets.read().await.dir, stream_config, req.params).await?;
+        create_synth(&app_state.assets.read().await.dir, &stream_config, req.params).await?;
 
     let (effects, rt_effects) = effects::default(EffectsContext {
         channel_count: stream_config.channel_count,
         sample_rate: stream_config.sample_rate,
     })?;
 
-    let ctr_synth = CtrSynth { name, parameters, effects };
-    let rt_synth = RtSynth { kind, effects: rt_effects };
+    let ctr_synth = CtrSynth {
+        name,
+        parameters,
+        effects,
+        gain: 1.0,
+        last_controller_values: Box::new([None; 128]),
+    };
+    let rt_synth = RtSynth { kind, effects: rt_effects, gain: 1.0 };
 
     Ok(Json(app_state.engine_handle.synth_push(ctr_synth, rt_synth).await?))
 }
@@ -168,7 +234,7 @@ async fn synth_replace(
     let stream_config = app_state.stream_config().await;
 
     let (_, parameters, kind) =
-        create_synth(&app_state.assets.read().await.dir, stream_config, req.params).await?;
+        create_synth(&app_state.assets.read().await.dir, &stream_config, req.params).await?;
 
     app_state.engine_handle.synth_replace(path.synth_id, parameters, kind).await?;
     Ok(StatusCode::NO_CONTENT)
@@ -222,38 +288,6 @@ async fn synth_parameters(
 
 #[utoipa::path(
     put,
-    path = "/synths/{synth_id}/effects",
-    params(SynthPath),
-    request_body(
-        content = Effects,
-        content_type = "application/json"
-    ),
-    responses(
-        (status = NO_CONTENT, description = "Value set"),
-        (status = NOT_FOUND, body = String, description = "Synth not found"),
-        (status = INTERNAL_SERVER_ERROR, body = String, description = "Internal Server Error"),
-    )
-)]
-async fn synth_set_effects(
-    State(app_state): State<AppState>,
-    Path(path): Path<SynthPath>,
-    Json(effects): Json<Effects>,
-) -> Result<StatusCode, (StatusCode, String)> {
-    with_synth(&app_state, path.synth_id, |_| ()).await?;
-    let stream_config = app_state.stream_config().await;
-
-    let rt_effects =
-        RtEffects::new(&effects, stream_config.channel_count, stream_config.sample_rate)?;
-
-    app_state.engine_handle.synth_set_effects(path.synth_id, effects, rt_effects).await?;
-
-    Ok(StatusCode::NO_CONTENT)
-}
-
-//--------------------------------------------------------------------------------------------------
-
-#[utoipa::path(
-    put,
     path = "/synths/{synth_id}/soundfont-program",
     params(SynthPath),
     request_body(
@@ -280,7 +314,9 @@ async fn synth_set_soundfont_program(
         .ok_or((StatusCode::NOT_FOUND, "not found".into()))?;
 
     match synth.parameters {
-        CtrSynthParameters::Dummy => return Err((StatusCode::BAD_REQUEST, "not supported".into())),
+        CtrSynthParameters::Dummy { .. } => {
+            return Err((StatusCode::BAD_REQUEST, "not supported".into()));
+        }
         CtrSynthParameters::Fluid { .. } => {}
         CtrSynthParameters::Sfizz { .. } => {
             return Err((StatusCode::BAD_REQUEST, "not supported".into()));
@@ -330,7 +366,7 @@ async fn synth_set_name(
             status = OK,
             body = String,
             content_type = "application/json",
-            description = "Value set"
+            description = "OK"
         ),
         (status = NOT_FOUND, body = String, description = "Synth not found"),
     )
@@ -340,6 +376,105 @@ async fn synth_name(
     Path(path): Path<SynthPath>,
 ) -> Result<Json<String>, (StatusCode, String)> {
     Ok(Json(with_synth(&app_state, path.synth_id, |s| s.name.clone()).await?))
+}
+
+//--------------------------------------------------------------------------------------------------
+
+#[utoipa::path(
+    put,
+    path = "/synths/{synth_id}/effects",
+    params(SynthPath),
+    request_body(
+        content = Effects,
+        content_type = "application/json"
+    ),
+    responses(
+        (status = NO_CONTENT, description = "Value set"),
+        (status = NOT_FOUND, body = String, description = "Synth not found"),
+        (status = INTERNAL_SERVER_ERROR, body = String, description = "Internal Server Error"),
+    )
+)]
+async fn synth_set_effects(
+    State(app_state): State<AppState>,
+    Path(path): Path<SynthPath>,
+    Json(effects): Json<Effects>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    with_synth(&app_state, path.synth_id, |_| ()).await?;
+    let stream_config = app_state.stream_config().await;
+
+    let rt_effects =
+        RtEffects::new(&effects, stream_config.channel_count, stream_config.sample_rate)?;
+
+    app_state.engine_handle.synth_set_effects(path.synth_id, effects, rt_effects).await?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+//--------------------------------------------------------------------------------------------------
+
+#[utoipa::path(
+    get,
+    path = "/synths/{synth_id}/effects",
+    params(SynthPath),
+    responses(
+        (
+            status = OK,
+            body = Effects,
+            content_type = "application/json",
+            description = "OK"
+        ),
+        (status = NOT_FOUND, body = String, description = "Synth not found"),
+    )
+)]
+async fn synth_effects(
+    State(app_state): State<AppState>,
+    Path(path): Path<SynthPath>,
+) -> Result<Json<Effects>, (StatusCode, String)> {
+    Ok(Json(with_synth(&app_state, path.synth_id, |s| s.effects.clone()).await?))
+}
+
+//--------------------------------------------------------------------------------------------------
+
+#[utoipa::path(
+    put,
+    path = "/synths/{synth_id}/gain",
+    params(SynthPath),
+    request_body(
+        content = f32,
+        content_type = "application/json"
+    ),
+    responses(
+        (status = NO_CONTENT, description = "Value set"),
+        (status = NOT_FOUND, body = String, description = "Synth not found"),
+        (status = INTERNAL_SERVER_ERROR, body = String, description = "Internal Server Error"),
+    )
+)]
+async fn synth_set_gain(
+    State(app_state): State<AppState>,
+    Path(path): Path<SynthPath>,
+    Json(gain): Json<f32>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    with_synth(&app_state, path.synth_id, |_| ()).await?;
+    app_state.engine_handle.synth_set_gain(path.synth_id, gain).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+//--------------------------------------------------------------------------------------------------
+
+#[utoipa::path(
+    get,
+    path = "/synths/{synth_id}/gain",
+    params(SynthPath),
+    responses(
+        (status = OK, body = f32, content_type = "application/json", description = "OK"),
+        (status = NOT_FOUND, body = String, description = "Synth not found"),
+    )
+)]
+async fn synth_gain(
+    State(app_state): State<AppState>,
+    Path(path): Path<SynthPath>,
+) -> Result<Json<f32>, (StatusCode, String)> {
+    Ok(Json(with_synth(&app_state, path.synth_id, |s| s.gain).await?))
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -368,16 +503,19 @@ async fn with_synth<T>(
 
 async fn create_synth(
     assets_dir: impl AsRef<std::path::Path>,
-    stream_config: AudioOutputStreamConfig,
+    stream_config: &AudioOutputStreamConfig,
     params: SynthPushParams,
 ) -> Result<(String, CtrSynthParameters, RtSynthKind), synths::Error> {
     let (name, (parameters, kind)) = match params {
-        SynthPushParams::Dummy => (
+        SynthPushParams::Dummy { max_voices } => (
             "Dummy Synth".into(),
-            engine::synth_graph::prepare_dummy_synth(stream_config.sample_rate),
+            engine::synth_graph::prepare_dummy_synth(
+                max_voices,
+                DummySynthContext { sample_rate: stream_config.sample_rate as f32 },
+            ),
         ),
 
-        SynthPushParams::Fluid { path } => {
+        SynthPushParams::Fluid { path, max_voices } => {
             let name = path
                 .file_stem()
                 .map(|p| p.to_string_lossy().to_string())
@@ -386,9 +524,9 @@ async fn create_synth(
                 assets_dir: assets_dir.as_ref(),
                 sample_rate: stream_config.sample_rate as f64,
             };
-            (name, engine::synth_graph::prepare_fluid_synth(path, context).await?)
+            (name, engine::synth_graph::prepare_fluid_synth(path, None, max_voices, context).await?)
         }
-        SynthPushParams::Sfizz { path } => {
+        SynthPushParams::Sfizz { path, max_voices } => {
             let name = path
                 .file_stem()
                 .map(|p| p.to_string_lossy().to_string())
@@ -398,7 +536,7 @@ async fn create_synth(
                 sample_rate: stream_config.sample_rate as f32,
                 max_block_size: stream_config.max_block_size,
             };
-            (name, engine::synth_graph::prepare_sfizz_synth(path, context).await?)
+            (name, engine::synth_graph::prepare_sfizz_synth(path, max_voices, context).await?)
         }
     };
 

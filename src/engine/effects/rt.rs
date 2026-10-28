@@ -1,6 +1,6 @@
 use crate::{
     DEFAULT_CHANNEL_COUNT, DEFAULT_SAMPLE_RATE,
-    audio::block::AudioBlock,
+    audio::AudioBlock,
     engine::effects::{
         EFFECTS_TUNING, Effect, EffectKind, Effects, EqualizerBand as EffectEqualizerBand, Error,
     },
@@ -213,13 +213,7 @@ impl RtGain {
     }
 
     fn apply(&mut self, block: &mut AudioBlock) {
-        let sample_count = block.sample_count_per_channel();
-        let channel_count = block.channel_count();
-        for channel in block.samples_mut().iter_mut().take(channel_count) {
-            for sample in &mut channel[..sample_count] {
-                *sample *= self.value;
-            }
-        }
+        block.multiply_samples(self.value);
     }
 }
 
@@ -553,9 +547,10 @@ impl RtChorus {
             let delay_samples =
                 (self.delay_ms + self.depth_ms * modulation) * self.sample_rate as f32 / 1000.0;
             let read_position = (self.position as f32 - delay_samples).rem_euclid(length as f32);
-            let first = read_position.floor() as usize;
+            let first_position = read_position.floor();
+            let first = first_position as usize % length;
             let second = (first + 1) % length;
-            let fraction = read_position - first as f32;
+            let fraction = read_position - first_position;
             for (channel, buffer) in channels.iter_mut().zip(&mut self.buffers) {
                 let input = channel[index];
                 let delayed = buffer[first] + (buffer[second] - buffer[first]) * fraction;
@@ -1113,6 +1108,19 @@ mod tests {
 
         assert_eq!(block.samples_mut()[0][0], 0.0);
         assert_eq!(block.samples_mut()[0][1], 1.0);
+    }
+
+    #[test]
+    fn chorus_read_position_always_stays_inside_delay_buffer() {
+        let mut chorus = RtChorus::new(20.0, 7.5, 7.5, 0.5, 2, 48_000).unwrap();
+        let mut block = AudioBlock::new(2, 256);
+        assert!(block.resize(256));
+
+        for _ in 0..5_000 {
+            chorus.apply(&mut block);
+        }
+
+        assert!(block.samples().iter().flatten().all(|sample| sample.is_finite()));
     }
 
     #[test]

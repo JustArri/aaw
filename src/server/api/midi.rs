@@ -1,5 +1,6 @@
 use crate::{
     app_state::AppState,
+    files,
     midi::{InputAutoConnection, InputSlotError, MidiEvent},
     rt_channels::NotifiedRtSharedProducer,
     server::WsHandlerAction,
@@ -21,7 +22,7 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
         .routes(routes!(midi_input_ports))
-        .routes(routes!(midi_input_instruments))
+        .routes(routes!(midi_input_slots))
         .routes(routes!(midi_input_auto_connections))
         .routes(routes!(midi_connect_input_slot))
         .routes(routes!(midi_disconnect_input_slot))
@@ -80,13 +81,13 @@ async fn midi_input_ports(State(app_state): State<AppState>) -> Json<Vec<MidiPor
 
 #[utoipa::path(
     get,
-    path = "/input/instruments",
+    path = "/input/slots",
     responses(
         (status = OK, body = Vec<MidiInputSlot>, description = "OK"),
         (status = INTERNAL_SERVER_ERROR, description = "Internal Server Error"),
     )
 )]
-async fn midi_input_instruments(
+async fn midi_input_slots(
     State(app_state): State<AppState>,
 ) -> Result<Json<Vec<MidiInputSlot>>, StatusCode> {
     use crate::midi::InputSlot;
@@ -124,7 +125,7 @@ pub struct ConnectInputSlotRequest {
 
 #[utoipa::path(
     post,
-    path = "/input/instruments/connect/{slot_id}",
+    path = "/input/slots/connect/{slot_id}",
     params(InputSlotPath),
     request_body = ConnectInputSlotRequest,
     responses(
@@ -151,7 +152,7 @@ async fn midi_connect_input_slot(
 
 #[utoipa::path(
     post,
-    path = "/input/instruments/disconnect/{slot_id}",
+    path = "/input/slots/disconnect/{slot_id}",
     params(InputSlotPath),
     responses(
         (status = NO_CONTENT, description = "Disconnected"),
@@ -213,13 +214,18 @@ async fn midi_insert_input_auto_connection(
     State(app_state): State<AppState>,
     Json(req): Json<MidiInputAutoConnection>,
 ) -> StatusCode {
-    app_state.midi_runtime.lock().await.input_auto_connections_mut().insert(
+    let mut rt = app_state.midi_runtime.lock().await;
+    let ac = rt.input_auto_connections_mut();
+    ac.insert(
         req.port_id,
         InputAutoConnection {
             preferred_slot_id: req.preferred_slot_id,
             slot_id_fixed: req.slot_id_fixed,
         },
     );
+
+    files::save(&app_state.aaw_root_dir, crate::CFG_MIDI_AC, ac).await;
+
     StatusCode::NO_CONTENT
 }
 
@@ -244,7 +250,12 @@ async fn midi_delete_input_auto_connection(
     State(app_state): State<AppState>,
     Json(req): Json<DeleteMidiAutoConnectionRequest>,
 ) -> StatusCode {
-    app_state.midi_runtime.lock().await.input_auto_connections_mut().remove(&req.port_id);
+    let mut rt = app_state.midi_runtime.lock().await;
+    let ac = rt.input_auto_connections_mut();
+    ac.remove(&req.port_id);
+
+    files::save(&app_state.aaw_root_dir, crate::CFG_MIDI_AC, ac).await;
+
     StatusCode::NO_CONTENT
 }
 

@@ -125,9 +125,15 @@ export function updateActiveProjectName(name: string) {
     }
 }
 
-export function updateActiveProjectEffects(effects: Effects) {
+export function updateActiveProjectGlobalEffects(effects: Effects) {
     if (projectState) {
-        projectState.synth_graph.effects = effects;
+        projectState.synth_graph.global_effects = effects;
+    }
+}
+
+export function updateActiveProjectGlobalGain(gain: number) {
+    if (projectState) {
+        projectState.synth_graph.global_gain = gain;
     }
 }
 

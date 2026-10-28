@@ -15,35 +15,55 @@ import { reportGatewayError, reportGatewayOffline } from './gateway.svelte';
 export const SynthKind = { Dummy: 'Dummy', Fluid: 'Fluid', Sfizz: 'Sfizz' } as const;
 export type SynthKind = (typeof SynthKind)[keyof typeof SynthKind];
 
-type DummySynth = { name: string };
+type DummySynth = { name: string; max_voices: number };
 type FluidSynth = {
     name: string;
     file_path: string;
     info: SoundFontInfo;
+    max_voices: number;
     program: SoundFontProgram;
 };
-type SfizzSynth = { name: string; file_path: string; info: SfzInfo };
+type SfizzSynth = { name: string; file_path: string; info: SfzInfo; max_voices: number };
 
 export type SynthEntry =
-    | { id: number; kind: typeof SynthKind.Dummy; synth: DummySynth; effects: Effects }
-    | { id: number; kind: typeof SynthKind.Fluid; synth: FluidSynth; effects: Effects }
-    | { id: number; kind: typeof SynthKind.Sfizz; synth: SfizzSynth; effects: Effects };
+    | {
+          id: number;
+          kind: typeof SynthKind.Dummy;
+          synth: DummySynth;
+          effects: Effects;
+          gain: number;
+      }
+    | {
+          id: number;
+          kind: typeof SynthKind.Fluid;
+          synth: FluidSynth;
+          effects: Effects;
+          gain: number;
+      }
+    | {
+          id: number;
+          kind: typeof SynthKind.Sfizz;
+          synth: SfizzSynth;
+          effects: Effects;
+          gain: number;
+      };
 
 let synthsState = $state({} as Record<string, Synth>);
 let instrumentsState = $state({} as Record<string, Instrument>);
-let fetching = false;
+let fetchPromise: Promise<void> | null = null;
 
 export function instrumentSlots() {
     return instrumentsState;
 }
 
 function toEntry(id: string, synth: Synth): SynthEntry {
-    if (synth.parameters === SynthKind.Dummy) {
+    if ('Dummy' in synth.parameters) {
         return {
             id: Number(id),
             kind: SynthKind.Dummy,
-            synth: { name: synth.name },
-            effects: synth.effects
+            synth: { name: synth.name, ...synth.parameters.Dummy },
+            effects: synth.effects,
+            gain: synth.gain
         };
     }
     if ('Fluid' in synth.parameters) {
@@ -51,14 +71,16 @@ function toEntry(id: string, synth: Synth): SynthEntry {
             id: Number(id),
             kind: SynthKind.Fluid,
             synth: { name: synth.name, ...synth.parameters.Fluid },
-            effects: synth.effects
+            effects: synth.effects,
+            gain: synth.gain
         };
     }
     return {
         id: Number(id),
         kind: SynthKind.Sfizz,
         synth: { name: synth.name, ...synth.parameters.Sfizz },
-        effects: synth.effects
+        effects: synth.effects,
+        gain: synth.gain
     };
 }
 
@@ -92,6 +114,13 @@ export function updateSynthEffects(id: number, effects: Effects) {
     }
 }
 
+export function updateSynthGain(id: number, gain: number) {
+    const synth = synthsState[String(id)];
+    if (synth) {
+        synthsState = { ...synthsState, [id]: { ...synth, gain } };
+    }
+}
+
 export function removeSynthFromState(id: number) {
     const next = { ...synthsState };
     delete next[String(id)];
@@ -100,7 +129,7 @@ export function removeSynthFromState(id: number) {
 
 export function updateFluidSynthProgram(id: number, program: SoundFontProgram) {
     const synth = synthsState[String(id)];
-    if (!synth || synth.parameters === SynthKind.Dummy || !('Fluid' in synth.parameters)) {
+    if (!synth || !('Fluid' in synth.parameters)) {
         return;
     }
     synthsState = {
@@ -119,24 +148,36 @@ export function updateSynthInstrumentSlot(id: number, update: Partial<Instrument
     }
 }
 
-export async function fetchSynths() {
-    if (fetching) {
-        return;
+export async function fetchSynths(forceFresh = false) {
+    if (fetchPromise) {
+        await fetchPromise;
+        if (!forceFresh) {
+            return;
+        }
     }
-    fetching = true;
+
+    const currentFetch = (async () => {
+        try {
+            const [synthResponse, instrumentResponse] = await Promise.all([
+                api.synthList(),
+                api.instrumentList()
+            ]);
+            synthsState = synthResponse.data;
+            instrumentsState = instrumentResponse.data;
+        } catch (error) {
+            resetSynths();
+            reportGatewayOffline();
+            throw gatewayNotResponding(error);
+        }
+    })();
+    fetchPromise = currentFetch;
+
     try {
-        const [synthResponse, instrumentResponse] = await Promise.all([
-            api.synthList(),
-            api.instrumentList()
-        ]);
-        synthsState = synthResponse.data;
-        instrumentsState = instrumentResponse.data;
-    } catch (error) {
-        resetSynths();
-        reportGatewayOffline();
-        throw gatewayNotResponding(error);
+        await currentFetch;
     } finally {
-        fetching = false;
+        if (fetchPromise === currentFetch) {
+            fetchPromise = null;
+        }
     }
 }
 
@@ -172,28 +213,28 @@ async function request<T>(operation: () => Promise<T>): Promise<T> {
     }
 }
 
-function pushRequest(kind: SynthKind, path?: string): SynthPushRequest {
+function pushRequest(kind: SynthKind, maxVoices: number, path?: string): SynthPushRequest {
     if (kind === SynthKind.Dummy) {
-        return { type: SynthKind.Dummy };
+        return { type: SynthKind.Dummy, data: { max_voices: maxVoices } };
     }
-    return { type: kind, data: { path: path ?? '' } };
+    return { type: kind, data: { path: path ?? '', max_voices: maxVoices } };
 }
 
-export async function addSynth(kind: SynthKind, path?: string) {
-    const response = await request(() => api.synthPush(pushRequest(kind, path)));
+export async function addSynth(kind: SynthKind, maxVoices: number, path?: string) {
+    const response = await request(() => api.synthPush(pushRequest(kind, maxVoices, path)));
     if (response.status !== 200) {
         responseError(response.status, response.data);
     }
-    await fetchSynths();
+    await fetchSynths(true);
     return response.data;
 }
 
-export async function replaceSynth(kind: SynthKind, id: number, path?: string) {
-    const response = await request(() => api.synthReplace(id, pushRequest(kind, path)));
+export async function replaceSynth(kind: SynthKind, id: number, maxVoices: number, path?: string) {
+    const response = await request(() => api.synthReplace(id, pushRequest(kind, maxVoices, path)));
     if (response.status !== 204) {
         responseError(response.status, response.data);
     }
-    await fetchSynths();
+    await fetchSynths(true);
 }
 
 export async function removeSynth(id: number) {
@@ -218,4 +259,18 @@ export async function setFluidProgram(id: number, program: SoundFontProgram) {
         responseError(response.status, response.data);
     }
     updateFluidSynthProgram(id, program);
+}
+
+export async function setGlobalGain(gain: number) {
+    const response = await request(() => api.setGlobalGain(gain));
+    if (response.status !== 204) {
+        responseError(response.status, response.data);
+    }
+}
+
+export async function setSynthGain(id: number, gain: number) {
+    const response = await request(() => api.synthSetGain(id, gain));
+    if (response.status !== 204) {
+        responseError(response.status, response.data);
+    }
 }

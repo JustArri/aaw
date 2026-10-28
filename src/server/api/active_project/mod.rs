@@ -58,12 +58,14 @@ async fn new_active_project(
             assets_dir: &app_state.assets.read().await.dir,
             min_instruments: app_state.min_instruments,
             min_synths: app_state.min_synths,
-            stream_config,
+            stream_config: &stream_config,
         },
     )
     .await?;
 
     app_state.engine_handle.replace_project(ctr_project, rt_project).await?;
+    app_state.save_last_project(None).await;
+
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -111,12 +113,14 @@ async fn import_active_project(
             assets_dir: &app_state.assets.read().await.dir,
             min_instruments: app_state.min_instruments,
             min_synths: app_state.min_synths,
-            stream_config,
+            stream_config: &stream_config,
         },
     )
     .await?;
 
     app_state.engine_handle.replace_project(ctr_project, rt_project).await?;
+    app_state.save_last_project(None).await;
+
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -149,6 +153,8 @@ async fn export_active_project(State(app_state): State<AppState>) -> Json<Stored
 )]
 async fn clone_active_project(State(app_state): State<AppState>) -> StatusCode {
     app_state.engine_handle.change_project_storage(None).await;
+    app_state.save_last_project(None).await;
+
     StatusCode::NO_CONTENT
 }
 
@@ -280,7 +286,8 @@ async fn activate_user_preset(
         return Err((StatusCode::NOT_FOUND, format!("user preset #{} not found", path.preset_id)));
     };
     let preset_instruments = preset.instruments.clone();
-    let instrument_ids: Vec<_> = project.instrument_graph.instruments.ids().to_vec();
+    let instrument_ids: Vec<_> =
+        project.instrument_graph.instruments.iter_valid_ids().copied().collect();
     drop(project);
 
     for instrument_id in instrument_ids {

@@ -3,32 +3,46 @@
     import { icons } from '$lib/icons';
     import { notify } from '$lib/push-notifications.svelte';
     import { activeProject } from '$lib/state/active-project.svelte';
+    import {
+        audioRecording,
+        setAudioRecordingPaused,
+        startAudioRecording,
+        stopAudioRecording
+    } from '$lib/state/audio.svelte';
+    import { panicEngine } from '$lib/state/engine.svelte';
+    import { gatewayOnline } from '$lib/state/gateway.svelte';
     import { saveActiveProject } from '$lib/state/projects.svelte';
+    import { AudioRecordingState } from '$lib/generated/models';
 
     let { activeLabel }: { activeLabel: string } = $props();
 
     const projectName = $derived(activeProject()?.name.trim() || 'Untitled project');
-    const projectRevision = $derived(activeProject()?.revision ?? '?');
+    const recording = $derived(audioRecording());
     let saving = $state(false);
+    let changingRecording = $state(false);
+    let panicking = $state(false);
     const saveState = $derived.by(() => {
         const project = activeProject();
 
         if (!project) {
-            return null;
+            return 'unavailable';
         }
         if (!project.storage) {
-            return { label: 'Never saved', title: 'This project has never been saved' };
+            return 'new';
         }
-
-        const changes = Math.abs(project.revision - project.storage.revision);
-        if (changes === 0) {
-            return { label: 'Saved', title: `Saved at revision ${project.storage.revision}` };
-        }
-        return {
-            label: `${changes} ${changes === 1 ? 'change' : 'changes'}`,
-            title: `${changes} unsaved ${changes === 1 ? 'change' : 'changes'}`
-        };
+        return project.revision === project.storage.revision ? 'saved' : 'unsaved';
     });
+    const saveTitle = $derived(
+        saving
+            ? 'Saving project'
+            : saveState === 'new'
+              ? 'Save new project'
+              : saveState === 'unsaved'
+                ? 'Save project changes'
+                : saveState === 'saved'
+                  ? 'Project is saved'
+                  : 'Save project'
+    );
 
     async function onProjectSave() {
         if (saving) {
@@ -36,18 +50,65 @@
         }
 
         saving = true;
-        const notification = notify.info('Saving project…', {
-            duration: null,
-            loading: true,
-            title: 'Save project'
-        });
         try {
             await saveActiveProject();
-            notification.success('Project saved.');
         } catch (error) {
-            notification.error(error instanceof Error ? error.message : 'Could not save project.');
+            notify.error(error instanceof Error ? error.message : 'Could not save project.', {
+                title: 'Save project'
+            });
         } finally {
             saving = false;
+        }
+    }
+
+    async function changeRecording(title: string, action: () => Promise<void>) {
+        if (changingRecording) {
+            return;
+        }
+
+        changingRecording = true;
+
+        try {
+            await action();
+        } catch (error) {
+            notify.error(
+                error instanceof Error ? error.message : 'Could not change recording state.',
+                { title }
+            );
+        } finally {
+            changingRecording = false;
+        }
+    }
+
+    function onRecordingStart() {
+        return changeRecording('Start recording', startAudioRecording);
+    }
+
+    function onRecordingPauseChange() {
+        const paused = recording?.state === AudioRecordingState.Running;
+        return changeRecording(paused ? 'Pause recording' : 'Resume recording', () =>
+            setAudioRecordingPaused(paused)
+        );
+    }
+
+    function onRecordingStop() {
+        return changeRecording('Stop recording', stopAudioRecording);
+    }
+
+    async function onPanic() {
+        if (panicking) {
+            return;
+        }
+
+        panicking = true;
+        try {
+            await panicEngine();
+        } catch (error) {
+            notify.error(error instanceof Error ? error.message : 'Could not silence the engine.', {
+                title: 'Panic'
+            });
+        } finally {
+            panicking = false;
         }
     }
 </script>
@@ -70,30 +131,90 @@
             <Icon icon={icons.chevron} width="0.9375rem" />
         </span>
     </a>
-    <div
-        class="[&>button]:border-border-strong [&>button]:bg-surface-card [&>button]:text-foreground-strong flex items-center gap-1.5 [&>button]:grid [&>button]:size-8.5 [&>button]:cursor-pointer [&>button]:place-items-center [&>button]:rounded-lg [&>button]:border">
-        <span
-            class="border-border text-foreground-subtle hidden rounded-md border px-1.75 py-1 font-mono text-xs min-[37.5rem]:inline min-[56.25rem]:text-xs">
-            rev {projectRevision}
-        </span>
-        {#if saveState}
-            <span
-                class="text-foreground-muted mr-0.5 flex items-center gap-1.75 text-xs min-[56.25rem]:mr-1"
-                title={saveState.title}>
-                <span>{saveState.label}</span>
-            </span>
+    <div class="flex items-center gap-1.5">
+        {#if recording?.state === AudioRecordingState.Running || recording?.state === AudioRecordingState.Paused}
+            <div
+                class="border-danger/35 bg-danger/8 flex items-center rounded-lg border"
+                title={recording.output_file ?? 'Audio recording'}>
+                <span
+                    class={`bg-danger ml-2 size-2 rounded-full ${recording.state === AudioRecordingState.Running ? 'animate-pulse' : 'opacity-45'}`}
+                    aria-hidden="true">
+                </span>
+                <button
+                    class="text-danger hover:bg-danger/10 grid size-8.5 cursor-pointer place-items-center rounded-lg border-0 bg-transparent disabled:cursor-wait disabled:opacity-50"
+                    type="button"
+                    aria-label={recording.state === AudioRecordingState.Running
+                        ? 'Pause recording'
+                        : 'Resume recording'}
+                    title={recording.state === AudioRecordingState.Running
+                        ? 'Pause recording'
+                        : 'Resume recording'}
+                    disabled={changingRecording || !gatewayOnline()}
+                    onclick={onRecordingPauseChange}>
+                    <Icon
+                        icon={changingRecording
+                            ? 'lucide:loader-circle'
+                            : recording.state === AudioRecordingState.Running
+                              ? 'lucide:pause'
+                              : 'lucide:play'}
+                        width="1rem"
+                        class={changingRecording ? 'animate-spin' : ''} />
+                </button>
+                <button
+                    class="text-danger hover:bg-danger/10 grid size-8.5 cursor-pointer place-items-center rounded-lg border-0 bg-transparent disabled:cursor-wait disabled:opacity-50"
+                    type="button"
+                    aria-label="Stop recording"
+                    title="Stop recording"
+                    disabled={changingRecording || !gatewayOnline()}
+                    onclick={onRecordingStop}>
+                    <Icon icon="lucide:square" width="0.9375rem" />
+                </button>
+            </div>
+        {:else}
+            <button
+                class="border-danger/40 bg-surface-card text-danger hover:bg-danger/10 grid size-8.5 cursor-pointer place-items-center rounded-lg border disabled:cursor-not-allowed disabled:opacity-40"
+                type="button"
+                aria-label="Start recording"
+                title="Start recording"
+                disabled={changingRecording || !gatewayOnline() || recording === null}
+                onclick={onRecordingStart}>
+                {#if changingRecording}
+                    <Icon icon="lucide:loader-circle" width="1rem" class="animate-spin" />
+                {:else}
+                    <span class="bg-danger size-3 rounded-full" aria-hidden="true"></span>
+                {/if}
+            </button>
         {/if}
         <button
+            class="border-danger/40 bg-danger/8 text-danger hover:bg-danger/15 grid size-8.5 cursor-pointer place-items-center rounded-lg border transition-colors disabled:cursor-not-allowed disabled:opacity-40"
             type="button"
-            aria-label={saving ? 'Saving project' : 'Save project'}
-            title={saving ? 'Saving project' : 'Save project'}
+            aria-label="Panic: silence all synths"
+            title="Panic: silence all synths"
+            disabled={panicking || !gatewayOnline()}
+            onclick={onPanic}>
+            <Icon
+                icon={panicking ? 'lucide:loader-circle' : 'lucide:octagon-alert'}
+                width="1.0625rem"
+                class={panicking ? 'animate-spin' : ''} />
+        </button>
+        <span class="bg-border mx-0.5 h-6 w-px shrink-0" aria-hidden="true"></span>
+        <button
+            class={`grid size-8.5 cursor-pointer place-items-center rounded-lg border transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${saveState === 'new' || saveState === 'unsaved' ? 'border-accent/40 bg-accent/10 text-accent hover:bg-accent/15' : 'border-border bg-surface-card text-foreground-muted hover:bg-surface-hover'}`}
+            type="button"
+            aria-label={saveTitle}
+            title={saveTitle}
             disabled={saving || !activeProject()}
             onclick={onProjectSave}>
             <Icon
-                icon={saving ? 'lucide:loader-circle' : icons.save}
+                icon={saving
+                    ? 'lucide:loader-circle'
+                    : saveState === 'new'
+                      ? 'lucide:save-all'
+                      : icons.save}
                 width="1.0625rem"
                 class={saving ? 'animate-spin' : ''} />
         </button>
+        <span class="bg-border mx-0.5 h-6 w-px shrink-0" aria-hidden="true"></span>
         <a
             class="border-border-strong bg-surface-card text-foreground-strong grid size-8.5 place-items-center rounded-lg border"
             href="/settings"

@@ -155,20 +155,16 @@
             return;
         }
         busy = true;
-        const notification = notify.info('Saving presets…', {
-            duration: null,
-            loading: true,
-            title: 'User presets'
-        });
         try {
             draft.entries = draft.entries.map((preset) => ({
                 ...preset,
                 name: preset.name.trim()
             }));
             await saveUserPresets(cloneUserPresets(draft));
-            notification.success('Presets saved.');
         } catch (error) {
-            notification.error(error instanceof Error ? error.message : String(error));
+            notify.error(error instanceof Error ? error.message : String(error), {
+                title: 'User presets'
+            });
         } finally {
             busy = false;
         }
@@ -179,16 +175,12 @@
             return;
         }
         activating = index;
-        const notification = notify.info('Activating preset…', {
-            duration: null,
-            loading: true,
-            title: draft.entries[index].name
-        });
         try {
             await activateUserPreset(index);
-            notification.success('Preset activated.');
         } catch (error) {
-            notification.error(error instanceof Error ? error.message : String(error));
+            notify.error(error instanceof Error ? error.message : String(error), {
+                title: draft.entries[index].name
+            });
         } finally {
             activating = null;
         }
@@ -196,20 +188,23 @@
 </script>
 
 <section class="border-border bg-surface-card min-w-0 overflow-hidden rounded-xl border">
-    <header
-        class="border-border flex min-h-16.75 items-center justify-between gap-3 border-b px-3.75 py-3 min-[56.25rem]:min-h-19 min-[56.25rem]:px-5">
-        <div>
-            <h2 class="text-foreground m-0 text-base font-semibold min-[56.25rem]:text-lg">
-                User presets
-            </h2>
-            <p class="text-foreground-muted mt-1 mb-0 text-sm">
-                {draft.entries.length}
-                {draft.entries.length === 1 ? 'preset' : 'presets'}
-            </p>
+    <header class="border-border flex min-h-14.5 items-center justify-between border-b px-3.75">
+        <div class="flex items-baseline gap-2">
+            <h2 class="m-0 text-sm font-semibold">User presets</h2>
+            <span class="text-foreground-muted text-xs">{draft.entries.length} total</span>
         </div>
-        <div class="flex items-center gap-1">
+        <div class="flex items-center gap-1.5">
             <button
-                class="text-foreground-muted enabled:hover:bg-surface-hover grid size-9 cursor-pointer place-items-center rounded-lg border-0 bg-transparent disabled:cursor-default disabled:opacity-40"
+                class="border-border-strong bg-surface-button text-foreground hover:bg-surface-hover grid size-8.5 cursor-pointer place-items-center rounded-lg border transition-colors disabled:cursor-wait disabled:opacity-60"
+                type="button"
+                aria-label="Add user preset"
+                title="Add user preset"
+                disabled={busy}
+                onclick={addPreset}>
+                <Icon icon="lucide:plus" width="1.125rem" />
+            </button>
+            <button
+                class="text-foreground-muted enabled:hover:bg-surface-hover grid size-8.5 cursor-pointer place-items-center rounded-lg border-0 bg-transparent disabled:cursor-default disabled:opacity-40"
                 type="button"
                 aria-label="Discard preset changes"
                 title="Discard changes"
@@ -218,7 +213,7 @@
                 <Icon icon="lucide:undo-2" width="1rem" />
             </button>
             <button
-                class="text-accent enabled:hover:bg-accent/10 disabled:text-foreground-icon grid size-9 cursor-pointer place-items-center rounded-lg border-0 bg-transparent disabled:cursor-default disabled:opacity-50"
+                class="text-accent enabled:hover:bg-accent/10 disabled:text-foreground-icon grid size-8.5 cursor-pointer place-items-center rounded-lg border-0 bg-transparent disabled:cursor-default disabled:opacity-50"
                 type="button"
                 aria-label="Save user presets"
                 title="Save user presets"
@@ -228,15 +223,6 @@
                     icon={busy ? 'lucide:loader-circle' : 'lucide:check'}
                     width="1.125rem"
                     class={busy ? 'animate-spin' : ''} />
-            </button>
-            <button
-                class="border-border-strong bg-surface-button text-foreground hover:bg-surface-hover grid size-9 cursor-pointer place-items-center rounded-lg border transition-colors disabled:cursor-wait disabled:opacity-60"
-                type="button"
-                aria-label="Add user preset"
-                title="Add user preset"
-                disabled={busy}
-                onclick={addPreset}>
-                <Icon icon="lucide:plus" width="1.125rem" />
             </button>
         </div>
     </header>

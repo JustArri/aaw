@@ -155,12 +155,14 @@ async fn load_active_project(
             assets_dir: &app_state.assets.read().await.dir,
             min_instruments: app_state.min_instruments,
             min_synths: app_state.min_synths,
-            stream_config,
+            stream_config: &stream_config,
         },
     )
     .await?;
 
     app_state.engine_handle.replace_project(ctr_project, rt_project).await?;
+    app_state.save_last_project(Some(id)).await;
+
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -203,6 +205,8 @@ async fn save_active_project(
     };
 
     app_state.engine_handle.change_project_storage(Some(CtrProjectStorage { id, revision })).await;
+    app_state.save_last_project(Some(id)).await;
+
     Ok(Json(id))
 }
 
@@ -239,6 +243,7 @@ async fn delete_project(
 
     if is_active_id {
         app_state.engine_handle.change_project_storage(None).await;
+        app_state.save_last_project(None).await;
     }
 
     Ok(StatusCode::NO_CONTENT)

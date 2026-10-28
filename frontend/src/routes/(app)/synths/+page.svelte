@@ -2,11 +2,22 @@
     import { onMount } from 'svelte';
     import Icon from '@iconify/svelte';
     import AssetPathInput from '$lib/components/AssetPathInput.svelte';
+    import AutoSaveTextInput from '$lib/components/AutoSaveTextInput.svelte';
+    import DotToggle from '$lib/components/DotToggle.svelte';
     import EffectsEditor from '$lib/components/EffectsEditor.svelte';
+    import NumericControl from '$lib/components/NumericControl.svelte';
+    import SelectDropdown from '$lib/components/SelectDropdown.svelte';
+    import { decibelsToLinearGain, linearGainToDecibels } from '$lib/gain';
     import { notify } from '$lib/push-notifications.svelte';
     import { activeProject } from '$lib/state/active-project.svelte';
     import { assetsForSynth, fetchAssets, refreshAssets } from '$lib/state/assets.svelte';
     import { setGlobalEffects, setSynthEffects } from '$lib/state/effects.svelte';
+    import {
+        addInstrument,
+        setInstrumentName,
+        setInstrumentSynth
+    } from '$lib/state/instruments.svelte';
+    import { fetchPreferences, preferences } from '$lib/state/system.svelte';
     import {
         addSynth,
         fetchSynths,
@@ -14,6 +25,7 @@
         removeSynth,
         replaceSynth,
         setFluidProgram,
+        setSynthGain,
         setSynthName,
         synths,
         SynthKind,
@@ -26,17 +38,23 @@
         [SynthKind.Sfizz]: 'var(--color-synth-sfizz)',
         [SynthKind.Dummy]: 'var(--color-synth-dummy)'
     };
+    const MATCHING_INSTRUMENT_STORAGE_KEY = 'aaw-create-matching-instrument';
     let filter = $state<'All' | SynthKindType>('All');
     let selectedKey = $state('');
     let inspectorOpen = $state(false);
     let addOpen = $state(false);
     let addKind = $state<SynthKindType>(SynthKind.Fluid);
     let addPath = $state('');
+    let addMaxVoices = $state(256);
+    let addMatchingInstrument = $state(true);
     let editName = $state('');
     let replacementKind = $state<SynthKindType>(SynthKind.Fluid);
     let replacementPath = $state('');
+    let replacementMaxVoices = $state(256);
     let selectedProgram = $state('');
     let busy = $state(false);
+    let busyAction = $state(null as string | null);
+    let nameSaving = $state(false);
     let programBusy = $state(false);
     let removeConfirming = $state(false);
     let removing = $state(false);
@@ -51,24 +69,50 @@
         filter === 'All' ? allSynths : allSynths.filter((entry) => entry.kind === filter)
     );
     let selected = $derived(allSynths.find((entry) => key(entry) === selectedKey) ?? allSynths[0]);
+    let nameChanged = $derived(Boolean(selected && editName.trim() !== selected.synth.name));
     let references = $derived(
         selected
             ? Object.entries(instrumentSlots()).filter(([, slot]) => slot.synth_id === selected.id)
             : []
     );
+    let programSuggestions = $derived(
+        selected?.kind === SynthKind.Fluid
+            ? selected.synth.info.banks.flatMap((bank) =>
+                  bank.presets.map((preset) => ({
+                      value: `${bank.number}:${preset.number}`,
+                      label: preset.name,
+                      selectionLabel: preset.name,
+                      description: `Bank ${bank.number} · Program ${preset.number}`
+                  }))
+              )
+            : []
+    );
 
     onMount(async () => {
+        addMatchingInstrument = localStorage.getItem(MATCHING_INSTRUMENT_STORAGE_KEY) !== 'false';
         try {
-            await Promise.all([fetchSynths(), fetchAssets()]);
-            const first = synths()[0];
-            if (first) {
-                select(first, false);
+            await Promise.all([fetchSynths(), fetchAssets(), fetchPreferences()]);
+            addMaxVoices = suggestedMaxVoices(addKind);
+            const requestedSynth = new URL(window.location.href).searchParams.get('synth');
+            const initial =
+                (requestedSynth === null
+                    ? undefined
+                    : synths().find((entry) => entry.id === Number(requestedSynth))) ?? synths()[0];
+            if (initial) {
+                select(initial, requestedSynth !== null);
             }
         } catch (cause) {
             showError(cause);
         } finally {
             loading = false;
         }
+    });
+
+    $effect(() => {
+        if (programBusy || selected?.kind !== SynthKind.Fluid) {
+            return;
+        }
+        selectedProgram = `${selected.synth.program.bank}:${selected.synth.program.preset_id}`;
     });
 
     function key(entry: SynthEntry) {
@@ -79,11 +123,27 @@
         return entry.synth.name.trim() || `Unnamed ${entry.kind.toLowerCase()} synth #${entry.id}`;
     }
 
+    function suggestedMaxVoices(kind: SynthKindType) {
+        const value = preferences();
+        if (kind === SynthKind.Dummy) {
+            return value?.dummy_max_voices ?? 32;
+        }
+        if (kind === SynthKind.Fluid) {
+            return value?.fluid_max_voices ?? 256;
+        }
+        return value?.sfizz_max_voices ?? 64;
+    }
+
+    function rememberMatchingInstrumentChoice(enabled: boolean) {
+        localStorage.setItem(MATCHING_INSTRUMENT_STORAGE_KEY, String(enabled));
+    }
+
     function select(entry: SynthEntry, open = true) {
         selectedKey = key(entry);
         editName = entry.synth.name;
         replacementKind = entry.kind;
         replacementPath = entry.kind === SynthKind.Dummy ? '' : entry.synth.file_path;
+        replacementMaxVoices = entry.synth.max_voices;
         selectedProgram =
             entry.kind === SynthKind.Fluid
                 ? `${entry.synth.program.bank}:${entry.synth.program.preset_id}`
@@ -97,6 +157,7 @@
         addOpen = !addOpen;
         if (addOpen && filter !== 'All') {
             addKind = filter;
+            addMaxVoices = suggestedMaxVoices(addKind);
         }
     }
 
@@ -104,26 +165,21 @@
         error = cause instanceof Error ? cause.message : String(cause);
     }
 
-    async function run(operation: () => Promise<unknown>, title: string, successMessage: string) {
+    async function run(operation: () => Promise<unknown>, title: string) {
         if (busy) {
             return;
         }
         busy = true;
+        busyAction = title;
         error = '';
-        const notification = notify.info('In progress…', {
-            duration: null,
-            loading: true,
-            title
-        });
         try {
-            const result = await operation();
-            notification.success(successMessage);
-            return result;
+            return await operation();
         } catch (cause) {
             showError(cause);
-            notification.error(error);
+            notify.error(error, { title });
         } finally {
             busy = false;
+            busyAction = null;
         }
     }
 
@@ -136,8 +192,17 @@
         );
         return (
             bank?.presets.find((item) => item.number === entry.synth.program.preset_id)?.name ??
-            `Preset ${entry.synth.program.preset_id}`
+            'Using fallback'
         );
+    }
+
+    function hasSelectedProgram(entry: SynthEntry) {
+        if (entry.kind !== SynthKind.Fluid) {
+            return false;
+        }
+        return entry.synth.info.banks
+            .find((bank) => bank.number === entry.synth.program.bank)
+            ?.presets.some((preset) => preset.number === entry.synth.program.preset_id);
     }
 
     function details(entry: SynthEntry) {
@@ -146,24 +211,47 @@
                 (total, bank) => total + bank.presets.length,
                 0
             );
-            return `${entry.synth.info.banks.length} banks · ${presets} presets`;
+            return `${entry.synth.info.banks.length} banks · ${presets} presets · ${entry.synth.max_voices} voices`;
         }
         if (entry.kind === SynthKind.Sfizz) {
-            return 'SFZ instrument';
+            return `SFZ instrument · ${entry.synth.max_voices} voices`;
         }
-        return 'Diagnostic synth';
+        return `Diagnostic synth · ${entry.synth.max_voices} voices`;
     }
 
-    function referenceCount(entry: SynthEntry) {
-        return Object.values(instrumentSlots()).filter((slot) => slot.synth_id === entry.id).length;
+    function instrumentReferences(entry: SynthEntry) {
+        return Object.entries(instrumentSlots()).filter(([, slot]) => slot.synth_id === entry.id);
+    }
+
+    function instrumentName(id: string, name: string) {
+        return name.trim() || `Unnamed instrument #${Number(id) + 1}`;
     }
 
     async function submitAdd() {
-        const id = await run(
-            () => addSynth(addKind, addKind === SynthKind.Dummy ? undefined : addPath),
-            'Create synth',
-            'Synth created.'
-        );
+        let createdId: number | undefined;
+        await run(async () => {
+            createdId = await addSynth(
+                addKind,
+                addMaxVoices,
+                addKind === SynthKind.Dummy ? undefined : addPath
+            );
+
+            if (addMatchingInstrument) {
+                const createdSynth = synths().find((entry) => entry.id === createdId);
+                if (!createdSynth) {
+                    throw new Error('The created synth could not be found');
+                }
+
+                const instrumentId = await addInstrument();
+                await setInstrumentSynth(instrumentId, createdId);
+                await setInstrumentName(instrumentId, createdSynth.synth.name);
+                await fetchSynths(true);
+            }
+
+            return createdId;
+        }, 'Create synth');
+
+        const id = createdId;
         if (typeof id === 'number') {
             const added = synths().find((entry) => entry.kind === addKind && entry.id === id);
             if (added) {
@@ -175,12 +263,17 @@
     }
 
     async function submitName() {
-        if (selected && editName.trim()) {
-            await run(
-                () => setSynthName(selected.id, editName.trim()),
-                'Rename synth',
-                'Synth renamed.'
-            );
+        if (!selected || !editName.trim() || !nameChanged || nameSaving) {
+            return;
+        }
+
+        nameSaving = true;
+        const name = editName.trim();
+        try {
+            await run(() => setSynthName(selected.id, name), 'Rename synth');
+            editName = name;
+        } finally {
+            nameSaving = false;
         }
     }
 
@@ -190,18 +283,15 @@
         }
         const id = selected.id;
         let succeeded = false;
-        await run(
-            async () => {
-                await replaceSynth(
-                    replacementKind,
-                    id,
-                    replacementKind === SynthKind.Dummy ? undefined : replacementPath.trim()
-                );
-                succeeded = true;
-            },
-            'Replace synth',
-            'Synth replaced.'
-        );
+        await run(async () => {
+            await replaceSynth(
+                replacementKind,
+                id,
+                replacementMaxVoices,
+                replacementKind === SynthKind.Dummy ? undefined : replacementPath.trim()
+            );
+            succeeded = true;
+        }, 'Replace synth');
         if (succeeded) {
             const replaced = synths().find((entry) => entry.id === id);
             if (replaced) {
@@ -211,7 +301,7 @@
     }
 
     async function submitProgram() {
-        if (selected?.kind !== SynthKind.Fluid || programBusy) {
+        if (selected?.kind !== SynthKind.Fluid || busy || programBusy) {
             return;
         }
 
@@ -273,7 +363,7 @@
         }
         const removedKey = selectedKey;
         removing = true;
-        await run(() => removeSynth(selected.id), 'Remove synth', 'Synth removed.');
+        await run(() => removeSynth(selected.id), 'Remove synth');
         removing = false;
         if (!synths().some((entry) => key(entry) === removedKey)) {
             selectedKey = '';
@@ -310,20 +400,25 @@
 
 {#if addOpen}
     <form
-        class="border-accent/30 bg-surface-card mb-3 grid gap-3 rounded-xl border p-3 min-[37.5rem]:grid-cols-[9rem_minmax(0,1fr)_auto] min-[37.5rem]:items-end"
+        class="border-accent/30 bg-surface-card mb-3 grid gap-3 rounded-xl border p-3 min-[37.5rem]:grid-cols-[9rem_minmax(0,1fr)_7rem_auto] min-[37.5rem]:items-end"
         onsubmit={(event) => {
             event.preventDefault();
             void submitAdd();
         }}>
         <label class="grid gap-1.5 text-sm font-semibold">
             Synth type
-            <select
-                class="border-border-strong bg-surface-inset h-10 rounded-lg border px-2.5"
-                bind:value={addKind}>
-                <option value={SynthKind.Fluid}>FluidSynth</option>
-                <option value={SynthKind.Sfizz}>Sfizz</option>
-                <option value={SynthKind.Dummy}>Dummy</option>
-            </select>
+            <SelectDropdown
+                bind:value={addKind}
+                options={[
+                    { value: SynthKind.Fluid, label: 'FluidSynth' },
+                    { value: SynthKind.Sfizz, label: 'Sfizz' },
+                    { value: SynthKind.Dummy, label: 'Dummy' }
+                ]}
+                onchange={() => {
+                    addPath = '';
+                    addMaxVoices = suggestedMaxVoices(addKind);
+                }}
+                ariaLabel="Synth type" />
         </label>
         <label class="grid gap-1.5 text-sm font-semibold">
             Asset path
@@ -340,11 +435,32 @@
                 onreload={refreshAssets}
                 bind:value={addPath} />
         </label>
+        <label class="grid gap-1.5 text-sm font-semibold">
+            Max voices
+            <input
+                class="border-border-strong bg-surface-card text-foreground h-10 w-full rounded-lg border px-2.5 text-right font-mono text-sm tabular-nums"
+                type="number"
+                min="1"
+                max={addKind === SynthKind.Sfizz ? 256 : 65535}
+                step="1"
+                required
+                bind:value={addMaxVoices} />
+        </label>
         <button
-            class="bg-accent text-accent-foreground h-10 rounded-lg border-0 px-4 text-sm font-bold"
+            class="bg-accent text-accent-foreground inline-flex h-10 items-center justify-center gap-2 rounded-lg border-0 px-4 text-sm font-bold"
             disabled={busy}>
-            Create
+            {#if busyAction === 'Create synth'}<Icon
+                    icon="lucide:loader-circle"
+                    width="0.875rem"
+                    class="animate-spin" />{/if}
+            {busyAction === 'Create synth' ? 'Creating…' : 'Create'}
         </button>
+        <DotToggle
+            class="min-[37.5rem]:col-span-4 min-[37.5rem]:justify-self-start"
+            label="Create matching instrument and assign this synth"
+            disabled={busy}
+            bind:checked={addMatchingInstrument}
+            onchange={rememberMatchingInstrumentChoice} />
     </form>
 {/if}
 
@@ -357,7 +473,7 @@
     <div class="mb-3">
         <EffectsEditor
             title="Global effects"
-            effects={project.synth_graph.effects}
+            effects={project.synth_graph.global_effects}
             onsave={setGlobalEffects} />
     </div>
 {/if}
@@ -385,16 +501,14 @@
     <section class="border-border bg-surface-card rounded-xl border">
         <header class="border-border flex min-h-14.5 items-center justify-between border-b px-3.75">
             <div class="flex items-baseline gap-2">
-                <h2 class="m-0 text-sm font-semibold">
-                    {filter === 'All' ? 'Available synths' : `${filter} synths`}
-                </h2>
+                <h2 class="m-0 text-sm font-semibold">Synths</h2>
                 <span class="text-foreground-muted text-xs">
                     {visibleSynths.length} total
                 </span>
             </div>
             <div class="flex items-center gap-1.5">
                 <button
-                    class="bg-accent text-accent-foreground grid size-8.5 cursor-pointer place-items-center rounded-lg border-0"
+                    class="border-border-strong bg-surface-button text-foreground hover:bg-surface-hover grid size-8.5 cursor-pointer place-items-center rounded-lg border transition-colors"
                     type="button"
                     aria-label={addOpen ? 'Cancel adding synth' : 'Add synth'}
                     title={addOpen ? 'Cancel' : 'Add synth'}
@@ -425,48 +539,70 @@
         <div class="grid gap-1.75 p-1.75">
             {#if loading}<p class="text-foreground-muted m-3 text-sm">Loading synths…</p>
             {:else}{#each visibleSynths as entry (key(entry))}
-                    <button
-                        class={`bg-surface-item grid w-full cursor-pointer grid-cols-[3.375rem_minmax(0,1fr)_1.125rem] items-center gap-2.5 rounded-[0.5625rem] border px-2.75 py-3 text-left min-[37.5rem]:grid-cols-[3.625rem_minmax(0,1fr)_minmax(7.5rem,.7fr)_3.25rem_1.125rem] ${key(entry) === selectedKey ? 'border-accent/40 shadow-[inset_0.1875rem_0_0_var(--accent)]' : 'border-transparent'}`}
-                        type="button"
-                        onclick={() => select(entry)}>
-                        <span
-                            class="grid h-10.75 place-items-center rounded-lg border text-xs font-bold uppercase"
-                            style:border-color={`color-mix(in srgb, ${colors[entry.kind]} 35%, transparent)`}
-                            style:background={`color-mix(in srgb, ${colors[entry.kind]} 10%, transparent)`}
-                            style:color={colors[entry.kind]}>
-                            {entry.kind}
-                        </span>
-                        <div class="min-w-0">
-                            <strong
-                                class={`block overflow-hidden text-sm text-ellipsis whitespace-nowrap ${entry.synth.name.trim() ? '' : 'text-foreground-muted italic'}`}>
-                                {displayName(entry)}
-                            </strong>
-                            <small
-                                class="text-foreground-muted mt-1 block overflow-hidden text-xs text-ellipsis whitespace-nowrap">
-                                {entry.kind === SynthKind.Dummy
-                                    ? details(entry)
-                                    : entry.synth.file_path}
-                            </small>
-                        </div>
-                        <div class="hidden min-w-0 min-[37.5rem]:block">
-                            <small class="text-foreground-meta mb-1 block text-xs uppercase">
-                                {entry.kind === SynthKind.Fluid ? 'Selected program' : 'Details'}
-                            </small>
-                            <strong
-                                class="text-foreground-strong block overflow-hidden text-xs text-ellipsis whitespace-nowrap">
-                                {entry.kind === SynthKind.Fluid
-                                    ? presetName(entry)
-                                    : details(entry)}
-                            </strong>
-                        </div>
-                        <span class="hidden text-center min-[37.5rem]:block">
-                            <strong class="block font-mono text-sm">
-                                {referenceCount(entry)}
-                            </strong>
-                            <small class="text-foreground-muted text-xs">instruments</small>
-                        </span>
-                        <Icon icon="lucide:chevron-right" width="1.0625rem" />
-                    </button>
+                    {@const entryReferences = instrumentReferences(entry)}
+                    {@const singleReference =
+                        entryReferences.length === 1 ? entryReferences[0] : undefined}
+                    <article
+                        class={`bg-surface-item grid w-full grid-cols-1 overflow-hidden rounded-[0.5625rem] border min-[37.5rem]:grid-cols-[minmax(0,1fr)_minmax(7.5rem,11rem)] ${key(entry) === selectedKey ? 'border-accent/40 shadow-[inset_0.1875rem_0_0_var(--accent)]' : 'border-transparent'}`}>
+                        <button
+                            class="grid min-w-0 cursor-pointer grid-cols-[3.375rem_minmax(0,1fr)_1.125rem] items-center gap-2.5 border-0 bg-transparent px-2.75 py-3 text-left min-[37.5rem]:grid-cols-[3.625rem_minmax(0,1fr)_minmax(7.5rem,.7fr)_1.125rem]"
+                            type="button"
+                            onclick={() => select(entry)}>
+                            <span
+                                class="grid h-10.75 place-items-center rounded-lg border text-xs font-bold uppercase"
+                                style:border-color={`color-mix(in srgb, ${colors[entry.kind]} 35%, transparent)`}
+                                style:background={`color-mix(in srgb, ${colors[entry.kind]} 10%, transparent)`}
+                                style:color={colors[entry.kind]}>
+                                {entry.kind}
+                            </span>
+                            <div class="min-w-0">
+                                <strong
+                                    class={`block overflow-hidden text-sm text-ellipsis whitespace-nowrap ${entry.synth.name.trim() ? '' : 'text-foreground-muted italic'}`}>
+                                    {displayName(entry)}
+                                </strong>
+                                <small
+                                    class="text-foreground-muted mt-1 block overflow-hidden text-xs text-ellipsis whitespace-nowrap">
+                                    {entry.kind === SynthKind.Dummy
+                                        ? details(entry)
+                                        : entry.synth.file_path}
+                                </small>
+                            </div>
+                            <div class="hidden min-w-0 min-[37.5rem]:block">
+                                <small class="text-foreground-meta mb-1 block text-xs uppercase">
+                                    {entry.kind === SynthKind.Fluid
+                                        ? 'Selected program'
+                                        : 'Details'}
+                                </small>
+                                <strong
+                                    class="text-foreground-strong block overflow-hidden text-xs text-ellipsis whitespace-nowrap">
+                                    {entry.kind === SynthKind.Fluid
+                                        ? presetName(entry)
+                                        : details(entry)}
+                                </strong>
+                            </div>
+                            <Icon
+                                class="justify-self-end"
+                                icon="lucide:chevron-right"
+                                width="1.0625rem" />
+                        </button>
+                        {#if singleReference}
+                            <a
+                                class="border-border text-foreground-muted hover:bg-surface-hover hover:text-accent hidden min-w-0 items-center gap-2 border-l px-3 text-xs transition-colors min-[37.5rem]:flex"
+                                href={`/instruments?instrument=${singleReference[0]}`}
+                                title={`Open ${instrumentName(singleReference[0], singleReference[1].name)}`}>
+                                <span class="min-w-0 flex-1 truncate">
+                                    {instrumentName(singleReference[0], singleReference[1].name)}
+                                </span>
+                                <Icon class="shrink-0" icon="lucide:arrow-up-right" width="1rem" />
+                            </a>
+                        {:else}
+                            <span
+                                class="border-border hidden items-center justify-end gap-1.5 border-l px-3 whitespace-nowrap min-[37.5rem]:flex">
+                                <strong class="font-mono text-sm">{entryReferences.length}</strong>
+                                <small class="text-foreground-muted text-xs">instruments</small>
+                            </span>
+                        {/if}
+                    </article>
                 {:else}<p class="text-foreground-muted m-3 text-sm">
                         No matching synths.
                     </p>{/each}{/if}
@@ -507,18 +643,13 @@
                         class="text-foreground-strong text-xs font-semibold uppercase">
                         Name
                     </label>
-                    <div class="flex gap-2">
-                        <input
-                            id="synth-name"
-                            class="border-border-strong bg-surface-inset text-foreground h-9 min-w-0 flex-1 rounded-lg border px-2.5 text-sm"
-                            bind:value={editName}
-                            required />
-                        <button
-                            class="bg-accent text-accent-foreground rounded-lg border-0 px-3 text-sm font-bold"
-                            disabled={busy}>
-                            Save
-                        </button>
-                    </div>
+                    <AutoSaveTextInput
+                        id="synth-name"
+                        bind:value={editName}
+                        pending={nameChanged}
+                        saving={nameSaving}
+                        required
+                        oncommit={submitName} />
                 </form>
                 <form
                     class="border-border grid gap-3 border-b p-4"
@@ -531,16 +662,18 @@
                     </span>
                     <label class="grid gap-1.5 text-sm">
                         <span class="text-foreground-muted">Type</span>
-                        <select
-                            class="border-border-strong bg-surface-inset h-10 rounded-lg border px-2.5"
+                        <SelectDropdown
                             bind:value={replacementKind}
+                            options={[
+                                { value: SynthKind.Fluid, label: 'FluidSynth' },
+                                { value: SynthKind.Sfizz, label: 'Sfizz' },
+                                { value: SynthKind.Dummy, label: 'Dummy' }
+                            ]}
                             onchange={() => {
                                 replacementPath = '';
-                            }}>
-                            <option value={SynthKind.Fluid}>FluidSynth</option>
-                            <option value={SynthKind.Sfizz}>Sfizz</option>
-                            <option value={SynthKind.Dummy}>Dummy</option>
-                        </select>
+                                replacementMaxVoices = suggestedMaxVoices(replacementKind);
+                            }}
+                            ariaLabel="Replacement synth type" />
                     </label>
                     <label class="grid gap-1.5 text-sm" for="synth-asset">
                         <span class="text-foreground-muted">Asset</span>
@@ -558,36 +691,58 @@
                             bind:value={replacementPath}
                             required={replacementKind !== SynthKind.Dummy} />
                     </label>
+                    <label class="grid gap-1.5 text-sm">
+                        <span class="text-foreground-muted">Max voices</span>
+                        <input
+                            class="border-border-strong bg-surface-card text-foreground h-10 w-full rounded-lg border px-2.5 text-right font-mono text-sm tabular-nums"
+                            type="number"
+                            min="1"
+                            max={replacementKind === SynthKind.Sfizz ? 256 : 65535}
+                            step="1"
+                            required
+                            bind:value={replacementMaxVoices} />
+                    </label>
                     <button
-                        class="text-accent hover:bg-accent/10 cursor-pointer justify-self-end rounded-lg border-0 bg-transparent px-2.5 py-2 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60"
+                        class="text-accent hover:bg-accent/10 inline-flex cursor-pointer items-center gap-2 justify-self-end rounded-lg border-0 bg-transparent px-2.5 py-2 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60"
                         disabled={busy}>
-                        Replace
+                        {#if busyAction === 'Replace synth'}<Icon
+                                icon="lucide:loader-circle"
+                                width="0.875rem"
+                                class="animate-spin" />{/if}
+                        {busyAction === 'Replace synth' ? 'Replacing…' : 'Replace'}
                     </button>
                 </form>
-                {#if selected.kind === SynthKind.Fluid}<form
-                        class="border-border grid gap-2 border-b p-4"
-                        onsubmit={(event) => {
-                            event.preventDefault();
-                            void submitProgram();
-                        }}>
-                        <label
-                            for="synth-program"
-                            class="text-foreground-strong text-xs font-semibold uppercase">
-                            SoundFont program
-                        </label>
-                        <select
+                {#if selected.kind === SynthKind.Fluid}<section
+                        class="border-border grid gap-2 border-b p-4">
+                        <div class="flex min-h-4 items-center justify-between gap-2">
+                            <label
+                                for="synth-program"
+                                class="text-foreground-strong text-xs font-semibold uppercase">
+                                SoundFont program
+                            </label>
+                            {#if programBusy}<Icon
+                                    icon="lucide:loader-circle"
+                                    width="1rem"
+                                    class="text-accent animate-spin"
+                                    aria-label="Setting program" />{/if}
+                        </div>
+                        <SelectDropdown
                             id="synth-program"
-                            class="border-border-strong bg-surface-inset text-foreground h-10 rounded-lg border px-2.5 text-sm"
-                            disabled={programBusy}
-                            bind:value={selectedProgram}>
-                            {#each selected.synth.info.banks as bank}<optgroup
-                                    label={`Bank ${bank.number}`}>
-                                    {#each bank.presets as preset}<option
-                                            value={`${bank.number}:${preset.number}`}>
-                                            {preset.name} · {preset.number}
-                                        </option>{/each}
-                                </optgroup>{/each}
-                        </select>
+                            bind:value={selectedProgram}
+                            options={programSuggestions}
+                            placeholder="Select a program"
+                            disabled={busy || programBusy}
+                            searchable
+                            searchPlaceholder="Search programs"
+                            noMatchesText="No matching programs"
+                            onchange={() => void submitProgram()}
+                            ariaLabel="SoundFont program" />
+                        {#if !hasSelectedProgram(selected)}
+                            <small class="text-foreground-muted flex items-center gap-1.5 text-xs">
+                                <Icon icon="lucide:triangle-alert" width="0.875rem" />
+                                Using fallback because the requested program is unavailable
+                            </small>
+                        {/if}
                         <small class="text-foreground-muted flex items-center gap-1.5 text-xs">
                             <Icon icon="lucide:arrow-left" width="0.875rem" />
                             <span>Previous</span>
@@ -595,22 +750,26 @@
                             <span>Next</span>
                             <Icon icon="lucide:arrow-right" width="0.875rem" />
                         </small>
-                        <button
-                            class="bg-accent text-accent-foreground flex h-9 items-center justify-center gap-2 rounded-lg border-0 px-3 text-sm font-bold"
-                            disabled={busy || programBusy}>
-                            {#if programBusy}
-                                <Icon
-                                    icon="lucide:loader-circle"
-                                    width="1rem"
-                                    class="animate-spin" />
-                                Setting…
-                            {:else}
-                                Set program
-                            {/if}
-                        </button>
-                    </form>
+                    </section>
                 {/if}
                 {#key selected.id}
+                    <div class="border-border border-b p-4">
+                        <NumericControl
+                            compact
+                            label="Gain"
+                            value={linearGainToDecibels(selected.gain)}
+                            unit="dB"
+                            smallStep={0.5}
+                            largeStep={5}
+                            resetValue={0}
+                            min={-100}
+                            max={100}
+                            precision={1}
+                            onchange={async (value) => {
+                                await setSynthGain(selected.id, decibelsToLinearGain(value));
+                                return value;
+                            }} />
+                    </div>
                     <div class="border-border border-b p-4">
                         <EffectsEditor
                             title="Synth effects"
@@ -627,7 +786,7 @@
                     <div class="grid gap-1">
                         {#each references as [id, slot]}<a
                                 class="bg-surface-raised grid grid-cols-[minmax(0,1fr)_1rem] items-center rounded-md p-2 text-sm"
-                                href="/instruments">
+                                href={`/instruments?instrument=${id}`}>
                                 <span
                                     class={slot.name.trim() ? '' : 'text-foreground-muted italic'}>
                                     {slot.name.trim() || `Unnamed instrument #${Number(id) + 1}`}
@@ -662,7 +821,13 @@
                                 type="button"
                                 disabled={removing}
                                 onclick={() => void submitRemove()}>
-                                {removing ? 'Removing…' : 'Remove'}
+                                <span class="inline-flex items-center gap-2">
+                                    {#if removing}<Icon
+                                            icon="lucide:loader-circle"
+                                            width="0.875rem"
+                                            class="animate-spin" />{/if}
+                                    {removing ? 'Removing…' : 'Remove'}
+                                </span>
                             </button>
                         </div>
                     </section>

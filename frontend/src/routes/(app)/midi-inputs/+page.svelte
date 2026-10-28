@@ -1,6 +1,8 @@
 <script lang="ts">
     import Icon from '@iconify/svelte';
     import { onMount } from 'svelte';
+    import SelectDropdown from '$lib/components/SelectDropdown.svelte';
+    import TextSuggestionInput from '$lib/components/TextSuggestionInput.svelte';
     import { notify } from '$lib/push-notifications.svelte';
     import {
         connectMidiInput,
@@ -86,19 +88,13 @@
         }
         busySlotId = slotId;
         errorMessage = '';
-        const notification = notify.info('Connecting the selected input…', {
-            duration: null,
-            loading: true,
-            title: `Connect MIDI slot ${slotId + 1}`
-        });
 
         try {
             await connectMidiInput(slotId, portId);
             delete selectedPorts[slotId];
-            notification.success('MIDI input connected.');
         } catch (error) {
             errorMessage = messageFor(error);
-            notification.error(errorMessage);
+            notify.error(errorMessage, { title: `Connect MIDI slot ${slotId + 1}` });
         } finally {
             busySlotId = null;
         }
@@ -110,18 +106,12 @@
         }
         busySlotId = slotId;
         errorMessage = '';
-        const notification = notify.info('Disconnecting the input…', {
-            duration: null,
-            loading: true,
-            title: `Disconnect MIDI slot ${slotId + 1}`
-        });
 
         try {
             await disconnectMidiInput(slotId);
-            notification.success('MIDI input disconnected.');
         } catch (error) {
             errorMessage = messageFor(error);
-            notification.error(errorMessage);
+            notify.error(errorMessage, { title: `Disconnect MIDI slot ${slotId + 1}` });
         } finally {
             busySlotId = null;
         }
@@ -134,11 +124,6 @@
         }
         addingAutoConnection = true;
         errorMessage = '';
-        const notification = notify.info('Saving the connection rule…', {
-            duration: null,
-            loading: true,
-            title: 'Add MIDI auto-connection'
-        });
 
         try {
             await setMidiInputAutoConnection({
@@ -149,10 +134,9 @@
             autoPortId = '';
             preferredSlotId = '';
             fixedSlot = false;
-            notification.success('Auto-connection added.');
         } catch (error) {
             errorMessage = messageFor(error);
-            notification.error(errorMessage);
+            notify.error(errorMessage, { title: 'Add MIDI auto-connection' });
         } finally {
             addingAutoConnection = false;
         }
@@ -164,18 +148,12 @@
         }
         deletingPortId = portId;
         errorMessage = '';
-        const notification = notify.info('Removing the connection rule…', {
-            duration: null,
-            loading: true,
-            title: 'Remove MIDI auto-connection'
-        });
 
         try {
             await deleteMidiInputAutoConnection(portId);
-            notification.success('Auto-connection removed.');
         } catch (error) {
             errorMessage = messageFor(error);
-            notification.error(errorMessage);
+            notify.error(errorMessage, { title: 'Remove MIDI auto-connection' });
         } finally {
             deletingPortId = null;
         }
@@ -192,7 +170,7 @@
 {/if}
 
 <div class="grid min-w-0 gap-3 min-[56.25rem]:grid-cols-[minmax(0,1.15fr)_minmax(20rem,0.85fr)]">
-    <section class="border-border bg-surface-card min-w-0 overflow-hidden rounded-xl border">
+    <section class="border-border bg-surface-card min-w-0 rounded-xl border">
         <header
             class="border-border flex min-h-16.75 items-center justify-between gap-4 border-b px-3.75 py-3 min-[56.25rem]:min-h-19 min-[56.25rem]:px-5">
             <div>
@@ -268,33 +246,40 @@
                                 </small>
                             </div>
                             <button
-                                class="border-border-strong text-foreground-muted hover:border-danger/50 hover:bg-danger/10 hover:text-danger-foreground min-h-9 cursor-pointer rounded-lg border bg-transparent px-3 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50"
+                                class="border-border-strong text-foreground-muted hover:border-danger/50 hover:bg-danger/10 hover:text-danger-foreground inline-flex min-h-9 cursor-pointer items-center gap-2 rounded-lg border bg-transparent px-3 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50"
                                 type="button"
                                 disabled={busySlotId !== null}
                                 onclick={() => void disconnect(slotId)}>
+                                {#if busySlotId === slotId}<Icon
+                                        icon="lucide:loader-circle"
+                                        width="0.875rem"
+                                        class="animate-spin" />{/if}
                                 {busySlotId === slotId ? 'Disconnecting…' : 'Disconnect'}
                             </button>
                         {:else}
-                            <select
-                                class="border-border-strong bg-surface-inset text-foreground h-10 min-w-0 rounded-lg border px-3 text-sm"
-                                aria-label={`Port for MIDI input slot ${slotId + 1}`}
-                                bind:value={selectedPorts[slotId]}>
-                                <option value="">Select an input port</option>
-                                {#each ports as port}
-                                    <option
-                                        value={port.id}
-                                        disabled={connectedPortIds.has(port.id)}>
-                                        {port.name}{connectedPortIds.has(port.id)
-                                            ? ' · Connected'
-                                            : ''}
-                                    </option>
-                                {/each}
-                            </select>
+                            <SelectDropdown
+                                bind:value={selectedPorts[slotId]}
+                                options={[
+                                    { value: '', label: 'Select an input port' },
+                                    ...ports.map((port) => ({
+                                        value: port.id,
+                                        label: port.name,
+                                        description: connectedPortIds.has(port.id)
+                                            ? 'Connected'
+                                            : undefined,
+                                        disabled: connectedPortIds.has(port.id)
+                                    }))
+                                ]}
+                                ariaLabel={`Port for MIDI input slot ${slotId + 1}`} />
                             <button
-                                class="bg-accent text-accent-foreground min-h-9 cursor-pointer rounded-lg border-0 px-3 text-sm font-bold disabled:cursor-not-allowed disabled:opacity-50"
+                                class="bg-accent text-accent-foreground inline-flex min-h-9 cursor-pointer items-center gap-2 rounded-lg border-0 px-3 text-sm font-bold disabled:cursor-not-allowed disabled:opacity-50"
                                 type="button"
                                 disabled={!selectedPorts[slotId] || busySlotId !== null}
                                 onclick={() => void connect(slotId)}>
+                                {#if busySlotId === slotId}<Icon
+                                        icon="lucide:loader-circle"
+                                        width="0.875rem"
+                                        class="animate-spin" />{/if}
                                 {busySlotId === slotId ? 'Connecting…' : 'Connect'}
                             </button>
                         {/if}
@@ -304,7 +289,7 @@
         {/if}
     </section>
 
-    <section class="border-border bg-surface-card min-w-0 overflow-hidden rounded-xl border">
+    <section class="border-border bg-surface-card min-w-0 rounded-xl border">
         <header
             class="border-border min-h-16.75 border-b px-3.75 py-3 min-[56.25rem]:min-h-19 min-[56.25rem]:px-5">
             <h2 class="text-foreground m-0 text-base font-semibold min-[56.25rem]:text-lg">
@@ -323,18 +308,18 @@
             }}>
             <label class="grid gap-1.5">
                 <span class="text-sm font-semibold">Input port</span>
-                <input
-                    class="border-border-strong bg-surface-inset text-foreground h-10 min-w-0 rounded-lg border px-3 text-sm"
-                    type="text"
-                    list="midi-input-port-hints"
+                <TextSuggestionInput
+                    id="midi-input-port"
+                    bind:value={autoPortId}
+                    suggestions={ports.map((port) => ({
+                        value: port.id,
+                        label: port.name,
+                        description: port.id
+                    }))}
                     placeholder="MIDI port ID"
-                    autocomplete="off"
-                    bind:value={autoPortId} />
-                <datalist id="midi-input-port-hints">
-                    {#each ports as port}
-                        <option value={port.id}>{port.name}</option>
-                    {/each}
-                </datalist>
+                    clearable
+                    noMatchesText="No matching ports"
+                    ariaLabel="MIDI input port" />
                 <small class="text-foreground-muted text-xs">
                     Enter any port ID or choose a currently available input.
                 </small>
@@ -343,19 +328,22 @@
             <div class="grid gap-3 min-[31.25rem]:grid-cols-2">
                 <label class="grid gap-1.5">
                     <span class="text-sm font-semibold">Preferred slot</span>
-                    <select
-                        class="border-border-strong bg-surface-inset text-foreground h-10 min-w-0 rounded-lg border px-3 text-sm"
+                    <SelectDropdown
+                        id="preferred-midi-slot"
                         bind:value={preferredSlotId}
+                        options={[
+                            { value: '', label: 'Any available slot' },
+                            ...Array.from(slots.keys()).map((slotId) => ({
+                                value: String(slotId),
+                                label: `Slot ${slotId + 1}`
+                            }))
+                        ]}
                         onchange={() => {
                             if (preferredSlotId === '') {
                                 fixedSlot = false;
                             }
-                        }}>
-                        <option value="">Any available slot</option>
-                        {#each slots.keys() as slotId}
-                            <option value={String(slotId)}>Slot {slotId + 1}</option>
-                        {/each}
-                    </select>
+                        }}
+                        ariaLabel="Preferred MIDI input slot" />
                 </label>
 
                 <label
@@ -370,9 +358,13 @@
             </div>
 
             <button
-                class="bg-accent text-accent-foreground min-h-10 cursor-pointer rounded-lg border-0 px-4 text-sm font-bold disabled:cursor-not-allowed disabled:opacity-50 min-[31.25rem]:w-fit"
+                class="bg-accent text-accent-foreground inline-flex min-h-10 cursor-pointer items-center justify-center gap-2 rounded-lg border-0 px-4 text-sm font-bold disabled:cursor-not-allowed disabled:opacity-50 min-[31.25rem]:w-fit"
                 type="submit"
                 disabled={!autoPortId.trim() || addingAutoConnection}>
+                {#if addingAutoConnection}<Icon
+                        icon="lucide:loader-circle"
+                        width="0.875rem"
+                        class="animate-spin" />{/if}
                 {addingAutoConnection ? 'Adding…' : 'Add auto-connection'}
             </button>
         </form>
@@ -407,7 +399,14 @@
                             aria-label={`Delete auto-connection for ${portName(connection.port_id)}`}
                             disabled={deletingPortId !== null}
                             onclick={() => void removeAutoConnection(connection.port_id)}>
-                            <Icon icon="lucide:trash-2" width="0.875rem" />
+                            <Icon
+                                icon={deletingPortId === connection.port_id
+                                    ? 'lucide:loader-circle'
+                                    : 'lucide:trash-2'}
+                                width="0.875rem"
+                                class={deletingPortId === connection.port_id
+                                    ? 'animate-spin'
+                                    : ''} />
                         </button>
                     </article>
                 {/each}

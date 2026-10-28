@@ -37,7 +37,7 @@ export async function fetchMidiInputs() {
     try {
         responses = await Promise.all([
             api.midiInputPorts(),
-            api.midiInputInstruments(),
+            api.midiInputSlots(),
             api.midiInputAutoConnections()
         ]);
     } catch (error) {

@@ -1,5 +1,4 @@
 <script lang="ts">
-    import { notify } from '$lib/push-notifications.svelte';
     import {
         MAX_MIDI_EVENT_LOG_SIZE,
         midiEventLogSize,
@@ -33,33 +32,26 @@
 
     function selectTheme(mode: ThemeMode) {
         applyTheme(mode);
-        notify.success(`${mode === 'auto' ? 'Automatic' : mode} color mode selected.`, {
-            title: 'Appearance'
-        });
     }
 
-    function selectAccent(value: Accent, label?: string) {
+    function selectAccent(value: Accent) {
         setAccent(value);
-        notify.success(label ? `${label} accent selected.` : 'Accent color updated.', {
-            title: 'Appearance'
-        });
     }
 
     function updateMidiEventLogSize(value: number) {
         setMidiEventLogSize(value);
-        notify.success(`Keeping ${midiEventLogSize()} MIDI events.`, {
-            title: 'MIDI event log'
-        });
     }
 </script>
 
 <div class="grid w-full gap-3">
     <section class="border-border bg-surface-card overflow-hidden rounded-xl border">
         <header
-            class="border-border [&_p]:text-foreground-muted flex min-h-16.75 items-center justify-between border-b px-3.75 py-3 min-[56.25rem]:min-h-19 min-[56.25rem]:px-5 [&_h2]:m-0 [&_h2]:text-base min-[56.25rem]:[&_h2]:text-lg [&_p]:mt-1 [&_p]:mb-0 [&_p]:text-sm min-[56.25rem]:[&_p]:text-sm">
+            class="border-border flex min-h-16.75 items-center justify-between border-b px-3.75 py-3 min-[56.25rem]:min-h-19 min-[56.25rem]:px-5">
             <div>
-                <h2>Appearance</h2>
-                <p>Interface preferences are stored on this device.</p>
+                <h2 class="m-0 text-base min-[56.25rem]:text-lg">Appearance</h2>
+                <p class="text-foreground-muted mt-1 mb-0 text-sm">
+                    Interface preferences are stored on this device.
+                </p>
             </div>
             <span
                 class="border-contrast/15 size-6.75 shrink-0 rounded-full border-2 shadow-[0_0_1rem_var(--accent-glow-soft)]"
@@ -98,16 +90,16 @@
                     class="h-6.75 w-9.5 border-0 bg-transparent p-0"
                     type="color"
                     value={accentHex()}
-                    oninput={(event) => setAccentHex(event.currentTarget.value)}
-                    onchange={() =>
-                        notify.success('Accent color updated.', { title: 'Appearance' })} />
+                    oninput={(event) => setAccentHex(event.currentTarget.value)} />
                 <span>{accentHex().toUpperCase()}</span>
             </label>
-            <div
-                class="[&_span]:text-foreground-muted [&_input]:border-border-strong [&_input]:bg-surface-inset [&_input]:text-foreground mt-3 grid max-w-95 grid-cols-3 gap-2 [&_input]:min-h-9.5 [&_input]:w-full [&_input]:rounded-lg [&_input]:border [&_input]:p-2 [&_input]:text-sm [&_span]:mb-1 [&_span]:ml-0.5 [&_span]:block [&_span]:text-xs">
+            <div class="mt-3 grid max-w-95 grid-cols-3 gap-2">
                 {#each ['r', 'g', 'b'] as channel}<label>
-                        <span>{channel.toUpperCase()}</span>
+                        <span class="text-foreground-muted mb-1 ml-0.5 block text-xs">
+                            {channel.toUpperCase()}
+                        </span>
                         <input
+                            class="border-border-strong bg-surface-inset text-foreground min-h-9.5 w-full rounded-lg border p-2 text-sm"
                             type="number"
                             min="0"
                             max="255"
@@ -125,17 +117,19 @@
                         type="button"
                         style:background={preset.color}
                         aria-label={`Use ${preset.label} accent`}
-                        onclick={() => selectAccent(preset.value, preset.label)}>
+                        onclick={() => selectAccent(preset.value)}>
                     </button>{/each}
             </div>
         </div>
     </section>
     <section class="border-border bg-surface-card overflow-hidden rounded-xl border">
         <header
-            class="border-border [&_p]:text-foreground-muted flex min-h-16.75 items-center border-b px-3.75 py-3 min-[56.25rem]:min-h-19 min-[56.25rem]:px-5 [&_h2]:m-0 [&_h2]:text-base min-[56.25rem]:[&_h2]:text-lg [&_p]:mt-1 [&_p]:mb-0 [&_p]:text-sm min-[56.25rem]:[&_p]:text-sm">
+            class="border-border flex min-h-16.75 items-center border-b px-3.75 py-3 min-[56.25rem]:min-h-19 min-[56.25rem]:px-5">
             <div>
-                <h2>MIDI</h2>
-                <p>MIDI monitoring preferences are stored on this device.</p>
+                <h2 class="m-0 text-base min-[56.25rem]:text-lg">MIDI</h2>
+                <p class="text-foreground-muted mt-1 mb-0 text-sm">
+                    MIDI monitoring preferences are stored on this device.
+                </p>
             </div>
         </header>
         <div class="flex items-center justify-between gap-5 p-3.75 min-[56.25rem]:p-5">

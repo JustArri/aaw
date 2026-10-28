@@ -1,6 +1,7 @@
 <script lang="ts">
     import Icon from '@iconify/svelte';
     import { onMount } from 'svelte';
+    import AutoSaveTextInput from '$lib/components/AutoSaveTextInput.svelte';
     import {
         deleteProject,
         exportActiveProject,
@@ -43,6 +44,7 @@
         [...projects()].sort((left, right) => left.name.localeCompare(right.name))
     );
     let currentProjectId = $derived(activeProject()?.storage?.id ?? null);
+    let projectNameChanged = $derived(projectName.trim() !== (activeProject()?.name ?? ''));
 
     $effect(() => {
         projectName = activeProject()?.name ?? '';
@@ -177,11 +179,6 @@
         }
         importing = true;
         fileErrorMessage = '';
-        const notification = notify.info('Reading and importing the project…', {
-            duration: null,
-            loading: true,
-            title: setActive ? 'Import active project' : 'Add project to library'
-        });
 
         try {
             const project = await readSelectedProject();
@@ -191,12 +188,11 @@
                 await saveProject(project);
             }
             clearSelectedFile();
-            notification.success(
-                setActive ? 'Active project imported.' : 'Project added to the library.'
-            );
         } catch (error) {
             fileErrorMessage = messageFor(error);
-            notification.error(fileErrorMessage);
+            notify.error(fileErrorMessage, {
+                title: setActive ? 'Import active project' : 'Add project to library'
+            });
         } finally {
             importing = false;
         }
@@ -208,23 +204,19 @@
         }
         exporting = true;
         fileErrorMessage = '';
-        const notification = notify.info('Preparing the project file…', {
-            duration: null,
-            loading: true,
-            title: 'Export active project'
-        });
 
         try {
             const project = await exportActiveProject();
             if (!project) {
-                notification.warning('No active project is available.');
+                notify.warning('No active project is available.', {
+                    title: 'Export active project'
+                });
                 return;
             }
             downloadProject(project);
-            notification.success('Project exported.');
         } catch (error) {
             fileErrorMessage = messageFor(error);
-            notification.error(fileErrorMessage);
+            notify.error(fileErrorMessage, { title: 'Export active project' });
         } finally {
             exporting = false;
         }
@@ -236,23 +228,19 @@
         }
         exportingId = projectId;
         libraryErrorMessage = '';
-        const notification = notify.info('Preparing the project file…', {
-            duration: null,
-            loading: true,
-            title: 'Export saved project'
-        });
 
         try {
             const project = await loadProject(projectId);
             if (!project) {
-                notification.warning('The project could not be loaded.');
+                notify.warning('The project could not be loaded.', {
+                    title: 'Export saved project'
+                });
                 return;
             }
             downloadProject(project);
-            notification.success('Project exported.');
         } catch (error) {
             libraryErrorMessage = messageFor(error);
-            notification.error(libraryErrorMessage);
+            notify.error(libraryErrorMessage, { title: 'Export saved project' });
         } finally {
             exportingId = null;
         }
@@ -286,18 +274,12 @@
         }
         saving = true;
         libraryErrorMessage = '';
-        const notification = notify.info('Saving the active project…', {
-            duration: null,
-            loading: true,
-            title: 'Save project'
-        });
 
         try {
             await saveActiveProject();
-            notification.success('Project saved.');
         } catch (error) {
             libraryErrorMessage = messageFor(error);
-            notification.error(libraryErrorMessage);
+            notify.error(libraryErrorMessage, { title: 'Save project' });
         } finally {
             saving = false;
         }
@@ -321,18 +303,12 @@
 
         creating = true;
         libraryErrorMessage = '';
-        const notification = notify.info('Creating an empty project…', {
-            duration: null,
-            loading: true,
-            title: 'New project'
-        });
 
         try {
             await createNewActiveProject();
-            notification.success('Empty project created.');
         } catch (error) {
             libraryErrorMessage = messageFor(error);
-            notification.error(libraryErrorMessage);
+            notify.error(libraryErrorMessage, { title: 'New project' });
         } finally {
             creating = false;
         }
@@ -340,24 +316,18 @@
 
     async function renameActiveProject() {
         const name = projectName.trim();
-        if (!name || renaming) {
+        if (!name || !projectNameChanged || renaming) {
             return;
         }
         renaming = true;
         libraryErrorMessage = '';
-        const notification = notify.info('Updating the project name…', {
-            duration: null,
-            loading: true,
-            title: 'Rename project'
-        });
 
         try {
             await setActiveProjectName(name);
             projectName = name;
-            notification.success('Project renamed.');
         } catch (error) {
             libraryErrorMessage = messageFor(error);
-            notification.error(libraryErrorMessage);
+            notify.error(libraryErrorMessage, { title: 'Rename project' });
         } finally {
             renaming = false;
         }
@@ -369,18 +339,12 @@
         }
         loadingId = projectId;
         libraryErrorMessage = '';
-        const notification = notify.info('Loading the selected project…', {
-            duration: null,
-            loading: true,
-            title: 'Load project'
-        });
 
         try {
             await loadActiveProject(projectId);
-            notification.success('Project loaded.');
         } catch (error) {
             libraryErrorMessage = messageFor(error);
-            notification.error(libraryErrorMessage);
+            notify.error(libraryErrorMessage, { title: 'Load project' });
         } finally {
             loadingId = null;
         }
@@ -400,18 +364,12 @@
         }
         deletingId = projectId;
         libraryErrorMessage = '';
-        const notification = notify.info('Deleting the project…', {
-            duration: null,
-            loading: true,
-            title: 'Delete project'
-        });
 
         try {
             await deleteProject(projectId);
-            notification.success('Project deleted.');
         } catch (error) {
             libraryErrorMessage = messageFor(error);
-            notification.error(libraryErrorMessage);
+            notify.error(libraryErrorMessage, { title: 'Delete project' });
         } finally {
             deletingId = null;
         }
@@ -595,7 +553,7 @@
     {/if}
 
     <form
-        class="border-border grid gap-3 border-b px-3.75 py-3.5 min-[37.5rem]:grid-cols-[minmax(0,1fr)_minmax(12rem,22rem)_auto] min-[37.5rem]:items-end min-[56.25rem]:px-5"
+        class="border-border grid gap-3 border-b px-3.75 py-3.5 min-[37.5rem]:grid-cols-[minmax(0,1fr)_minmax(12rem,24.25rem)] min-[37.5rem]:items-end min-[56.25rem]:px-5"
         onsubmit={(event) => {
             event.preventDefault();
             void renameActiveProject();
@@ -608,17 +566,14 @@
                 This name is shown throughout the workspace.
             </small>
         </div>
-        <input
+        <AutoSaveTextInput
             id="active-project-name"
-            class="border-border-strong bg-surface-inset text-foreground h-10 min-w-0 rounded-lg border px-3 text-sm"
             bind:value={projectName}
-            disabled={!activeProject() || renaming}
-            required />
-        <button
-            class="bg-accent text-accent-foreground h-10 cursor-pointer rounded-lg border-0 px-4 text-sm font-bold disabled:cursor-not-allowed disabled:opacity-50"
-            disabled={!activeProject() || !projectName.trim() || renaming}>
-            {renaming ? 'Saving…' : 'Save name'}
-        </button>
+            pending={projectNameChanged}
+            saving={renaming}
+            disabled={!activeProject()}
+            required
+            oncommit={renameActiveProject} />
     </form>
 
     {#if projectList.length > 0}

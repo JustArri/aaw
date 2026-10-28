@@ -198,6 +198,14 @@ where
         &self.ids
     }
 
+    pub fn valid_ids(&self) -> &[I] {
+        &self.ids[..self.values.len()]
+    }
+
+    pub fn iter_valid_ids(&self) -> std::slice::Iter<'_, I> {
+        self.valid_ids().iter()
+    }
+
     pub fn values(&self) -> &[T] {
         &self.values
     }
@@ -501,6 +509,16 @@ mod tests {
         assert_eq!(pairs.len(), 2);
         assert_eq!(pairs[&TestId(0)], "zero");
         assert_eq!(pairs[&TestId(2)], "two");
+    }
+
+    #[test]
+    fn valid_ids_only_returns_active_ids() {
+        let mut values = Sources::from(vec!["zero", "one", "two"]);
+        values.remove(TestId(1));
+
+        assert_eq!(values.valid_ids(), &[TestId(0), TestId(2)]);
+        assert_eq!(values.iter_valid_ids().copied().collect::<Vec<_>>(), values.valid_ids());
+        assert_eq!(values.ids(), &[TestId(0), TestId(2), TestId(1)]);
     }
 
     #[test]

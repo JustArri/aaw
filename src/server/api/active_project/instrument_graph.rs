@@ -328,7 +328,7 @@ async fn instrument_ignore_key_transform(
     params(InstrumentPath),
     request_body(
         content = MidiKeyTransform,
-        content_type = "application/json"
+        content_type = "application/json",
     ),
     responses(
         (status = NO_CONTENT, description = "Value set"),

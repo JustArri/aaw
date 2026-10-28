@@ -48,6 +48,46 @@ impl Default for CtrInstrument {
     }
 }
 
+pub struct CtrInstrumentSynthIter<'a, F>
+where
+    F: Fn(&CtrInstrument) -> bool,
+{
+    instruments: std::slice::Iter<'a, CtrInstrument>,
+    filter_fn: F,
+}
+
+impl<'a, F> CtrInstrumentSynthIter<'a, F>
+where
+    F: Fn(&CtrInstrument) -> bool,
+{
+    fn new(graph: &'a CtrInstrumentGraph, filter_fn: F) -> Self {
+        Self { instruments: graph.instruments.iter_values(), filter_fn }
+    }
+}
+
+impl<'a, F> Iterator for CtrInstrumentSynthIter<'a, F>
+where
+    F: Fn(&CtrInstrument) -> bool,
+{
+    type Item = SynthId;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            let instrument = self.instruments.next()?;
+
+            let Some(synth_id) = instrument.synth_id else {
+                continue;
+            };
+
+            if !(self.filter_fn)(instrument) {
+                continue;
+            }
+
+            return Some(synth_id);
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[schema(as = InstrumentGraph)]
 pub struct CtrInstrumentGraph {
@@ -56,6 +96,13 @@ pub struct CtrInstrumentGraph {
 }
 
 impl CtrInstrumentGraph {
+    pub fn synth_iter<F: Fn(&CtrInstrument) -> bool>(
+        &'_ self,
+        filter_fn: F,
+    ) -> CtrInstrumentSynthIter<'_, F> {
+        CtrInstrumentSynthIter::new(self, filter_fn)
+    }
+
     pub fn remove_synth_references(&mut self, synth_id: SynthId) {
         for instrument in self.instruments.iter_values_mut() {
             if instrument.synth_id == Some(synth_id) {

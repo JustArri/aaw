@@ -74,7 +74,7 @@
 </script>
 
 <section
-    class={`transition-[border-color,opacity] duration-150 ${compact ? 'border-0 bg-transparent p-0' : 'bg-surface-card rounded-xl border p-3.5 min-[37.5rem]:p-4'} ${failed ? 'border-danger-border' : compact ? '' : 'border-border'} ${pending ? 'opacity-70' : ''}`}
+    class={`transition-[border-color] duration-150 ${compact ? 'border-0 bg-transparent p-0' : 'bg-surface-card rounded-xl border p-3.5 min-[37.5rem]:p-4'} ${failed ? 'border-danger-border' : compact ? '' : 'border-border'}`}
     aria-busy={pending}>
     <header
         class={`flex items-center justify-between gap-2 ${compact ? 'mb-1.5 min-h-8' : 'mb-2 min-h-9'}`}>
@@ -115,7 +115,7 @@
         <button
             class={`border-border-strong bg-surface-hover text-foreground-strong active:border-accent/45 active:bg-accent/12 active:text-accent min-w-0 cursor-pointer rounded-lg border px-1 font-mono disabled:cursor-wait disabled:opacity-50 ${compact ? 'min-h-9 text-xs' : 'min-h-11 text-sm min-[56.25rem]:text-sm'}`}
             type="button"
-            disabled={disabled || pending}
+            {disabled}
             aria-label={actionLabel(-largeStep)}
             onclick={() => commit(displayedValue - largeStep)}>
             −{format(largeStep)}
@@ -123,7 +123,7 @@
         <button
             class={`border-border-strong bg-surface-hover text-foreground-strong active:border-accent/45 active:bg-accent/12 active:text-accent min-w-0 cursor-pointer rounded-lg border px-1 font-mono disabled:cursor-wait disabled:opacity-50 ${compact ? 'min-h-9 text-xs' : 'min-h-11 text-sm min-[56.25rem]:text-sm'}`}
             type="button"
-            disabled={disabled || pending}
+            {disabled}
             aria-label={actionLabel(-smallStep)}
             onclick={() => commit(displayedValue - smallStep)}>
             −{format(smallStep)}
@@ -131,7 +131,7 @@
         <button
             class={`border-border-strong bg-surface-hover text-accent active:border-accent/45 active:bg-accent/12 min-w-0 cursor-pointer rounded-lg border px-1 font-bold uppercase disabled:cursor-wait disabled:opacity-50 ${compact ? 'min-h-9 text-[0.625rem]' : 'min-h-11 text-xs min-[56.25rem]:text-sm'}`}
             type="button"
-            disabled={disabled || pending}
+            {disabled}
             aria-label={`Reset ${label} to ${format(resetValue)} ${unit}`}
             onclick={() => commit(resetValue)}>
             Reset
@@ -139,7 +139,7 @@
         <button
             class={`border-border-strong bg-surface-hover text-foreground-strong active:border-accent/45 active:bg-accent/12 active:text-accent min-w-0 cursor-pointer rounded-lg border px-1 font-mono disabled:cursor-wait disabled:opacity-50 ${compact ? 'min-h-9 text-xs' : 'min-h-11 text-sm min-[56.25rem]:text-sm'}`}
             type="button"
-            disabled={disabled || pending}
+            {disabled}
             aria-label={actionLabel(smallStep)}
             onclick={() => commit(displayedValue + smallStep)}>
             +{format(smallStep)}
@@ -147,7 +147,7 @@
         <button
             class={`border-border-strong bg-surface-hover text-foreground-strong active:border-accent/45 active:bg-accent/12 active:text-accent min-w-0 cursor-pointer rounded-lg border px-1 font-mono disabled:cursor-wait disabled:opacity-50 ${compact ? 'min-h-9 text-xs' : 'min-h-11 text-sm min-[56.25rem]:text-sm'}`}
             type="button"
-            disabled={disabled || pending}
+            {disabled}
             aria-label={actionLabel(largeStep)}
             onclick={() => commit(displayedValue + largeStep)}>
             +{format(largeStep)}

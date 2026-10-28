@@ -20,6 +20,7 @@ migrations-derive = { path = "crates/migrations-derive" }
 tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"
 axum = { version = "0.8", features = ["ws", "macros"] }
+http-body = "1"
 tower-http = { version = "0.7", features = [
     "compression-gzip",
     "compression-br",
@@ -46,6 +47,9 @@ uuid = { version = "1.28", features = ["serde", "v4"] }
 arrayvec = "0.7.8"
 mime_guess = "2"
 rust-embed = { version = "8", features = ["debug-embed"] }
+chrono = "0.4.45"
+serde_with = "3.24.0"
+hound = "3.5.1"
 
 
 [build-dependencies]

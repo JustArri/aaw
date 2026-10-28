@@ -1,5 +1,6 @@
 <script lang="ts">
     import Icon from '@iconify/svelte';
+    import SelectDropdown from '$lib/components/SelectDropdown.svelte';
     import { notify } from '$lib/push-notifications.svelte';
     import type { OutputStreamLatency, OutputStreamSampleRate } from '$lib/generated/models';
     import {
@@ -101,11 +102,6 @@
         }
 
         applying = true;
-        const notification = notify.info('Starting the selected output…', {
-            duration: null,
-            loading: true,
-            title: 'Apply audio output'
-        });
 
         try {
             await setAudioOutputStream(
@@ -114,10 +110,10 @@
                 selectedOutputId,
                 selectedSampleRate()
             );
-            notification.success('Audio output applied.');
         } catch (error) {
-            notification.error(
-                error instanceof Error ? error.message : 'Could not apply the audio output.'
+            notify.error(
+                error instanceof Error ? error.message : 'Could not apply the audio output.',
+                { title: 'Apply audio output' }
             );
         } finally {
             applying = false;
@@ -188,28 +184,29 @@
             }}>
             <label class="grid gap-1.5">
                 <span class="text-sm font-semibold">Audio host</span>
-                <select
-                    class="border-border-strong bg-surface-inset text-foreground h-10 min-w-0 rounded-lg border px-3 text-sm"
+                <SelectDropdown
+                    id="audio-host"
                     bind:value={selectedHostId}
-                    disabled={hosts.length === 0}>
-                    {#each hosts as entry}
-                        <option value={entry.host.id}>{entry.host.name}</option>
-                    {/each}
-                </select>
+                    options={hosts.map((entry) => ({
+                        value: entry.host.id,
+                        label: entry.host.name
+                    }))}
+                    disabled={hosts.length === 0}
+                    ariaLabel="Audio host" />
             </label>
 
             <label class="grid gap-1.5">
                 <span class="text-sm font-semibold">Output device</span>
-                <select
-                    class="border-border-strong bg-surface-inset text-foreground h-10 min-w-0 rounded-lg border px-3 text-sm"
+                <SelectDropdown
+                    id="audio-output-device"
                     bind:value={selectedOutputId}
-                    disabled={!selectedHost || selectedHost.outputs.length === 0}>
-                    {#each selectedHost?.outputs ?? [] as output}
-                        <option value={output.id}>
-                            {output.name}{output.is_default ? ' · Default' : ''}
-                        </option>
-                    {/each}
-                </select>
+                    options={(selectedHost?.outputs ?? []).map((output) => ({
+                        value: output.id,
+                        label: output.name,
+                        description: output.is_default ? 'Default output' : undefined
+                    }))}
+                    disabled={!selectedHost || selectedHost.outputs.length === 0}
+                    ariaLabel="Output device" />
             </label>
 
             <fieldset class="m-0 grid min-w-0 gap-3 border-0 p-0 min-[37.5rem]:col-span-2">
@@ -220,7 +217,7 @@
                     aria-label="Latency">
                     {#each latencyModes as mode, index}
                         <label
-                            class={`has-focus-visible:outline-accent grid min-h-10 cursor-pointer place-items-center px-2 text-center text-sm font-semibold transition-colors has-focus-visible:z-1 has-focus-visible:outline-2 has-focus-visible:outline-offset-[-0.125rem] ${index % 2 === 1 ? 'border-border-strong border-l' : ''} ${index >= 2 ? 'border-border-strong border-t min-[37.5rem]:border-t-0' : ''} ${index === 2 ? 'min-[37.5rem]:border-l' : ''} ${latencyMode === mode.value ? 'bg-accent/12 text-accent' : 'text-foreground-muted hover:bg-surface-hover hover:text-foreground'}`}>
+                            class={`has-focus-visible:outline-accent grid min-h-10 cursor-pointer place-items-center px-2 text-center text-sm font-semibold transition-colors has-focus-visible:z-1 has-focus-visible:outline-2 has-focus-visible:-outline-offset-2 ${index % 2 === 1 ? 'border-border-strong border-l' : ''} ${index >= 2 ? 'border-border-strong border-t min-[37.5rem]:border-t-0' : ''} ${index === 2 ? 'min-[37.5rem]:border-l' : ''} ${latencyMode === mode.value ? 'bg-accent/12 text-accent' : 'text-foreground-muted hover:bg-surface-hover hover:text-foreground'}`}>
                             <input
                                 class="sr-only"
                                 type="radio"
@@ -254,7 +251,7 @@
                     aria-label="Sample rate">
                     {#each sampleRateModes as mode, index}
                         <label
-                            class={`has-focus-visible:outline-accent grid min-h-10 cursor-pointer place-items-center px-2 text-center text-sm font-semibold transition-colors has-focus-visible:z-1 has-focus-visible:outline-2 has-focus-visible:outline-offset-[-0.125rem] ${index > 0 ? 'border-border-strong border-l' : ''} ${sampleRateMode === mode.value ? 'bg-accent/12 text-accent' : 'text-foreground-muted hover:bg-surface-hover hover:text-foreground'}`}>
+                            class={`has-focus-visible:outline-accent grid min-h-10 cursor-pointer place-items-center px-2 text-center text-sm font-semibold transition-colors has-focus-visible:z-1 has-focus-visible:outline-2 has-focus-visible:-outline-offset-2 ${index > 0 ? 'border-border-strong border-l' : ''} ${sampleRateMode === mode.value ? 'bg-accent/12 text-accent' : 'text-foreground-muted hover:bg-surface-hover hover:text-foreground'}`}>
                             <input
                                 class="sr-only"
                                 type="radio"
@@ -281,9 +278,13 @@
             </fieldset>
 
             <button
-                class="bg-accent text-accent-foreground min-h-11 cursor-pointer rounded-lg border-0 px-4 text-sm font-bold disabled:cursor-not-allowed disabled:opacity-50 min-[37.5rem]:col-span-2"
+                class="bg-accent text-accent-foreground inline-flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-lg border-0 px-4 text-sm font-bold disabled:cursor-not-allowed disabled:opacity-50 min-[37.5rem]:col-span-2"
                 type="submit"
                 disabled={!selectedOutput || applying}>
+                {#if applying}<Icon
+                        icon="lucide:loader-circle"
+                        width="0.875rem"
+                        class="animate-spin" />{/if}
                 {applying ? 'Applying…' : stream ? 'Apply and restart output' : 'Start output'}
             </button>
         </form>
@@ -325,8 +326,8 @@
                 <div class="flex items-center justify-between gap-4 py-3">
                     <dt class="text-foreground-muted text-sm">Buffer</dt>
                     <dd class="m-0 font-mono text-sm tabular-nums">
-                        {stream.buffer_size === null
-                            ? 'Backend default'
+                        {stream.buffer_size === 0
+                            ? 'Default size unavailable'
                             : `${stream.buffer_size} frames`}
                     </dd>
                 </div>

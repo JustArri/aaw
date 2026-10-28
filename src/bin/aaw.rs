@@ -1,13 +1,13 @@
 use aaw::{
-    APP_VERSION, DEFAULT_MAX_BLOCK_SIZE, PACKAGE_NAME,
-    app_state::{AppState, LastProject},
+    APP_VERSION, MAX_BLOCK_SIZE, PACKAGE_NAME,
+    app_state::{AppState, LastProject, Preferences},
     assets::Assets,
     audio::{self, params::DeviceCfgSelection},
     engine::{
         self, EngineContext,
         project::{CtrProjectStorage, ProjectAsset, StoredProject, StoredProjectVersioned},
     },
-    files::{load_opt, save},
+    files::{self, load_opt},
     midi::MidiRuntime,
     projects::Projects,
     rt_channels,
@@ -24,14 +24,6 @@ use std::{
 use tokio::sync::{Mutex, RwLock, broadcast};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info, warn};
-
-const AAW_ROOT_DIR_ENV: &str = "AAW_ROOT_DIR";
-const CFG_AUDIO_OUTPUT: (&str, &str) = ("config/audio-output.json", "audio output config");
-const CFG_LAST_PROJECT_SUBJECT: &str = "last project";
-const CFG_LAST_PROJECT: (&str, &str) = ("config/last-project.json", CFG_LAST_PROJECT_SUBJECT);
-const CFG_MIDI_AC: (&str, &str) = ("config/midi-auto-connections.json", "midi auto-connections");
-const PROJECTS_DIR: &str = "projects";
-const ASSETS_DIR: &str = "assets";
 
 #[derive(Parser, Debug)]
 #[command(
@@ -64,6 +56,9 @@ struct Args {
     #[arg(long, default_value_t = 16, help = "Command channel capacity")]
     cmd_capacity: usize,
 
+    #[arg(long, default_value_t = 16, help = "Audio recording channel capacity")]
+    recording_queue_capacity: usize,
+
     #[arg(
         long,
         default_value_t = 32,
@@ -86,7 +81,7 @@ struct Args {
 async fn main() {
     let args = Args::parse();
 
-    aaw::subscribe_tracing("aaw=info,midi-event=info,midi-runtime=info");
+    aaw::subscribe_tracing("aaw=info");
     info!("** Arri's Audio Workstation **");
 
     let result = match &args.migrate_project {
@@ -129,10 +124,12 @@ async fn run(args: Args) -> anyhow::Result<()> {
     let aaw_root_dir = aaw_root_dir()?;
     info!("root directory: {}", aaw_root_dir.display());
 
-    let projects_dir = aaw_root_dir.join(PROJECTS_DIR);
+    let projects_dir = aaw_root_dir.join(aaw::PROJECTS_DIR);
     tokio::fs::create_dir_all(&projects_dir).await?;
-    let assets_dir = aaw_root_dir.join(ASSETS_DIR);
+    let assets_dir = aaw_root_dir.join(aaw::ASSETS_DIR);
     tokio::fs::create_dir_all(&assets_dir).await?;
+    let recordings_dir = aaw_root_dir.join(aaw::RECORDINGS_DIR);
+    tokio::fs::create_dir_all(&recordings_dir).await?;
 
     info!(addr = %args.http_addr, port = args.http_port, "starting HTTP server...");
     let bind_params = (args.http_addr, args.http_port);
@@ -146,19 +143,25 @@ async fn run(args: Args) -> anyhow::Result<()> {
 
     let stream_error = Arc::new(AtomicBool::new(true));
 
-    let project: Option<LastProject> = load_opt(&aaw_root_dir, CFG_LAST_PROJECT).await;
-    let (project, project_storage) = match project {
-        Some(LastProject::Cached(cached)) => (cached, None),
-        Some(LastProject::Saved(id)) => {
+    let (project, project_storage) = match load_opt(&aaw_root_dir, aaw::CFG_LAST_PROJECT).await {
+        Some(LastProject { id: Some(id) }) => {
             let path = Projects::project_path(&projects_dir, id);
-            let proj = load_opt::<StoredProject>("", (&path, CFG_LAST_PROJECT_SUBJECT))
-                .await
-                .unwrap_or_default();
-            let revision = proj.revision;
-            (proj, Some(CtrProjectStorage { id, revision }))
+
+            if let Some(proj) =
+                load_opt::<StoredProject>("", (&path, aaw::CFG_LAST_PROJECT_SUBJECT)).await
+            {
+                let revision = proj.revision;
+                (proj, Some(CtrProjectStorage { id, revision }))
+            } else {
+                files::save(&aaw_root_dir, aaw::CFG_LAST_PROJECT, &LastProject { id: None }).await;
+                (StoredProject::default(), None)
+            }
         }
-        None => (StoredProject::default(), None),
+        _ => (StoredProject::default(), None),
     };
+
+    let preferences =
+        load_opt::<Preferences>(&aaw_root_dir, aaw::CFG_PREFERENCES).await.unwrap_or_default();
 
     let (project_change_tx, _) = broadcast::channel(args.project_change_bc_capacity);
     let (engine, engine_handle, engine_runtime) = engine::create_engine(
@@ -168,6 +171,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
             stream_error: Arc::clone(&stream_error),
             cmd_capacity: args.cmd_capacity,
             midi_capacity: args.midi_to_engine_capacity,
+            recording_queue_capacity: args.recording_queue_capacity,
             min_instruments: args.min_instruments,
             min_synths: args.min_synths,
             project_change_tx,
@@ -176,7 +180,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
     .await
     .context("failed to create engine")?;
 
-    let midi_auto_connections = load_opt(&aaw_root_dir, CFG_MIDI_AC).await.unwrap_or_default();
+    let midi_auto_connections = load_opt(&aaw_root_dir, aaw::CFG_MIDI_AC).await.unwrap_or_default();
     let midi_event_senders: Arc<[_]> = Arc::new([engine_handle.midi_sender(), midi_relay_tx]);
 
     let midi_runtime = Arc::new(Mutex::new(
@@ -184,10 +188,8 @@ async fn run(args: Args) -> anyhow::Result<()> {
             .context("failed to create midi runtime")?,
     ));
 
-    let stop = CancellationToken::new();
-
     let output_stream = if let Some(info) =
-        load_opt::<AudioOutputStreamInfo>(&aaw_root_dir, CFG_AUDIO_OUTPUT).await
+        load_opt::<AudioOutputStreamInfo>(&aaw_root_dir, aaw::CFG_AUDIO_OUTPUT).await
     {
         try_start_stream(info, Arc::clone(&engine), Arc::clone(&stream_error))
             .await
@@ -199,28 +201,35 @@ async fn run(args: Args) -> anyhow::Result<()> {
 
     let output_stream = Arc::new(Mutex::new(output_stream));
 
-    let root_router = aaw::server::router(assets_dir.clone()).with_state(AppState {
-        midi_tx: midi_bc_tx.clone(),
-        midi_runtime: Arc::clone(&midi_runtime),
-        midi_event_senders,
-        engine,
-        engine_handle: engine_handle.clone(),
-        output_stream: Arc::clone(&output_stream),
-        min_instruments: args.min_instruments,
-        min_synths: args.min_synths,
-        stream_error: Arc::clone(&stream_error),
-        projects: Arc::new(RwLock::new(
-            Projects::new(projects_dir).await.context("failed to load projects")?,
-        )),
-        assets: Arc::new(RwLock::new(
-            Assets::new(assets_dir).await.context("failed to load assets")?,
-        )),
-    });
+    let root_router =
+        aaw::server::router(assets_dir.clone(), recordings_dir.clone()).with_state(AppState {
+            midi_tx: midi_bc_tx.clone(),
+            midi_runtime: Arc::clone(&midi_runtime),
+            midi_event_senders,
+            engine,
+            engine_handle: engine_handle.clone(),
+            output_stream: Arc::clone(&output_stream),
+            min_instruments: args.min_instruments,
+            min_synths: args.min_synths,
+            stream_error: Arc::clone(&stream_error),
+            aaw_root_dir: aaw_root_dir.into(),
+            projects: Arc::new(RwLock::new(
+                Projects::new(projects_dir).await.context("failed to load projects")?,
+            )),
+            assets: Arc::new(RwLock::new(
+                Assets::new(assets_dir).await.context("failed to load assets")?,
+            )),
+            recordings_dir: recordings_dir.into(),
+            preferences: Arc::new(RwLock::new(preferences)),
+        });
 
-    let relay_handle = aaw::spawn_midi_relay_task(stop.clone(), midi_relay_rx, midi_bc_tx);
+    let stop = CancellationToken::new();
+    let relay_handle = aaw::spawn_midi_relay_task(stop.clone(), midi_relay_rx, midi_bc_tx.clone());
     let server_handle = aaw::spawn_web_server_task(stop.clone(), listener, root_router);
     let midi_rt_handle = aaw::spawn_midi_runtime_task(stop.clone(), Arc::clone(&midi_runtime));
-    let engine_rt_handle = aaw::spawn_engine_runtime_task(stop.clone(), engine_runtime);
+    let pgc_watchdog_handle =
+        aaw::spawn_midi_watcher_task(stop.clone(), engine_handle.clone(), midi_bc_tx.subscribe());
+    let engine_rt_handle = tokio::spawn(engine_runtime.into_future(stop.clone()));
 
     info!("http server started @ http://localhost:{port}");
 
@@ -235,46 +244,30 @@ async fn run(args: Args) -> anyhow::Result<()> {
 
     info!("stopping...");
 
-    if let Some(stream) = output_stream.lock().await.take() {
-        save(&aaw_root_dir, CFG_AUDIO_OUTPUT, &stream.info).await;
-        drop(stream);
-    }
-
-    let project = match &engine_handle.project().await.storage {
-        Some(storage) => LastProject::Saved(storage.id),
-        None => LastProject::Cached(engine_handle.save_project().await),
-    };
-    save(&aaw_root_dir, CFG_LAST_PROJECT, &project).await;
-
-    {
-        let midi_runtime = midi_runtime.lock().await;
-        let midi_ac = midi_runtime.input_auto_connections();
-        save(&aaw_root_dir, CFG_MIDI_AC, midi_ac).await;
-    }
-
     relay_handle.await?;
     let _ = server_handle.await?;
     midi_rt_handle.await?;
-    engine_rt_handle.await?;
+    pgc_watchdog_handle.await?;
+    let _ = engine_rt_handle.await?;
 
     Ok(())
 }
 
 fn aaw_root_dir() -> anyhow::Result<PathBuf> {
-    let path = env::var_os(AAW_ROOT_DIR_ENV)
+    let path = env::var_os(aaw::AAW_ROOT_DIR_ENV)
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
         .unwrap_or(env::current_dir().context("failed to get current working directory")?);
     let path = std::path::absolute(&path).with_context(|| {
-        format!("failed to resolve path: {} ({AAW_ROOT_DIR_ENV})", path.display())
+        format!("failed to resolve path: {} ({})", path.display(), aaw::AAW_ROOT_DIR_ENV)
     })?;
 
     if !path.exists() {
-        anyhow::bail!("directory doesn't exist: {} ({AAW_ROOT_DIR_ENV})", path.display());
+        anyhow::bail!("directory doesn't exist: {} ({})", path.display(), aaw::AAW_ROOT_DIR_ENV);
     }
 
     if !path.is_dir() {
-        anyhow::bail!("not a directory: {} ({AAW_ROOT_DIR_ENV})", path.display());
+        anyhow::bail!("not a directory: {} ({})", path.display(), aaw::AAW_ROOT_DIR_ENV);
     }
 
     Ok(path)
@@ -309,7 +302,7 @@ async fn try_start_stream(
         },
         channel_count: stream_cfg.channels as u32,
         sample_rate: stream_cfg.sample_rate,
-        max_block_size: DEFAULT_MAX_BLOCK_SIZE,
+        max_block_size: MAX_BLOCK_SIZE,
         sample_format,
     };
 

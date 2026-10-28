@@ -1,7 +1,14 @@
 <script lang="ts">
     import Icon from '@iconify/svelte';
     import { onMount, tick } from 'svelte';
+    import ApplyIconButton from '$lib/components/ApplyIconButton.svelte';
+    import AutoSaveTextInput from '$lib/components/AutoSaveTextInput.svelte';
+    import BypassToggle from '$lib/components/BypassToggle.svelte';
+    import DotToggle from '$lib/components/DotToggle.svelte';
     import NumericControl from '$lib/components/NumericControl.svelte';
+    import SaveIndicator from '$lib/components/SaveIndicator.svelte';
+    import SegmentedControl from '$lib/components/SegmentedControl.svelte';
+    import SelectDropdown from '$lib/components/SelectDropdown.svelte';
     import {
         MidiFilterKind,
         type Instrument,
@@ -122,6 +129,8 @@
     let inspectorOpen = $state(false);
     let loading = $state(true);
     let busy = $state(false);
+    let addingInstrument = $state(false);
+    let removingInstrument = $state(false);
     let togglingId = $state(null as number | null);
     let reloading = $state(false);
     let reloadDone = $state(false);
@@ -153,8 +162,6 @@
     let ignoreChannelAftertouch = $state(false);
     let ignorePolyphonicAftertouch = $state(false);
     let controllerQuery = $state('');
-    let controllerHintsOpen = $state(false);
-    let activeControllerHint = $state(-1);
     let learningController = $state(false);
     let recordingKeySelection = $state<'Range' | 'Keys' | null>(null);
     let firstRecordedRangeKey = $state<number | null>(null);
@@ -253,16 +260,6 @@
     let availableControllers = $derived(
         midiControllers.filter((controller) => !controllers.includes(controller.id))
     );
-    let controllerHints = $derived(
-        availableControllers.filter((controller) => {
-            const query = controllerQuery.trim().toLocaleLowerCase();
-            return (
-                !query ||
-                String(controller.id).includes(query) ||
-                controller.name.toLocaleLowerCase().includes(query)
-            );
-        })
-    );
     let controllerToAdd = $derived.by(() => {
         const query = controllerQuery.trim();
         if (!query) {
@@ -272,7 +269,7 @@
         if (Number.isInteger(numeric) && availableControllers.some(({ id }) => id === numeric)) {
             return numeric;
         }
-        return controllerHints[0]?.id;
+        return undefined;
     });
     let selectedControllerHint = $derived.by(() => {
         if (controllerToAdd === undefined) {
@@ -280,13 +277,37 @@
         }
         return availableControllers.find((controller) => controller.id === controllerToAdd);
     });
+    let addedControllerHint = $derived.by(() => {
+        const query = controllerQuery.trim().toLocaleLowerCase();
+        if (!query || selectedControllerHint) {
+            return undefined;
+        }
+        const numeric = Number(query);
+        if (Number.isInteger(numeric)) {
+            return midiControllers.find(
+                (controller) => controller.id === numeric && controllers.includes(controller.id)
+            );
+        }
+        return midiControllers.find(
+            (controller) =>
+                controllers.includes(controller.id) &&
+                controller.name.toLocaleLowerCase().includes(query)
+        );
+    });
 
     onMount(async () => {
         try {
             await Promise.all([fetchInstruments(), fetchSynths()]);
-            const first = entries[0];
-            if (first) {
-                selectInstrument(first.id, false);
+            const requestedInstrument = new URL(window.location.href).searchParams.get(
+                'instrument'
+            );
+            const initial =
+                (requestedInstrument === null
+                    ? undefined
+                    : entries.find((entry) => entry.id === Number(requestedInstrument))) ??
+                entries[0];
+            if (initial) {
+                selectInstrument(initial.id, requestedInstrument !== null);
             }
         } catch (cause) {
             showError(cause);
@@ -302,9 +323,8 @@
             }
             if (learningController && event.type === 'ControlChange') {
                 controllerQuery = String(event.data.controller);
-                controllerHintsOpen = false;
-                activeControllerHint = -1;
                 learningController = false;
+                addController();
             }
         })
     );
@@ -451,12 +471,7 @@
         return map;
     }
 
-    async function run(
-        title: string,
-        success: string,
-        operation: () => Promise<unknown>,
-        section?: string
-    ) {
+    async function run(title: string, operation: () => Promise<unknown>, section?: string) {
         queuedOperations += 1;
         busy = true;
         if (section) {
@@ -465,30 +480,12 @@
         }
         const execute = async () => {
             error = '';
-            const automatic =
-                section === 'name' ||
-                section === 'synth' ||
-                section === 'behavior' ||
-                section === 'ignore-key-transform' ||
-                section === 'ignore-velocity-transform';
-            const notification = automatic
-                ? undefined
-                : notify.info('In progress…', {
-                      duration: null,
-                      loading: true,
-                      title
-                  });
             try {
                 await operation();
-                notification?.success(success);
                 return true;
             } catch (cause) {
                 showError(cause);
-                if (notification) {
-                    notification.error(error);
-                } else {
-                    notify.error(error, { title });
-                }
+                notify.error(error, { title });
                 return false;
             }
         };
@@ -514,12 +511,17 @@
     }
 
     async function appendInstrument() {
+        addingInstrument = true;
         let id: number | undefined;
-        const succeeded = await run('Add instrument', 'Instrument added.', async () => {
-            id = await addInstrument();
-        });
-        if (succeeded && id !== undefined) {
-            selectInstrument(id);
+        try {
+            const succeeded = await run('Add instrument', async () => {
+                id = await addInstrument();
+            });
+            if (succeeded && id !== undefined) {
+                selectInstrument(id);
+            }
+        } finally {
+            addingInstrument = false;
         }
     }
 
@@ -573,12 +575,7 @@
         }
         const id = selectedId;
         const synthId: SynthId | null = selectedSynth ? Number(selectedSynth) : null;
-        await run(
-            'Assign synth',
-            'Synth assignment updated.',
-            () => setInstrumentSynth(id, synthId),
-            'synth'
-        );
+        await run('Assign synth', () => setInstrumentSynth(id, synthId), 'synth');
     }
 
     async function saveName() {
@@ -587,12 +584,7 @@
         }
         const id = selectedId;
         const name = editName.trim();
-        const succeeded = await run(
-            'Rename instrument',
-            'Instrument renamed.',
-            () => setInstrumentName(id, name),
-            'name'
-        );
+        const succeeded = await run('Rename instrument', () => setInstrumentName(id, name), 'name');
         if (succeeded && selectedId === id) {
             editName = name;
         }
@@ -606,7 +598,6 @@
         const enabled = useGlobalTransposition;
         await run(
             'Global transposition',
-            'Transposition mode updated.',
             () => setInstrumentUsesGlobalTransposition(id, enabled),
             'behavior'
         );
@@ -640,7 +631,6 @@
             };
             const succeeded = await run(
                 'Update key transform',
-                'Key transform updated.',
                 () => setInstrumentKeyTransform(id, transform),
                 'keys'
             );
@@ -662,7 +652,6 @@
         const ignored = ignoreKeyTransform;
         const succeeded = await run(
             'Bypass key transform',
-            'Key transform bypass updated.',
             () => setInstrumentIgnoreKeyTransform(id, ignored),
             'ignore-key-transform'
         );
@@ -687,7 +676,6 @@
                 : { type: 'Unit' };
         await run(
             'Update velocity transform',
-            'Velocity transform updated.',
             () => setInstrumentVelocityTransform(id, transform),
             'velocity'
         );
@@ -701,7 +689,6 @@
         const ignored = ignoreVelocityTransform;
         const succeeded = await run(
             'Bypass velocity transform',
-            'Velocity transform bypass updated.',
             () => setInstrumentIgnoreVelocityTransform(id, ignored),
             'ignore-velocity-transform'
         );
@@ -722,7 +709,6 @@
             };
             const succeeded = await run(
                 'Update channel filter',
-                'Channel filter updated.',
                 () => setInstrumentChannelFilter(id, filter),
                 'channels'
             );
@@ -755,7 +741,6 @@
             };
             const succeeded = await run(
                 'Update controller filter',
-                'Controller filter updated.',
                 () => setInstrumentCcFilter(id, filter),
                 'controllers'
             );
@@ -780,7 +765,6 @@
         const polyphonicAftertouch = ignorePolyphonicAftertouch;
         await run(
             'Update MIDI handling',
-            'MIDI message handling updated.',
             async () => {
                 const updates: Promise<void>[] = [];
                 if (pitchBend !== slot.ignore_pitch_bend) {
@@ -813,39 +797,10 @@
         }
         controllers = [...controllers, controllerToAdd].sort((left, right) => left - right);
         controllerQuery = '';
-        controllerHintsOpen = false;
-        activeControllerHint = -1;
     }
 
     function removeController(controller: number) {
         controllers = controllers.filter((item) => item !== controller);
-    }
-
-    function selectControllerHint(controller: number) {
-        controllerQuery = String(controller);
-        controllerHintsOpen = false;
-        activeControllerHint = -1;
-    }
-
-    function handleControllerKeydown(event: KeyboardEvent) {
-        if (event.key === 'ArrowDown') {
-            event.preventDefault();
-            controllerHintsOpen = true;
-            activeControllerHint = Math.min(activeControllerHint + 1, controllerHints.length - 1);
-        } else if (event.key === 'ArrowUp') {
-            event.preventDefault();
-            activeControllerHint = Math.max(activeControllerHint - 1, 0);
-        } else if (event.key === 'Enter') {
-            event.preventDefault();
-            if (activeControllerHint >= 0) {
-                selectControllerHint(controllerHints[activeControllerHint].id);
-            } else {
-                addController();
-            }
-        } else if (event.key === 'Escape') {
-            controllerHintsOpen = false;
-            activeControllerHint = -1;
-        }
     }
 
     function toggleControllerLearning() {
@@ -853,7 +808,6 @@
             learningController = false;
             return;
         }
-        controllerHintsOpen = false;
         learningController = true;
     }
 
@@ -960,16 +914,19 @@
             return;
         }
         const id = selectedId;
-        const succeeded = await run('Remove instrument', 'Instrument removed.', () =>
-            removeInstrument(id)
-        );
-        if (succeeded) {
-            selectedId = null;
-            inspectorOpen = false;
-            const first = entries[0];
-            if (first) {
-                selectInstrument(first.id, false);
+        removingInstrument = true;
+        try {
+            const succeeded = await run('Remove instrument', () => removeInstrument(id));
+            if (succeeded) {
+                selectedId = null;
+                inspectorOpen = false;
+                const first = entries[0];
+                if (first) {
+                    selectInstrument(first.id, false);
+                }
             }
+        } finally {
+            removingInstrument = false;
         }
     }
 
@@ -985,32 +942,6 @@
     }
 </script>
 
-{#snippet saveStatus(section: string, pending: boolean)}
-    <span
-        class={`grid size-9 shrink-0 place-items-center ${savingSections.has(section) || pending ? 'text-accent' : 'text-foreground-icon'}`}
-        title={savingSections.has(section) ? 'Saving…' : pending ? 'Pending change' : 'Saved'}
-        aria-label={savingSections.has(section) ? 'Saving' : pending ? 'Pending change' : 'Saved'}>
-        <Icon
-            icon={savingSections.has(section) ? 'lucide:loader-circle' : 'lucide:check'}
-            width="1.125rem"
-            class={savingSections.has(section) ? 'animate-spin' : ''} />
-    </span>
-{/snippet}
-
-{#snippet saveButton(section: string, pending: boolean)}
-    <button
-        class="text-accent enabled:hover:bg-accent/10 disabled:text-foreground-icon grid size-9 shrink-0 cursor-pointer place-items-center rounded-lg border-0 bg-transparent transition-colors disabled:cursor-default disabled:opacity-50"
-        type="submit"
-        aria-label="Apply changes"
-        title="Apply changes"
-        disabled={busy || !pending}>
-        <Icon
-            icon={savingSections.has(section) ? 'lucide:loader-circle' : 'lucide:check'}
-            width="1.125rem"
-            class={savingSections.has(section) ? 'animate-spin' : ''} />
-    </button>
-{/snippet}
-
 {#if error}
     <div
         class="border-danger/30 bg-danger/8 text-danger mb-3 rounded-lg border px-3 py-2 text-sm"
@@ -1022,19 +953,27 @@
 <div
     class="grid min-w-0 gap-3 min-[56.25rem]:grid-cols-[minmax(18rem,0.8fr)_minmax(24rem,1.2fr)] min-[56.25rem]:items-start">
     <section class="border-border bg-surface-card min-w-0 overflow-hidden rounded-xl border">
-        <header
-            class="border-border flex min-h-16.75 items-center justify-between gap-3 border-b px-3.75 py-3 min-[56.25rem]:min-h-19 min-[56.25rem]:px-5">
-            <div>
-                <h2 class="text-foreground m-0 text-base font-semibold min-[56.25rem]:text-lg">
-                    Instrument slots
-                </h2>
-                <p class="text-foreground-muted mt-1 mb-0 text-sm">
+        <header class="border-border flex min-h-14.5 items-center justify-between border-b px-3.75">
+            <div class="flex items-baseline gap-2">
+                <h2 class="m-0 text-sm font-semibold">Instruments</h2>
+                <span class="text-foreground-muted text-xs">
                     {entries.filter(({ slot }) => slot.enabled).length} enabled · {entries.length} total
-                </p>
+                </span>
             </div>
             <div class="flex items-center gap-1.5">
                 <button
-                    class="text-foreground-muted hover:bg-surface-hover grid size-9 cursor-pointer place-items-center rounded-lg border-0 bg-transparent disabled:cursor-wait disabled:opacity-60"
+                    class="border-border-strong bg-surface-button text-foreground hover:bg-surface-hover grid size-8.5 cursor-pointer place-items-center rounded-lg border transition-colors disabled:cursor-wait disabled:opacity-60"
+                    type="button"
+                    aria-label="Add instrument"
+                    disabled={busy}
+                    onclick={() => void appendInstrument()}>
+                    <Icon
+                        icon={addingInstrument ? 'lucide:loader-circle' : 'lucide:plus'}
+                        width="1.125rem"
+                        class={addingInstrument ? 'animate-spin' : ''} />
+                </button>
+                <button
+                    class="text-foreground-muted hover:bg-surface-hover grid size-8.5 cursor-pointer place-items-center rounded-lg border-0 bg-transparent disabled:cursor-wait disabled:opacity-60"
                     type="button"
                     aria-label="Reload instruments"
                     disabled={reloading}
@@ -1052,14 +991,6 @@
                               ? 'text-success'
                               : ''} />
                 </button>
-                <button
-                    class="border-border-strong bg-surface-button text-foreground hover:bg-surface-hover grid size-9 cursor-pointer place-items-center rounded-lg border transition-colors disabled:cursor-wait disabled:opacity-60"
-                    type="button"
-                    aria-label="Add instrument"
-                    disabled={busy}
-                    onclick={() => void appendInstrument()}>
-                    <Icon icon="lucide:plus" width="1.125rem" />
-                </button>
             </div>
         </header>
 
@@ -1071,7 +1002,7 @@
             <div class="text-foreground-muted grid min-h-52 place-items-center p-6 text-center">
                 <div>
                     <Icon icon="lucide:sliders-horizontal" width="1.5rem" class="mx-auto mb-2" />
-                    <p class="m-0 text-sm">No instrument slots are configured.</p>
+                    <p class="m-0 text-sm">No instruments are configured.</p>
                 </div>
             </div>
         {:else}
@@ -1079,9 +1010,9 @@
                 {#each entries as entry (entry.id)}
                     {@const assignedSynth = synthEntry(entry.slot.synth_id)}
                     <article
-                        class={`bg-surface-item relative rounded-lg border transition-colors ${entry.id === selectedId ? 'border-accent/45' : 'border-transparent'}`}>
+                        class={`bg-surface-item grid overflow-hidden rounded-lg border transition-colors ${entry.slot.synth_id === null ? 'grid-cols-[minmax(0,1fr)_auto]' : 'grid-cols-[minmax(0,1fr)_auto_auto] min-[37.5rem]:grid-cols-[minmax(0,1fr)_minmax(7.5rem,11rem)_auto]'} ${entry.id === selectedId ? 'border-accent/45' : 'border-transparent'}`}>
                         <button
-                            class="grid w-full cursor-pointer grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 border-0 bg-transparent px-3 py-3 pr-14 text-left"
+                            class="grid min-w-0 cursor-pointer grid-cols-[auto_minmax(0,1fr)] items-center gap-3 border-0 bg-transparent px-3 py-3 text-left"
                             type="button"
                             onclick={() => selectInstrument(entry.id)}>
                             <span
@@ -1094,17 +1025,27 @@
                                     class={`block truncate text-sm font-semibold ${entry.slot.name.trim() ? 'text-foreground' : 'text-foreground-muted italic'}`}>
                                     {displayName(entry.id, entry.slot)}
                                 </strong>
-                                <small class="text-foreground-muted mt-0.5 block truncate text-sm">
+                                <small
+                                    class={`text-foreground-muted mt-0.5 block truncate text-sm ${entry.slot.synth_id === null ? '' : 'min-[37.5rem]:hidden'}`}>
                                     {synthName(assignedSynth)}
                                 </small>
                             </span>
-                            <Icon
-                                icon="lucide:chevron-right"
-                                width="1rem"
-                                class="text-foreground-icon" />
                         </button>
+                        {#if entry.slot.synth_id !== null}
+                            <a
+                                class="text-foreground-muted hover:border-accent/35 hover:bg-surface-hover hover:text-accent min-[37.5rem]:border-border my-auto grid size-9 place-items-center rounded-lg border border-transparent transition-colors min-[37.5rem]:my-0 min-[37.5rem]:flex min-[37.5rem]:size-auto min-[37.5rem]:min-w-0 min-[37.5rem]:items-center min-[37.5rem]:gap-2 min-[37.5rem]:rounded-none min-[37.5rem]:border-0 min-[37.5rem]:border-l min-[37.5rem]:px-3"
+                                href={`/synths?synth=${entry.slot.synth_id}`}
+                                aria-label={`Open ${synthName(assignedSynth)}`}
+                                title="Open assigned synth">
+                                <span
+                                    class="hidden min-w-0 flex-1 truncate text-xs min-[37.5rem]:block">
+                                    {synthName(assignedSynth)}
+                                </span>
+                                <Icon class="shrink-0" icon="lucide:arrow-up-right" width="1rem" />
+                            </a>
+                        {/if}
                         <button
-                            class={`absolute top-1/2 right-2 grid size-9 -translate-y-1/2 cursor-pointer place-items-center rounded-lg border transition-colors ${entry.slot.enabled ? 'border-accent/60 bg-accent/20 text-accent' : 'border-border-strong bg-surface-button text-foreground-muted hover:border-accent/35 hover:text-foreground'}`}
+                            class={`mr-2 grid size-9 cursor-pointer place-items-center self-center rounded-lg border transition-colors ${entry.slot.enabled ? 'border-accent/60 bg-accent/20 text-accent' : 'border-border-strong bg-surface-button text-foreground-muted hover:border-accent/35 hover:text-foreground'}`}
                             type="button"
                             aria-label={`${entry.slot.enabled ? 'Disable' : 'Enable'} ${displayName(entry.id, entry.slot)}`}
                             disabled={togglingId !== null}
@@ -1163,25 +1104,13 @@
                         for="instrument-name">
                         Name
                     </label>
-                    <div class="flex gap-2">
-                        <input
-                            id="instrument-name"
-                            class="border-border-strong bg-surface-inset text-foreground h-10 min-w-0 flex-1 rounded-lg border px-2.5 text-sm"
-                            bind:value={editName}
-                            onblur={() => {
-                                if (nameChanged) {
-                                    void saveName();
-                                }
-                            }}
-                            onkeydown={(event) => {
-                                if (event.key === 'Enter') {
-                                    event.preventDefault();
-                                    event.currentTarget.blur();
-                                }
-                            }}
-                            required />
-                        {@render saveStatus('name', nameChanged)}
-                    </div>
+                    <AutoSaveTextInput
+                        id="instrument-name"
+                        bind:value={editName}
+                        pending={nameChanged}
+                        saving={savingSections.has('name')}
+                        required
+                        oncommit={saveName} />
                 </form>
 
                 <form
@@ -1196,17 +1125,24 @@
                         Synth
                     </label>
                     <div class="flex items-center gap-2">
-                        <select
+                        <SelectDropdown
                             id="instrument-synth"
-                            class="border-border-strong bg-surface-inset text-foreground h-9 min-w-0 flex-1 rounded-lg border px-2.5 text-sm"
+                            class="flex-1"
+                            compact
                             bind:value={selectedSynth}
-                            onchange={() => void saveAssignment()}>
-                            <option value="">Unassigned</option>
-                            {#each availableSynths as synth}<option value={String(synth.id)}>
-                                    {synth.kind} · {synthName(synth)} · #{synth.id}
-                                </option>{/each}
-                        </select>
-                        {@render saveStatus('synth', synthChanged)}
+                            options={[
+                                { value: '', label: 'Unassigned' },
+                                ...availableSynths.map((synth) => ({
+                                    value: String(synth.id),
+                                    label: synthName(synth),
+                                    description: `${synth.kind} · Synth #${synth.id}`
+                                }))
+                            ]}
+                            onchange={() => void saveAssignment()}
+                            ariaLabel="Assigned synth" />
+                        <SaveIndicator
+                            saving={savingSections.has('synth')}
+                            pending={synthChanged} />
                     </div>
                 </form>
 
@@ -1215,23 +1151,15 @@
                         Behavior
                     </h3>
                     <div class="flex items-center gap-2">
-                        <label
-                            class={`has-focus-visible:outline-accent flex h-9 min-w-0 flex-1 cursor-pointer items-center justify-between gap-3 rounded-lg border px-3 text-sm transition-colors has-focus-visible:outline-2 has-focus-visible:outline-offset-2 ${useGlobalTransposition ? 'border-accent/40 bg-accent/6 text-foreground' : 'border-border-strong bg-surface-inset text-foreground hover:border-accent/35'}`}>
-                            <span class="min-w-0 truncate">Use global transposition</span>
-                            <input
-                                class="sr-only"
-                                type="checkbox"
-                                bind:checked={useGlobalTransposition}
-                                onchange={() => void saveTranspositionMode()} />
-                            <span
-                                class={`grid size-4.5 shrink-0 place-items-center rounded-full border transition-colors ${useGlobalTransposition ? 'border-accent/70 bg-accent/10' : 'border-border-strong bg-surface-card'}`}
-                                aria-hidden="true">
-                                {#if useGlobalTransposition}<span
-                                        class="bg-accent size-2 rounded-full">
-                                    </span>{/if}
-                            </span>
-                        </label>
-                        {@render saveStatus('behavior', behaviorChanged)}
+                        <DotToggle
+                            class="min-w-0 flex-1 justify-between px-3"
+                            label="Use global transposition"
+                            indicatorEnd
+                            bind:checked={useGlobalTransposition}
+                            onchange={() => void saveTranspositionMode()} />
+                        <SaveIndicator
+                            saving={savingSections.has('behavior')}
+                            pending={behaviorChanged} />
                     </div>
                 </section>
 
@@ -1247,28 +1175,10 @@
                             <h3 class="text-foreground-strong m-0 text-xs font-semibold uppercase">
                                 Keys
                             </h3>
-                            <label
-                                class="text-foreground-muted has-focus-visible:outline-accent flex cursor-pointer items-center gap-2 rounded-md text-xs font-medium has-focus-visible:outline-2 has-focus-visible:outline-offset-2">
-                                <span>Bypass</span>
-                                <input
-                                    class="sr-only"
-                                    type="checkbox"
-                                    bind:checked={ignoreKeyTransform}
-                                    disabled={savingSections.has('ignore-key-transform')}
-                                    onchange={() => void saveIgnoreKeyTransform()} />
-                                <span
-                                    class={`relative h-4 w-7 shrink-0 rounded-full border transition-colors ${ignoreKeyTransform ? 'border-accent/60 bg-accent/25' : 'border-border-strong bg-surface-inset'}`}
-                                    aria-hidden="true">
-                                    {#if savingSections.has('ignore-key-transform')}
-                                        <Icon
-                                            icon="lucide:loader-circle"
-                                            width="0.75rem"
-                                            class="text-accent absolute inset-0 m-auto animate-spin" />
-                                    {:else}<span
-                                            class={`absolute top-0.5 left-0.5 size-2.5 rounded-full transition-all ${ignoreKeyTransform ? 'bg-accent translate-x-3' : 'bg-foreground-icon'}`}>
-                                        </span>{/if}
-                                </span>
-                            </label>
+                            <BypassToggle
+                                bind:checked={ignoreKeyTransform}
+                                saving={savingSections.has('ignore-key-transform')}
+                                onchange={() => void saveIgnoreKeyTransform()} />
                         </div>
                     </div>
                     <div class="grid grid-cols-[minmax(0,1fr)_2.25rem] items-end gap-2">
@@ -1276,41 +1186,28 @@
                             <div class="grid grid-cols-2 gap-2">
                                 <div class="grid gap-1 text-sm">
                                     <span class="text-foreground-muted">Selection</span>
-                                    <div
-                                        class="border-border-strong bg-surface-inset grid grid-cols-3 overflow-hidden rounded-lg border"
-                                        role="radiogroup"
-                                        aria-label="Key selection">
-                                        {#each [{ value: 'All', label: 'All' }, { value: 'Range', label: 'Range' }, { value: 'Keys', label: 'Specific' }] as option, index}<label
-                                                class={`has-focus-visible:outline-accent grid min-h-10 cursor-pointer place-items-center px-1 text-center text-xs font-semibold transition-colors has-focus-visible:z-1 has-focus-visible:outline-2 has-focus-visible:outline-offset-[-0.125rem] ${index > 0 ? 'border-border-strong border-l' : ''} ${keySelectionType === option.value ? 'bg-accent/12 text-accent' : 'text-foreground-muted hover:bg-surface-hover hover:text-foreground'}`}>
-                                                <input
-                                                    class="sr-only"
-                                                    type="radio"
-                                                    name="key-selection"
-                                                    value={option.value}
-                                                    bind:group={keySelectionType}
-                                                    onchange={stopKeyRecording} />
-                                                <span>{option.label}</span>
-                                            </label>{/each}
-                                    </div>
+                                    <SegmentedControl
+                                        name="key-selection"
+                                        ariaLabel="Key selection"
+                                        bind:value={keySelectionType}
+                                        options={[
+                                            { value: 'All', label: 'All' },
+                                            { value: 'Range', label: 'Range' },
+                                            { value: 'Keys', label: 'Specific' }
+                                        ]}
+                                        onchange={stopKeyRecording} />
                                 </div>
                                 <div class="grid gap-1 text-sm">
                                     <span class="text-foreground-muted">Mapping</span>
-                                    <div
-                                        class="border-border-strong bg-surface-inset grid grid-cols-2 overflow-hidden rounded-lg border"
-                                        role="radiogroup"
-                                        aria-label="Key mapping">
-                                        {#each [{ value: 'Identity', label: 'Identity' }, { value: 'Custom', label: 'Custom' }] as option, index}<label
-                                                class={`has-focus-visible:outline-accent grid min-h-10 cursor-pointer place-items-center px-1 text-center text-xs font-semibold transition-colors has-focus-visible:z-1 has-focus-visible:outline-2 has-focus-visible:outline-offset-[-0.125rem] ${index > 0 ? 'border-border-strong border-l' : ''} ${keyMappingType === option.value ? 'bg-accent/12 text-accent' : 'text-foreground-muted hover:bg-surface-hover hover:text-foreground'}`}>
-                                                <input
-                                                    class="sr-only"
-                                                    type="radio"
-                                                    name="key-mapping"
-                                                    value={option.value}
-                                                    bind:group={keyMappingType}
-                                                    onchange={stopKeyRecording} />
-                                                <span>{option.label}</span>
-                                            </label>{/each}
-                                    </div>
+                                    <SegmentedControl
+                                        name="key-mapping"
+                                        ariaLabel="Key mapping"
+                                        bind:value={keyMappingType}
+                                        options={[
+                                            { value: 'Identity', label: 'Identity' },
+                                            { value: 'Custom', label: 'Custom' }
+                                        ]}
+                                        onchange={stopKeyRecording} />
                                 </div>
                             </div>
                             {#if keySelectionType === 'Range'}
@@ -1439,12 +1336,13 @@
                                 max={127}
                                 wideValue
                                 compact
-                                disabled={busy}
                                 onchange={(value) => {
                                     localTransposition = value;
                                 }} />
                         </div>
-                        {@render saveButton('keys', keyTransformChanged)}
+                        <ApplyIconButton
+                            saving={savingSections.has('keys')}
+                            pending={keyTransformChanged} />
                     </div>
                 </form>
 
@@ -1460,47 +1358,23 @@
                             <h3 class="text-foreground-strong m-0 text-xs font-semibold uppercase">
                                 Velocity
                             </h3>
-                            <label
-                                class="text-foreground-muted has-focus-visible:outline-accent flex cursor-pointer items-center gap-2 rounded-md text-xs font-medium has-focus-visible:outline-2 has-focus-visible:outline-offset-2">
-                                <span>Bypass</span>
-                                <input
-                                    class="sr-only"
-                                    type="checkbox"
-                                    bind:checked={ignoreVelocityTransform}
-                                    disabled={savingSections.has('ignore-velocity-transform')}
-                                    onchange={() => void saveIgnoreVelocityTransform()} />
-                                <span
-                                    class={`relative h-4 w-7 shrink-0 rounded-full border transition-colors ${ignoreVelocityTransform ? 'border-accent/60 bg-accent/25' : 'border-border-strong bg-surface-inset'}`}
-                                    aria-hidden="true">
-                                    {#if savingSections.has('ignore-velocity-transform')}
-                                        <Icon
-                                            icon="lucide:loader-circle"
-                                            width="0.75rem"
-                                            class="text-accent absolute inset-0 m-auto animate-spin" />
-                                    {:else}<span
-                                            class={`absolute top-0.5 left-0.5 size-2.5 rounded-full transition-all ${ignoreVelocityTransform ? 'bg-accent translate-x-3' : 'bg-foreground-icon'}`}>
-                                        </span>{/if}
-                                </span>
-                            </label>
+                            <BypassToggle
+                                bind:checked={ignoreVelocityTransform}
+                                saving={savingSections.has('ignore-velocity-transform')}
+                                onchange={() => void saveIgnoreVelocityTransform()} />
                         </div>
                     </div>
                     <div class="grid grid-cols-[minmax(0,1fr)_2.25rem] items-end gap-2">
                         <div class="grid min-w-0 gap-4">
-                            <div
-                                class="border-border-strong bg-surface-inset grid grid-cols-2 overflow-hidden rounded-lg border"
-                                role="radiogroup"
-                                aria-label="Velocity transform">
-                                {#each [{ value: 'Unit', label: 'Unchanged' }, { value: 'Linear', label: 'Linear range' }] as option, index}<label
-                                        class={`has-focus-visible:outline-accent grid min-h-9 cursor-pointer place-items-center px-2 text-center text-sm font-semibold transition-colors has-focus-visible:z-1 has-focus-visible:outline-2 has-focus-visible:outline-offset-[-0.125rem] ${index > 0 ? 'border-border-strong border-l' : ''} ${velocityType === option.value ? 'bg-accent/12 text-accent' : 'text-foreground-muted hover:bg-surface-hover hover:text-foreground'}`}>
-                                        <input
-                                            class="sr-only"
-                                            type="radio"
-                                            name="velocity-transform"
-                                            value={option.value}
-                                            bind:group={velocityType} />
-                                        <span>{option.label}</span>
-                                    </label>{/each}
-                            </div>
+                            <SegmentedControl
+                                name="velocity-transform"
+                                ariaLabel="Velocity transform"
+                                compact
+                                bind:value={velocityType}
+                                options={[
+                                    { value: 'Unit', label: 'Unchanged' },
+                                    { value: 'Linear', label: 'Linear range' }
+                                ]} />
                             {#if velocityType === 'Linear'}<div
                                     class="grid grid-cols-[3rem_minmax(5rem,1fr)_3rem] items-center gap-2">
                                     <input
@@ -1520,7 +1394,7 @@
                                             style:right={`${100 - (velocityMax / 127) * 100}%`}>
                                         </div>
                                         <input
-                                            class="[&::-moz-range-thumb]:bg-accent [&::-webkit-slider-thumb]:bg-accent pointer-events-none absolute inset-0 h-full w-full appearance-none bg-transparent [&::-moz-range-thumb]:pointer-events-auto [&::-moz-range-thumb]:size-4 [&::-moz-range-thumb]:cursor-pointer [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-0 [&::-moz-range-track]:h-1 [&::-moz-range-track]:bg-transparent [&::-webkit-slider-runnable-track]:h-1 [&::-webkit-slider-runnable-track]:bg-transparent [&::-webkit-slider-thumb]:pointer-events-auto [&::-webkit-slider-thumb]:mt-[-0.375rem] [&::-webkit-slider-thumb]:size-4 [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full"
+                                            class="[&::-moz-range-thumb]:bg-accent [&::-webkit-slider-thumb]:bg-accent pointer-events-none absolute inset-0 h-full w-full appearance-none bg-transparent [&::-moz-range-thumb]:pointer-events-auto [&::-moz-range-thumb]:size-4 [&::-moz-range-thumb]:cursor-pointer [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-0 [&::-moz-range-track]:h-1 [&::-moz-range-track]:bg-transparent [&::-webkit-slider-runnable-track]:h-1 [&::-webkit-slider-runnable-track]:bg-transparent [&::-webkit-slider-thumb]:pointer-events-auto [&::-webkit-slider-thumb]:-mt-1.5 [&::-webkit-slider-thumb]:size-4 [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full"
                                             type="range"
                                             aria-label="Minimum velocity"
                                             min="0"
@@ -1535,7 +1409,7 @@
                                                 event.currentTarget.value = String(value);
                                             }} />
                                         <input
-                                            class="[&::-moz-range-thumb]:bg-accent [&::-webkit-slider-thumb]:bg-accent pointer-events-none absolute inset-0 h-full w-full appearance-none bg-transparent [&::-moz-range-thumb]:pointer-events-auto [&::-moz-range-thumb]:size-4 [&::-moz-range-thumb]:cursor-pointer [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-0 [&::-moz-range-track]:h-1 [&::-moz-range-track]:bg-transparent [&::-webkit-slider-runnable-track]:h-1 [&::-webkit-slider-runnable-track]:bg-transparent [&::-webkit-slider-thumb]:pointer-events-auto [&::-webkit-slider-thumb]:mt-[-0.375rem] [&::-webkit-slider-thumb]:size-4 [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full"
+                                            class="[&::-moz-range-thumb]:bg-accent [&::-webkit-slider-thumb]:bg-accent pointer-events-none absolute inset-0 h-full w-full appearance-none bg-transparent [&::-moz-range-thumb]:pointer-events-auto [&::-moz-range-thumb]:size-4 [&::-moz-range-thumb]:cursor-pointer [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-0 [&::-moz-range-track]:h-1 [&::-moz-range-track]:bg-transparent [&::-webkit-slider-runnable-track]:h-1 [&::-webkit-slider-runnable-track]:bg-transparent [&::-webkit-slider-thumb]:pointer-events-auto [&::-webkit-slider-thumb]:-mt-1.5 [&::-webkit-slider-thumb]:size-4 [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full"
                                             type="range"
                                             aria-label="Maximum velocity"
                                             min="0"
@@ -1559,7 +1433,9 @@
                                         bind:value={velocityMax} />
                                 </div>{/if}
                         </div>
-                        {@render saveButton('velocity', velocityChanged)}
+                        <ApplyIconButton
+                            saving={savingSections.has('velocity')}
+                            pending={velocityChanged} />
                     </div>
                 </form>
 
@@ -1575,21 +1451,18 @@
                     </h3>
                     <div class="grid grid-cols-[minmax(0,1fr)_2.25rem] items-end gap-2">
                         <div class="grid min-w-0 gap-4">
-                            <div
-                                class="border-border-strong bg-surface-inset grid grid-cols-2 overflow-hidden rounded-lg border"
-                                role="radiogroup"
-                                aria-label="MIDI channel filter mode">
-                                {#each [{ value: MidiFilterKind.Allowlist, label: 'Allow only' }, { value: MidiFilterKind.Denylist, label: 'Allow all except' }] as option, index}<label
-                                        class={`has-focus-visible:outline-accent grid min-h-9 cursor-pointer place-items-center px-2 text-center text-sm font-semibold transition-colors has-focus-visible:z-1 has-focus-visible:outline-2 has-focus-visible:outline-offset-[-0.125rem] ${index > 0 ? 'border-border-strong border-l' : ''} ${channelFilterType === option.value ? 'bg-accent/12 text-accent' : 'text-foreground-muted hover:bg-surface-hover hover:text-foreground'}`}>
-                                        <input
-                                            class="sr-only"
-                                            type="radio"
-                                            name="midi-channel-filter-mode"
-                                            value={option.value}
-                                            bind:group={channelFilterType} />
-                                        <span>{option.label}</span>
-                                    </label>{/each}
-                            </div>
+                            <SegmentedControl
+                                name="midi-channel-filter-mode"
+                                ariaLabel="MIDI channel filter mode"
+                                compact
+                                bind:value={channelFilterType}
+                                options={[
+                                    { value: MidiFilterKind.Allowlist, label: 'Allow only' },
+                                    {
+                                        value: MidiFilterKind.Denylist,
+                                        label: 'Allow all except'
+                                    }
+                                ]} />
                             <div class="grid gap-1.5">
                                 <div class="grid grid-cols-8 gap-1">
                                     {#each midiChannels as channel}<label
@@ -1628,7 +1501,9 @@
                                 </div>
                             </div>
                         </div>
-                        {@render saveButton('channels', channelsChanged)}
+                        <ApplyIconButton
+                            saving={savingSections.has('channels')}
+                            pending={channelsChanged} />
                     </div>
                     <small class="text-foreground-muted">
                         Checked channels are {channelFilterType === MidiFilterKind.Allowlist
@@ -1649,67 +1524,50 @@
                     </h3>
                     <div class="grid grid-cols-[minmax(0,1fr)_2.25rem] items-end gap-2">
                         <div class="grid min-w-0 gap-4">
-                            <div
-                                class="border-border-strong bg-surface-inset grid h-9 grid-cols-2 overflow-hidden rounded-lg border"
-                                role="radiogroup"
-                                aria-label="MIDI controller filter mode">
-                                {#each [{ value: MidiFilterKind.Allowlist, label: 'Allow only' }, { value: MidiFilterKind.Denylist, label: 'Allow all except' }] as option, index}<label
-                                        class={`has-focus-visible:outline-accent grid h-9 min-w-0 cursor-pointer place-items-center px-2 text-center text-sm font-semibold transition-colors has-focus-visible:z-1 has-focus-visible:outline-2 has-focus-visible:outline-offset-[-0.125rem] ${index > 0 ? 'border-border-strong border-l' : ''} ${ccFilterType === option.value ? 'bg-accent/12 text-accent' : 'text-foreground-muted hover:bg-surface-hover hover:text-foreground'}`}>
-                                        <input
-                                            class="sr-only"
-                                            type="radio"
-                                            name="midi-controller-filter-mode"
-                                            value={option.value}
-                                            bind:group={ccFilterType} />
-                                        <span class="max-w-full truncate">{option.label}</span>
-                                    </label>{/each}
-                            </div>
+                            <SegmentedControl
+                                name="midi-controller-filter-mode"
+                                ariaLabel="MIDI controller filter mode"
+                                compact
+                                bind:value={ccFilterType}
+                                options={[
+                                    { value: MidiFilterKind.Allowlist, label: 'Allow only' },
+                                    {
+                                        value: MidiFilterKind.Denylist,
+                                        label: 'Allow all except'
+                                    }
+                                ]} />
                             <div class="grid min-w-0 gap-1">
                                 <div class="flex min-w-0 gap-1.5">
                                     <div class="relative min-w-0 flex-1">
-                                        <input
-                                            class="border-border-strong bg-surface-inset h-9 w-full min-w-0 rounded-lg border px-2.5 text-sm"
-                                            type="text"
-                                            role="combobox"
-                                            aria-label="MIDI controller to add"
-                                            aria-autocomplete="list"
-                                            aria-controls="midi-controller-hints"
-                                            aria-expanded={controllerHintsOpen &&
-                                                controllerHints.length > 0}
-                                            placeholder="CC number or name"
+                                        <SelectDropdown
+                                            id="midi-controller-hints"
                                             bind:value={controllerQuery}
+                                            options={midiControllers.map((controller) => ({
+                                                value: String(controller.id),
+                                                label: `CC ${controller.id}`,
+                                                selectionLabel: `CC ${controller.id} · ${controller.name}`,
+                                                description: controllers.includes(controller.id)
+                                                    ? `${controller.name} · Already added`
+                                                    : controller.name,
+                                                disabled: controllers.includes(controller.id)
+                                            }))}
+                                            placeholder="Select controller"
                                             disabled={availableControllers.length === 0}
-                                            onfocus={() => (controllerHintsOpen = true)}
-                                            onblur={() => (controllerHintsOpen = false)}
-                                            oninput={() => {
-                                                controllerHintsOpen = true;
-                                                activeControllerHint = -1;
-                                            }}
-                                            onkeydown={handleControllerKeydown} />
-                                        {#if controllerHintsOpen && controllerHints.length > 0}
-                                            <div
-                                                id="midi-controller-hints"
-                                                class="border-border-strong bg-surface-card absolute top-[calc(100%+0.25rem)] right-0 left-0 z-20 max-h-48 overflow-y-auto rounded-lg border p-1 shadow-lg"
-                                                role="listbox">
-                                                {#each controllerHints as controller, index}<button
-                                                        class={`text-foreground hover:bg-surface-hover grid w-full cursor-pointer grid-cols-[3.5rem_minmax(0,1fr)] items-center gap-2 rounded-md border-0 px-2 py-1.5 text-left text-sm ${index === activeControllerHint ? 'bg-surface-hover' : 'bg-transparent'}`}
-                                                        type="button"
-                                                        role="option"
-                                                        aria-selected={index ===
-                                                            activeControllerHint}
-                                                        onpointerdown={(event) => {
-                                                            event.preventDefault();
-                                                            selectControllerHint(controller.id);
-                                                        }}>
-                                                        <span
-                                                            class="text-foreground-muted font-mono whitespace-nowrap">
-                                                            CC {controller.id}
-                                                        </span>
-                                                        <span class="truncate">
-                                                            {controller.name}
-                                                        </span>
-                                                    </button>{/each}
-                                            </div>
+                                            compact
+                                            searchable
+                                            searchPlaceholder="Search controllers"
+                                            noMatchesText="No matching controllers"
+                                            ariaLabel="MIDI controller to add"
+                                            onchange={addController} />
+                                        {#if controllerQuery}
+                                            <button
+                                                class="text-foreground-muted hover:bg-surface-hover hover:text-foreground absolute top-1/2 right-7 z-10 grid size-7 -translate-y-1/2 cursor-pointer place-items-center rounded-md border-0 bg-transparent transition-colors"
+                                                type="button"
+                                                aria-label="Clear MIDI controller"
+                                                title="Clear"
+                                                onclick={() => (controllerQuery = '')}>
+                                                <Icon icon="lucide:x" width="1rem" />
+                                            </button>
                                         {/if}
                                     </div>
                                     <button
@@ -1729,19 +1587,13 @@
                                                 : 'lucide:circle-dot'}
                                             width="1rem" />
                                     </button>
-                                    <button
-                                        class="bg-surface-button text-foreground enabled:hover:bg-surface-hover grid size-9 shrink-0 cursor-pointer place-items-center rounded-lg border-0 transition-colors disabled:cursor-default disabled:opacity-40"
-                                        type="button"
-                                        aria-label="Add MIDI controller"
-                                        title="Add MIDI controller"
-                                        disabled={controllerToAdd === undefined}
-                                        onclick={addController}>
-                                        <Icon icon="lucide:plus" width="1rem" />
-                                    </button>
                                 </div>
                                 {#if selectedControllerHint}<small
                                         class="text-foreground-muted truncate px-1 text-xs">
                                         CC {selectedControllerHint.id} · {selectedControllerHint.name}
+                                    </small>{:else if addedControllerHint}<small
+                                        class="text-foreground-muted truncate px-1 text-xs">
+                                        Already added: CC {addedControllerHint.id} · {addedControllerHint.name}
                                     </small>{:else}<small
                                         class="text-foreground-subtle truncate px-1 text-xs">
                                         No matching controller
@@ -1792,7 +1644,9 @@
                                 </div>
                             </div>
                         </div>
-                        {@render saveButton('controllers', controllersChanged)}
+                        <ApplyIconButton
+                            saving={savingSections.has('controllers')}
+                            pending={controllersChanged} />
                     </div>
                     <small class="text-foreground-muted">
                         Selected controllers are {ccFilterType === MidiFilterKind.Allowlist
@@ -1813,72 +1667,18 @@
                     </h3>
                     <div class="grid grid-cols-[minmax(0,1fr)_2.25rem] items-end gap-2">
                         <div class="grid min-w-0 grid-cols-2 gap-1.5">
-                            <button
-                                class={`flex min-h-9 cursor-pointer items-center gap-2 rounded-lg border px-2.5 text-left text-sm transition-colors ${ignorePitchBend ? 'border-accent/40 bg-accent/6 text-foreground' : 'border-border-strong bg-surface-inset text-foreground hover:border-accent/35'}`}
-                                type="button"
-                                aria-pressed={ignorePitchBend}
-                                onclick={() => {
-                                    ignorePitchBend = !ignorePitchBend;
-                                }}>
-                                <span
-                                    class={`grid size-4.5 shrink-0 place-items-center rounded-full border transition-colors ${ignorePitchBend ? 'border-accent/70 bg-accent/10' : 'border-border-strong bg-surface-card'}`}
-                                    aria-hidden="true">
-                                    {#if ignorePitchBend}<span
-                                            class="bg-accent size-2 rounded-full">
-                                        </span>{/if}
-                                </span>
-                                <span class="truncate">Pitch bend</span>
-                            </button>
-                            <button
-                                class={`flex min-h-9 cursor-pointer items-center gap-2 rounded-lg border px-2.5 text-left text-sm transition-colors ${ignoreProgramChange ? 'border-accent/40 bg-accent/6 text-foreground' : 'border-border-strong bg-surface-inset text-foreground hover:border-accent/35'}`}
-                                type="button"
-                                aria-pressed={ignoreProgramChange}
-                                onclick={() => {
-                                    ignoreProgramChange = !ignoreProgramChange;
-                                }}>
-                                <span
-                                    class={`grid size-4.5 shrink-0 place-items-center rounded-full border transition-colors ${ignoreProgramChange ? 'border-accent/70 bg-accent/10' : 'border-border-strong bg-surface-card'}`}
-                                    aria-hidden="true">
-                                    {#if ignoreProgramChange}<span
-                                            class="bg-accent size-2 rounded-full">
-                                        </span>{/if}
-                                </span>
-                                <span class="truncate">Program change</span>
-                            </button>
-                            <button
-                                class={`flex min-h-9 cursor-pointer items-center gap-2 rounded-lg border px-2.5 text-left text-sm transition-colors ${ignoreChannelAftertouch ? 'border-accent/40 bg-accent/6 text-foreground' : 'border-border-strong bg-surface-inset text-foreground hover:border-accent/35'}`}
-                                type="button"
-                                aria-pressed={ignoreChannelAftertouch}
-                                onclick={() => {
-                                    ignoreChannelAftertouch = !ignoreChannelAftertouch;
-                                }}>
-                                <span
-                                    class={`grid size-4.5 shrink-0 place-items-center rounded-full border transition-colors ${ignoreChannelAftertouch ? 'border-accent/70 bg-accent/10' : 'border-border-strong bg-surface-card'}`}
-                                    aria-hidden="true">
-                                    {#if ignoreChannelAftertouch}<span
-                                            class="bg-accent size-2 rounded-full">
-                                        </span>{/if}
-                                </span>
-                                <span class="truncate">Channel aftertouch</span>
-                            </button>
-                            <button
-                                class={`flex min-h-9 cursor-pointer items-center gap-2 rounded-lg border px-2.5 text-left text-sm transition-colors ${ignorePolyphonicAftertouch ? 'border-accent/40 bg-accent/6 text-foreground' : 'border-border-strong bg-surface-inset text-foreground hover:border-accent/35'}`}
-                                type="button"
-                                aria-pressed={ignorePolyphonicAftertouch}
-                                onclick={() => {
-                                    ignorePolyphonicAftertouch = !ignorePolyphonicAftertouch;
-                                }}>
-                                <span
-                                    class={`grid size-4.5 shrink-0 place-items-center rounded-full border transition-colors ${ignorePolyphonicAftertouch ? 'border-accent/70 bg-accent/10' : 'border-border-strong bg-surface-card'}`}
-                                    aria-hidden="true">
-                                    {#if ignorePolyphonicAftertouch}<span
-                                            class="bg-accent size-2 rounded-full">
-                                        </span>{/if}
-                                </span>
-                                <span class="truncate">Poly aftertouch</span>
-                            </button>
+                            <DotToggle label="Pitch bend" bind:checked={ignorePitchBend} />
+                            <DotToggle label="Program change" bind:checked={ignoreProgramChange} />
+                            <DotToggle
+                                label="Channel aftertouch"
+                                bind:checked={ignoreChannelAftertouch} />
+                            <DotToggle
+                                label="Poly aftertouch"
+                                bind:checked={ignorePolyphonicAftertouch} />
                         </div>
-                        {@render saveButton('ignored', ignoredMessagesChanged)}
+                        <ApplyIconButton
+                            saving={savingSections.has('ignored')}
+                            pending={ignoredMessagesChanged} />
                     </div>
                 </form>
 
@@ -1903,7 +1703,13 @@
                                     type="button"
                                     disabled={busy}
                                     onclick={() => void deleteSelected()}>
-                                    Remove instrument
+                                    <span class="inline-flex items-center gap-2">
+                                        {#if removingInstrument}<Icon
+                                                icon="lucide:loader-circle"
+                                                width="0.875rem"
+                                                class="animate-spin" />{/if}
+                                        {removingInstrument ? 'Removing…' : 'Remove instrument'}
+                                    </span>
                                 </button>
                             </div>
                         </div>

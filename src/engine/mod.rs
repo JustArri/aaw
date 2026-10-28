@@ -1,5 +1,5 @@
 use crate::{
-    DEFAULT_CHANNEL_COUNT, DEFAULT_MAX_BLOCK_SIZE, DEFAULT_SAMPLE_RATE,
+    DEFAULT_CHANNEL_COUNT, DEFAULT_SAMPLE_RATE, MAX_BLOCK_SIZE,
     engine::{
         project::{ProjectAsset, ProjectContext},
         synth_graph::SynthGraphError,
@@ -28,12 +28,15 @@ mod rt;
 pub mod synth_graph;
 pub mod user_presets;
 
+pub const RETIREMENT_QUEUE_CAPACITY: usize = 16;
+
 #[derive(Clone)]
 pub struct EngineContext<'a> {
     pub assets_dir: &'a Path,
     pub stream_error: Arc<AtomicBool>,
     pub cmd_capacity: usize,
     pub midi_capacity: usize,
+    pub recording_queue_capacity: usize,
     pub min_instruments: usize,
     pub min_synths: usize,
     pub project_change_tx: broadcast::Sender<Arc<ProjectChange>>,
@@ -45,10 +48,10 @@ impl<'a> From<&EngineContext<'a>> for ProjectContext<'a> {
             assets_dir: value.assets_dir,
             min_instruments: value.min_instruments,
             min_synths: value.min_synths,
-            stream_config: AudioOutputStreamConfig {
+            stream_config: &AudioOutputStreamConfig {
                 channel_count: DEFAULT_CHANNEL_COUNT,
                 sample_rate: DEFAULT_SAMPLE_RATE,
-                max_block_size: DEFAULT_MAX_BLOCK_SIZE,
+                max_block_size: MAX_BLOCK_SIZE,
             },
         }
     }
@@ -61,31 +64,57 @@ pub async fn create_engine<'a>(
     let (cmd_tx, cmd_rx) = rt_channels::create_notified_mpsc(ctx.cmd_capacity);
     let (reply_tx, reply_rx) = rt_channels::create_spsc(ctx.cmd_capacity);
     let (midi_tx, midi_rx) = rt_channels::create_notified_mpsc(ctx.midi_capacity);
+    let (recording_tx, recording_rx) = rt_channels::create_spsc(ctx.recording_queue_capacity);
     let pending_replies = Arc::new(Mutex::new(HashMap::new()));
+    let audio_rec_capture_enabled = Arc::new(AtomicBool::new(false));
+    let audio_rec_state = Arc::new(RwLock::new(AudioRecordingState::default()));
+    let audio_rec_params = Arc::new(Mutex::new(AudioRecordingParams {
+        sample_rate: DEFAULT_SAMPLE_RATE,
+        file_path: PathBuf::new(),
+    }));
 
     let (ctr_project, rt_project) = project::prepare(project, (&ctx).into()).await?;
 
-    let handle = EngineHandle::new(
+    let handle = EngineHandle {
         cmd_tx,
-        Arc::clone(&pending_replies),
+        pending_replies: Arc::clone(&pending_replies),
         midi_tx,
-        Arc::new(AtomicU32::new(0)),
-        Arc::new(RwLock::new(ctr_project)),
-        ctx.project_change_tx,
-    );
+        next_cmd_id: Arc::new(AtomicU32::new(0)),
+        project: Arc::new(RwLock::new(ctr_project)),
+        project_change_tx: ctx.project_change_tx,
+        audio_rec_state: Arc::clone(&audio_rec_state),
+        audio_rec_params: Arc::clone(&audio_rec_params),
+    };
 
     let (cmd_rx, cmd_notify) = cmd_rx.unwrap();
     let (midi_rx, midi_notify) = midi_rx.unwrap();
-    let engine = Engine { project: rt_project, audio_blocks: None, midi_rx, cmd_rx, reply_tx };
+    let engine = Engine {
+        project: rt_project,
+        audio_blocks: None,
+        midi_rx,
+        cmd_rx,
+        reply_tx,
+        recording_tx,
+        sample_rate: DEFAULT_SAMPLE_RATE as f32,
+        audio_rec_capture_enabled: Arc::clone(&audio_rec_capture_enabled),
+    };
     let engine = Arc::new(Mutex::new(engine));
 
     let runtime = Runtime {
         pending_replies,
         reply_rx,
+        recording_rx,
         cmd_notify,
         midi_notify,
         stream_error: ctx.stream_error,
         engine: Arc::clone(&engine),
+        audio_rec_state,
+        audio_rec_params,
+        audio_rec_capture_enabled,
+        audio_rec_active_sample_rate: DEFAULT_SAMPLE_RATE,
+        audio_rec_file: None,
+        audio_rec_buffer: Vec::with_capacity(MAX_BLOCK_SIZE * 4),
+        audio_rec_bytes: 0,
     };
 
     Ok((engine, handle, runtime))

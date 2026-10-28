@@ -1,5 +1,5 @@
 use crate::{
-    DEFAULT_MAX_BLOCK_SIZE,
+    MAX_BLOCK_SIZE,
     audio::{
         self,
         params::{
@@ -122,10 +122,10 @@ where
     engine
         .lock()
         .await
-        .reconfigure(channel_count, config.sample_rate, DEFAULT_MAX_BLOCK_SIZE)
+        .reconfigure(channel_count, config.sample_rate, MAX_BLOCK_SIZE)
         .map_err(Error::EngineReconfiguration)?;
 
-    let mut scratch = vec![0.0_f32; channel_count * DEFAULT_MAX_BLOCK_SIZE];
+    let mut scratch = vec![0.0_f32; channel_count * MAX_BLOCK_SIZE];
 
     let stream = device
         .build_output_stream(

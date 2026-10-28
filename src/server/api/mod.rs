@@ -13,9 +13,13 @@ pub mod audio;
 pub mod midi;
 pub mod notifications;
 pub mod projects;
+pub mod recordings_dav;
 pub mod system;
 
-pub fn router(assets_dir: impl AsRef<std::path::Path>) -> OpenApiRouter<AppState> {
+pub fn router(
+    assets_dir: impl AsRef<std::path::Path>,
+    recordings_dir: impl AsRef<std::path::Path>,
+) -> OpenApiRouter<AppState> {
     #[derive(OpenApi)]
     #[openapi(components(schemas(notifications::Notification)))]
     struct Api;
@@ -31,6 +35,7 @@ pub fn router(assets_dir: impl AsRef<std::path::Path>) -> OpenApiRouter<AppState
         .nest("/projects", projects::router())
         .nest("/assets", assets::router())
         .merge(assets_dav::router("/assets/fs", assets_dir))
+        .merge(recordings_dav::router("/recordings", recordings_dir))
         .routes(routes!(notifications::handler))
 }
 
@@ -55,7 +60,7 @@ async fn health() -> &'static str {
     path = "/silence",
     responses(
         (status = NO_CONTENT, description = "OK"),
-        (status = INTERNAL_SERVER_ERROR, description = "Internal Server Error"),
+        (status = INTERNAL_SERVER_ERROR, body = String, description = "Internal Server Error"),
     )
 )]
 async fn silence(State(app_state): State<AppState>) -> Result<StatusCode, (StatusCode, String)> {

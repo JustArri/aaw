@@ -56,6 +56,24 @@
     --synth-warm: #ffad72;
     --synth-unassigned: #747d88;
     --preset-rose: #ff7088;
+    --keyboard-white: #f7f6f2;
+    --keyboard-black: #17191d;
+    --midi-channel-1: oklch(63% 0.22 25deg);
+    --midi-channel-2: oklch(75% 0.15 190deg);
+    --midi-channel-3: oklch(72% 0.2 350deg);
+    --midi-channel-4: oklch(62% 0.17 160deg);
+    --midi-channel-5: oklch(68% 0.22 325deg);
+    --midi-channel-6: oklch(75% 0.18 135deg);
+    --midi-channel-7: oklch(58% 0.22 300deg);
+    --midi-channel-8: oklch(78% 0.18 110deg);
+    --midi-channel-9: oklch(64% 0.22 275deg);
+    --midi-channel-10: #718396;
+    --midi-channel-11: oklch(73% 0.17 85deg);
+    --midi-channel-12: oklch(61% 0.21 250deg);
+    --midi-channel-13: oklch(75% 0.18 60deg);
+    --midi-channel-14: oklch(64% 0.19 225deg);
+    --midi-channel-15: oklch(72% 0.2 38deg);
+    --midi-channel-16: oklch(60% 0.16 200deg);
     color-scheme: light;
 }
 
@@ -109,6 +127,8 @@
     --contrast: #ffffff;
     --scrim: #000000;
     --overlay-shadow: rgb(0 0 0 / 0.45);
+    --keyboard-white: #f7f6f2;
+    --keyboard-black: #17191d;
     color-scheme: dark;
 }
 
@@ -127,6 +147,15 @@
     textarea {
         color: var(--foreground);
     }
+
+    button:focus-visible,
+    input:focus-visible {
+        @apply outline-accent outline-2 outline-offset-2;
+    }
+}
+
+@theme {
+    --font-mono: monospace;
 }
 
 @theme inline {
@@ -180,4 +209,22 @@
     --color-synth-warm: var(--synth-warm);
     --color-synth-unassigned: var(--synth-unassigned);
     --color-preset-rose: var(--preset-rose);
+    --color-keyboard-white: var(--keyboard-white);
+    --color-keyboard-black: var(--keyboard-black);
+    --color-midi-channel-1: var(--midi-channel-1);
+    --color-midi-channel-2: var(--midi-channel-2);
+    --color-midi-channel-3: var(--midi-channel-3);
+    --color-midi-channel-4: var(--midi-channel-4);
+    --color-midi-channel-5: var(--midi-channel-5);
+    --color-midi-channel-6: var(--midi-channel-6);
+    --color-midi-channel-7: var(--midi-channel-7);
+    --color-midi-channel-8: var(--midi-channel-8);
+    --color-midi-channel-9: var(--midi-channel-9);
+    --color-midi-channel-10: var(--midi-channel-10);
+    --color-midi-channel-11: var(--midi-channel-11);
+    --color-midi-channel-12: var(--midi-channel-12);
+    --color-midi-channel-13: var(--midi-channel-13);
+    --color-midi-channel-14: var(--midi-channel-14);
+    --color-midi-channel-15: var(--midi-channel-15);
+    --color-midi-channel-16: var(--midi-channel-16);
 }

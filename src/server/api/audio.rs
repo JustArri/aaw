@@ -1,4 +1,5 @@
-use crate::{DEFAULT_MAX_BLOCK_SIZE, audio};
+use crate::engine::AudioRecordingState;
+use crate::{MAX_BLOCK_SIZE, audio, files};
 use crate::{
     app_state::AppState,
     audio::params::{DeviceCfgSelection, LatencySelection, SampleRateSelection},
@@ -6,6 +7,7 @@ use crate::{
 use axum::{Json, extract::State, http::StatusCode};
 use cpal::traits::StreamTrait;
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 use std::sync::Arc;
 use utoipa::ToSchema;
 use utoipa_axum::{router::OpenApiRouter, routes};
@@ -15,6 +17,10 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(audio_host_outputs))
         .routes(routes!(audio_output_stream))
         .routes(routes!(set_audio_output_stream))
+        .routes(routes!(audio_recording))
+        .routes(routes!(start_audio_recording))
+        .routes(routes!(stop_audio_recording))
+        .routes(routes!(set_audio_recording_paused))
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -213,7 +219,7 @@ async fn set_audio_output_stream(
         },
         channel_count: stream_cfg.channels as u32,
         sample_rate: stream_cfg.sample_rate,
-        max_block_size: DEFAULT_MAX_BLOCK_SIZE,
+        max_block_size: MAX_BLOCK_SIZE,
         sample_format,
     };
 
@@ -233,7 +239,118 @@ async fn set_audio_output_stream(
     *app_state.output_stream.lock().await =
         Some(AudioOutputStream { stream, info: stream_info.clone() });
 
+    files::save(&app_state.aaw_root_dir, crate::CFG_AUDIO_OUTPUT, &stream_info).await;
+
     Ok(Json(Some(stream_info)))
+}
+
+//--------------------------------------------------------------------------------------------------
+
+#[derive(Serialize, ToSchema)]
+struct AudioRecordingInfo {
+    #[schema(value_type = Option<String>)]
+    #[schema(required)]
+    output_file: Option<PathBuf>,
+
+    #[schema(required)]
+    sample_rate: Option<u32>,
+
+    state: AudioRecordingState,
+}
+
+//--------------------------------------------------------------------------------------------------
+
+#[utoipa::path(
+    get,
+    path = "/recording",
+    responses(
+        (
+            status = OK,
+            body = Option<AudioRecordingInfo>,
+            content_type = "application/json",
+            description = "OK"
+        ),
+        (status = BAD_REQUEST, body = String, description = "Bad Request"),
+        (status = INTERNAL_SERVER_ERROR, body = String, description = "Internal Server Error"),
+    )
+)]
+async fn audio_recording(State(app_state): State<AppState>) -> Json<AudioRecordingInfo> {
+    let state = app_state.engine_handle.audio_recording_state().await;
+
+    let (output_file, sample_rate) = if state != AudioRecordingState::Stopped {
+        let params = app_state.engine_handle.audio_recording_parameters().await;
+        (Some(params.file_path), Some(params.sample_rate))
+    } else {
+        (None, None)
+    };
+
+    Json(AudioRecordingInfo { output_file, sample_rate, state })
+}
+
+//--------------------------------------------------------------------------------------------------
+
+#[utoipa::path(
+    post,
+    path = "/recording/start",
+    responses(
+        (status = NO_CONTENT, description = "Recording started"),
+        (status = BAD_REQUEST, body = String, description = "Bad Request"),
+        (status = INTERNAL_SERVER_ERROR, body = String, description = "Internal Server Error"),
+    )
+)]
+async fn start_audio_recording(
+    State(app_state): State<AppState>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    app_state
+        .engine_handle
+        .start_recording(
+            app_state.stream_config().await.sample_rate,
+            app_state
+                .recordings_dir
+                .join(format!("{}.wav", chrono::Local::now().format("%Y-%m-%d_%H-%M-%S%.3f"))),
+        )
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+//--------------------------------------------------------------------------------------------------
+
+#[utoipa::path(
+    post,
+    path = "/recording/stop",
+    responses(
+        (status = NO_CONTENT, description = "Recording started"),
+        (status = INTERNAL_SERVER_ERROR, body = String, description = "Internal Server Error"),
+    )
+)]
+async fn stop_audio_recording(
+    State(app_state): State<AppState>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    app_state.engine_handle.stop_recording().await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+//--------------------------------------------------------------------------------------------------
+
+#[utoipa::path(
+    post,
+    path = "/recording/paused",
+    request_body(
+        content = bool,
+        content_type = "application/json",
+    ),
+    responses(
+        (status = NO_CONTENT, description = "Recording started"),
+        (status = BAD_REQUEST, body = String, description = "Bad Request"),
+        (status = INTERNAL_SERVER_ERROR, body = String, description = "Internal Server Error"),
+    )
+)]
+async fn set_audio_recording_paused(
+    State(app_state): State<AppState>,
+    Json(flag): Json<bool>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    app_state.engine_handle.set_recording_paused(flag).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 //--------------------------------------------------------------------------------------------------

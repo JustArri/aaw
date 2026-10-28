@@ -1,7 +1,7 @@
 import type { Notification, ProjectChange } from '$lib/generated/models';
 import * as api from '$lib/generated/api';
 import { notificationStream } from '$lib/notification-stream';
-import { recordMidiEvent } from '$lib/state/midi-events.svelte';
+import { clearActiveMidiNotes, recordMidiEvent } from '$lib/state/midi-events.svelte';
 import {
     fetchInstrumentSlots,
     updateInstrumentGlobalTransposition,
@@ -13,6 +13,7 @@ import {
     removeSynthFromState,
     updateFluidSynthProgram,
     updateSynthEffects,
+    updateSynthGain,
     updateSynthInstrumentSlot,
     updateSynthName,
     updateSynthParameters
@@ -22,7 +23,8 @@ import { unreachable } from '$lib/util';
 import { gatewayOnline, reportGatewayOffline } from './gateway.svelte';
 import {
     fetchActiveProject,
-    updateActiveProjectEffects,
+    updateActiveProjectGlobalEffects,
+    updateActiveProjectGlobalGain,
     updateActiveProjectName,
     updateActiveProjectStorage,
     updateActiveProjectRevision
@@ -49,6 +51,7 @@ async function receiveAndHandleServerNotifications(abortSignal: AbortSignal) {
             await handleServerNotification(notification);
         }
     } catch (e) {
+        clearActiveMidiNotes();
         reportGatewayOffline();
         console.error(e);
     }
@@ -91,8 +94,11 @@ async function handleProjectChange(change: ProjectChange) {
         case 'Name':
             updateActiveProjectName(change.data.name);
             break;
-        case 'Effects':
-            updateActiveProjectEffects(change.data.effects);
+        case 'GlobalEffects':
+            updateActiveProjectGlobalEffects(change.data.effects);
+            break;
+        case 'GlobalGain':
+            updateActiveProjectGlobalGain(change.data.gain);
             break;
         case 'Synth':
             if (change.data.removed) {
@@ -112,6 +118,9 @@ async function handleProjectChange(change: ProjectChange) {
             break;
         case 'SynthEffects':
             updateSynthEffects(change.data.id, change.data.effects);
+            break;
+        case 'SynthGain':
+            updateSynthGain(change.data.id, change.data.gain);
             break;
         case 'GlobalTransposition':
             updateInstrumentGlobalTransposition(change.data.transposition);

@@ -1,10 +1,10 @@
 use crate::{
-    audio::block::AudioBlock,
+    audio::AudioBlock,
     midi::{ControlChange, MidiEvent, MidiEventKind},
 };
 use std::f32::consts::TAU;
 
-const MAX_VOICES: usize = 32;
+pub const DEFAULT_VOICE_COUNT: usize = 32;
 const OUTPUT_GAIN: f32 = 0.07;
 const ATTACK_TIME_SECONDS: f32 = 0.025;
 const RELEASE_TIME_SECONDS: f32 = 0.5;
@@ -21,14 +21,16 @@ struct SineVoice {
 
 pub struct Dummy {
     sample_rate: f32,
+    voice_count: usize,
     voices: Vec<SineVoice>,
 }
 
 impl Dummy {
     //TODO: implement multiple channels
 
-    pub fn new(sample_rate: u32) -> Self {
-        Self { sample_rate: sample_rate as f32, voices: Vec::with_capacity(MAX_VOICES) }
+    pub fn new(sample_rate: f32, voice_count: usize) -> Self {
+        assert!(voice_count > 0, "dummy synth voice count must be greater than zero");
+        Self { sample_rate, voice_count, voices: Vec::with_capacity(voice_count) }
     }
 
     pub fn set_sample_rate(&mut self, sample_rate: u32) {
@@ -44,7 +46,7 @@ impl Dummy {
         match event.kind {
             MidiEventKind::NoteOn { key, velocity } if velocity > 0 => {
                 self.voices.retain(|voice| voice.key != key);
-                if self.voices.len() == MAX_VOICES {
+                if self.voices.len() == self.voice_count {
                     self.voices.remove(0);
                 }
                 let freq = 440.0 * 2.0_f32.powf((key as f32 - 69.0) / 12.0);

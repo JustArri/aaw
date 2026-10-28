@@ -2,7 +2,6 @@
     import Icon from '@iconify/svelte';
     import EngineStatusIndicator from '$lib/components/EngineStatusIndicator.svelte';
     import type { MidiEvent } from '$lib/generated/models';
-    import { notify } from '$lib/push-notifications.svelte';
     import { clearMidiEvents, midiEventLogSize, midiEvents } from '$lib/state/midi-events.svelte';
     import { unreachable } from '$lib/util';
 
@@ -84,7 +83,6 @@
 
     function clearEvents() {
         clearMidiEvents();
-        notify.success('MIDI event log cleared.', { title: 'Clear events' });
     }
 </script>
 

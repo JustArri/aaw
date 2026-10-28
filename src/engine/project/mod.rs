@@ -26,7 +26,7 @@ pub struct ProjectContext<'a> {
     pub assets_dir: &'a Path,
     pub min_instruments: usize,
     pub min_synths: usize,
-    pub stream_config: AudioOutputStreamConfig,
+    pub stream_config: &'a AudioOutputStreamConfig,
 }
 
 impl<'a> From<&ProjectContext<'a>> for InstrumentGraphContext {

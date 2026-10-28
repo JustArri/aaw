@@ -2,9 +2,11 @@
     import Icon from '@iconify/svelte';
     import { onMount } from 'svelte';
     import NumericControl from '$lib/components/NumericControl.svelte';
+    import { decibelsToLinearGain, linearGainToDecibels } from '$lib/gain';
     import type { SynthId } from '$lib/generated/models';
     import { icons } from '$lib/icons';
     import { notify } from '$lib/push-notifications.svelte';
+    import { activeProject } from '$lib/state/active-project.svelte';
     import {
         fetchInstruments,
         instrumentGlobalTransposition,
@@ -12,7 +14,13 @@
         setInstrumentEnabled,
         setInstrumentGlobalTransposition
     } from '$lib/state/instruments.svelte';
-    import { fetchSynths, synths, SynthKind, type SynthEntry } from '$lib/state/synths.svelte';
+    import {
+        fetchSynths,
+        setGlobalGain,
+        synths,
+        SynthKind,
+        type SynthEntry
+    } from '$lib/state/synths.svelte';
     import {
         activateUserPreset,
         cloneUserPresets,
@@ -31,6 +39,8 @@
             .map(([id, slot]) => ({ id: Number(id), slot }))
             .sort((left, right) => left.id - right.id)
     );
+    let project = $derived(activeProject());
+    let globalGainDb = $derived(linearGainToDecibels(project?.synth_graph.global_gain ?? 1));
     let availableSynths = $derived(synths());
     let enabledInstrumentIds = $derived(
         instruments.filter(({ slot }) => slot.enabled).map(({ id }) => id)
@@ -131,11 +141,6 @@
         }
         creatingPreset = true;
         const nextPresetNumber = userPresets().entries.length + 1;
-        const notification = notify.info('Saving the current instrument selection…', {
-            duration: null,
-            loading: true,
-            title: 'Create user preset'
-        });
         try {
             const updated = cloneUserPresets(userPresets());
             updated.entries.push({
@@ -143,18 +148,24 @@
                 instruments: [...enabledInstrumentIds]
             });
             await saveUserPresets(updated);
-            notification.success(`Preset ${nextPresetNumber} created.`);
         } catch (error) {
-            notification.error(error instanceof Error ? error.message : String(error));
+            notify.error(error instanceof Error ? error.message : String(error), {
+                title: 'Create user preset'
+            });
         } finally {
             creatingPreset = false;
         }
     }
+
+    async function setGlobalGainDb(value: number) {
+        await setGlobalGain(decibelsToLinearGain(value));
+        return value;
+    }
 </script>
 
-<div class="grid gap-3 min-[37.5rem]:grid-cols-2 min-[56.25rem]:grid-cols-1 min-[56.25rem]:gap-3.5">
+<div class="grid gap-3 min-[37.5rem]:grid-cols-2 min-[37.5rem]:items-start min-[56.25rem]:gap-3.5">
     <div
-        class="contents min-[56.25rem]:row-start-2 min-[56.25rem]:grid min-[56.25rem]:grid-cols-2 min-[56.25rem]:gap-3.5">
+        class="contents min-[37.5rem]:order-0 min-[37.5rem]:col-start-2 min-[37.5rem]:row-start-2 min-[37.5rem]:grid min-[37.5rem]:content-start min-[37.5rem]:gap-3 min-[56.25rem]:gap-3.5">
         <section class="order-1 min-w-0 min-[56.25rem]:order-0" aria-label="Global transposition">
             <NumericControl
                 label="Global transposition"
@@ -169,19 +180,33 @@
                 disabled={loading}
                 onchange={setInstrumentGlobalTransposition} />
         </section>
+        <section class="order-4 min-w-0 min-[56.25rem]:order-0" aria-label="Global gain">
+            <NumericControl
+                label="Global gain"
+                value={globalGainDb}
+                unit="dB"
+                smallStep={0.5}
+                largeStep={5}
+                resetValue={0}
+                min={-100}
+                max={100}
+                precision={1}
+                disabled={loading || !project}
+                onchange={setGlobalGainDb} />
+        </section>
     </div>
 
-    <div class="contents min-[56.25rem]:row-start-1 min-[56.25rem]:grid min-[56.25rem]:gap-3.5">
+    <div class="contents">
         <section
-            class="border-border bg-surface-card order-2 overflow-hidden rounded-xl border min-[56.25rem]:order-0">
+            class="border-border bg-surface-card order-2 overflow-hidden rounded-xl border min-[37.5rem]:order-0 min-[37.5rem]:col-span-2 min-[37.5rem]:row-start-1">
             <header
-                class="border-border [&_small]:text-foreground-muted [&_b]:bg-surface-badge [&_b]:text-foreground-strong flex min-h-13.5 items-center justify-between border-b px-3.25 min-[56.25rem]:min-h-14.75 min-[56.25rem]:px-3.75 [&_b]:grid [&_b]:h-5.75 [&_b]:min-w-6.75 [&_b]:place-items-center [&_b]:rounded-md [&_b]:font-mono [&_b]:text-xs [&_b]:font-semibold min-[56.25rem]:[&_b]:text-sm [&_small]:mt-1 [&_small]:block [&_small]:text-xs min-[56.25rem]:[&_small]:text-sm [&_span]:block [&_span]:text-sm [&_span]:font-bold min-[56.25rem]:[&_span]:text-sm">
+                class="border-border flex min-h-13.5 items-center justify-between border-b px-3.25 min-[56.25rem]:min-h-14.75 min-[56.25rem]:px-3.75">
                 <div>
-                    <span>User presets</span>
-                    <small>Recall saved instrument states</small>
+                    <span class="block text-sm font-bold">User presets</span>
                 </div>
                 <div class="flex items-center gap-2">
-                    <b class="min-w-0! px-1.5 text-center font-sans! leading-none tabular-nums">
+                    <b
+                        class="bg-surface-badge text-foreground-strong grid h-5.75 min-w-0! place-items-center rounded-md px-1.5 text-center font-sans! text-xs leading-none font-semibold tabular-nums min-[56.25rem]:text-sm">
                         <span>{userPresets().entries.length}</span>
                     </b>
                     <button
@@ -215,7 +240,7 @@
                     No user presets configured.
                 </div>
             {:else}
-                <div class="grid grid-cols-2 gap-1.75 p-2.25 min-[56.25rem]:grid-cols-4">
+                <div class="grid grid-cols-2 gap-1.75 p-2.25 min-[37.5rem]:grid-cols-4">
                     {#each userPresets().entries as preset, index}
                         <button
                             class={`bg-surface-item relative grid min-h-18.75 cursor-pointer grid-cols-[1.375rem_minmax(0,1fr)] content-center items-start gap-1.75 overflow-hidden rounded-lg border px-2.25 py-2.75 text-left transition-colors disabled:cursor-wait ${activePresetIndex === index ? 'border-accent/50 bg-accent/9 shadow-[inset_0.1875rem_0_0_var(--accent)]' : 'border-border-strong hover:border-accent/30'}`}
@@ -254,13 +279,14 @@
         </section>
 
         <section
-            class="border-border bg-surface-card order-3 overflow-hidden rounded-xl border min-[56.25rem]:order-0">
+            class="border-border bg-surface-card order-3 overflow-hidden rounded-xl border min-[37.5rem]:order-0 min-[37.5rem]:col-start-1 min-[37.5rem]:row-start-2">
             <header
-                class="border-border [&_small]:text-foreground-muted [&_b]:bg-surface-badge [&_b]:text-foreground-strong flex min-h-13.5 items-center justify-between border-b px-3.25 min-[56.25rem]:min-h-14.75 min-[56.25rem]:px-3.75 [&_b]:grid [&_b]:h-5.75 [&_b]:min-w-6.75 [&_b]:place-items-center [&_b]:rounded-md [&_b]:font-mono [&_b]:text-xs [&_b]:font-semibold min-[56.25rem]:[&_b]:text-sm [&_small]:mt-1 [&_small]:block [&_small]:text-xs min-[56.25rem]:[&_small]:text-sm [&_span]:block [&_span]:text-sm [&_span]:font-bold min-[56.25rem]:[&_span]:text-sm">
+                class="border-border flex min-h-13.5 items-center justify-between border-b px-3.25 min-[56.25rem]:min-h-14.75 min-[56.25rem]:px-3.75">
                 <div>
-                    <span>Instruments</span>
+                    <span class="block text-sm font-bold">Instruments</span>
                 </div>
-                <b class="min-w-0! px-1.5 text-center font-sans! leading-none tabular-nums">
+                <b
+                    class="bg-surface-badge text-foreground-strong grid h-5.75 min-w-0! place-items-center rounded-md px-1.5 text-center font-sans! text-xs leading-none font-semibold tabular-nums min-[56.25rem]:text-sm">
                     <span>{enabledInstrumentIds.length} / {instruments.length}</span>
                 </b>
             </header>
