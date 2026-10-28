@@ -1,10 +1,16 @@
 use axum::{
     Extension,
+    body::Body,
     extract::{MatchedPath, OriginalUri, Request},
-    response::IntoResponse,
+    response::Response,
     routing::any,
 };
-use dav_server::{DavHandler, fakels::FakeLs, localfs::LocalFs};
+use dav_server::{DavHandler, body::Body as DavBody, fakels::FakeLs, localfs::LocalFs};
+use http_body::{Body as HttpBody, Frame, SizeHint};
+use std::{
+    pin::Pin,
+    task::{Context, Poll},
+};
 use utoipa::OpenApi;
 use utoipa_axum::router::OpenApiRouter;
 
@@ -54,7 +60,7 @@ async fn handle_dav(
     matched_path: MatchedPath,
     OriginalUri(original_uri): OriginalUri,
     mut request: Request,
-) -> impl IntoResponse {
+) -> Response {
     let prefix = matched_path
         .as_str()
         .strip_suffix("/{*path}")
@@ -64,7 +70,48 @@ async fn handle_dav(
 
     *request.uri_mut() = original_uri;
 
-    dav.handle_with(DavHandler::builder().strip_prefix(prefix), request).await
+    dav.handle_with(DavHandler::builder().strip_prefix(prefix), request)
+        .await
+        .map(|body| Body::new(FusedDavBody::new(body)))
+}
+
+struct FusedDavBody {
+    inner: DavBody,
+    finished: bool,
+}
+
+impl FusedDavBody {
+    fn new(inner: DavBody) -> Self {
+        Self { inner, finished: false }
+    }
+}
+
+impl HttpBody for FusedDavBody {
+    type Data = <DavBody as HttpBody>::Data;
+    type Error = <DavBody as HttpBody>::Error;
+
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
+        if self.finished {
+            return Poll::Ready(None);
+        }
+
+        let result = Pin::new(&mut self.inner).poll_frame(context);
+        if matches!(result, Poll::Ready(None) | Poll::Ready(Some(Err(_)))) {
+            self.finished = true;
+        }
+        result
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.finished || self.inner.is_end_stream()
+    }
+
+    fn size_hint(&self) -> SizeHint {
+        self.inner.size_hint()
+    }
 }
 
 #[cfg(test)]
@@ -81,13 +128,13 @@ mod tests {
         let assets_dir = std::env::temp_dir().join(format!("aaw-dav-{}", uuid::Uuid::new_v4()));
         tokio::fs::create_dir(&assets_dir).await.unwrap();
 
-        let assets_router: OpenApiRouter = router("/assets", &assets_dir);
+        let assets_router: OpenApiRouter = router("/assets/fs", &assets_dir);
         let app = Router::new().nest("/api", Router::from(assets_router));
         let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
         let address = listener.local_addr().unwrap();
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
 
-        for path in ["/api/assets", "/api/assets/"] {
+        for path in ["/api/assets/fs", "/api/assets/fs/"] {
             let mut stream = TcpStream::connect(address).await.unwrap();
             stream
                 .write_all(
@@ -103,7 +150,7 @@ mod tests {
             stream.read_to_string(&mut response).await.unwrap();
 
             assert!(response.starts_with("HTTP/1.1 207 Multi-Status"), "{response}");
-            assert!(response.contains("<D:href>/api/assets/</D:href>"), "{response}");
+            assert!(response.contains("<D:href>/api/assets/fs/</D:href>"), "{response}");
         }
 
         server.abort();

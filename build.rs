@@ -22,6 +22,7 @@ fn main() {
     build_fluidsynth_info(&fluid);
     link_static_library(&fluid, "fluidsynth");
     link_sfizz_static_libraries(&sfizz);
+    println!("cargo:rustc-link-lib=dylib=sndfile");
     link_cpp_runtime();
     generate_bindings();
 }
@@ -76,6 +77,13 @@ fn common_config(source: &str, output_name: &str) -> cmake::Config {
         .define("CMAKE_LIBRARY_OUTPUT_DIRECTORY", &library_dir)
         .define("CMAKE_RUNTIME_OUTPUT_DIRECTORY", &library_dir)
         .define("CMAKE_POSITION_INDEPENDENT_CODE", "ON");
+
+    if env::var("CARGO_CFG_TARGET_ENV").as_deref() != Ok("msvc") {
+        config
+            .define("CMAKE_C_FLAGS_RELEASE", "-O3 -DNDEBUG")
+            .define("CMAKE_CXX_FLAGS_RELEASE", "-O3 -DNDEBUG");
+    }
+
     config
 }
 
@@ -94,7 +102,7 @@ fn build_fluidsynth() -> PathBuf {
         .define("enable-ipv6", "OFF")
         .define("enable-jack", "OFF")
         .define("enable-ladspa", "OFF")
-        .define("enable-libsndfile", "OFF")
+        .define("enable-libsndfile", "ON")
         .define("enable-midishare", "OFF")
         .define("enable-native-dls", "OFF")
         .define("enable-network", "OFF")
@@ -252,8 +260,11 @@ fn generate_bindings() {
         .allowlist_function("sfizz_load_file")
         .allowlist_function("sfizz_load_string")
         .allowlist_function("sfizz_set_receive_callback")
+        .allowlist_function("sfizz_set_preload_size")
+        .allowlist_function("sfizz_set_sample_quality")
         .allowlist_function("sfizz_set_samples_per_block")
         .allowlist_function("sfizz_set_sample_rate")
+        .allowlist_function("sfizz_set_num_voices")
         .allowlist_function("sfizz_send_note_on")
         .allowlist_function("sfizz_send_note_off")
         .allowlist_function("sfizz_send_cc")

@@ -63,6 +63,15 @@ impl MidiFilter {
 
         mask
     }
+
+    pub fn passes(&self, value: u8) -> bool {
+        let contains = self.list.contains(&value);
+
+        match self.kind {
+            MidiFilterKind::Allowlist => contains,
+            MidiFilterKind::Denylist => !contains,
+        }
+    }
 }
 
 impl Default for MidiFilter {

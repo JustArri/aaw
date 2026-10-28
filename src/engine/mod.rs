@@ -1,5 +1,14 @@
-use crate::{engine::graph::DEFAULT_SAMPLE_RATE, rt_channels, synths};
-use rt::Command;
+use crate::{
+    DEFAULT_CHANNEL_COUNT, DEFAULT_SAMPLE_RATE, MAX_BLOCK_SIZE,
+    engine::{
+        project::{ProjectAsset, ProjectContext},
+        synth_graph::SynthGraphError,
+    },
+    rt_channels,
+    server::api::{audio::AudioOutputStreamConfig, notifications::ProjectChange},
+};
+pub use ctr::*;
+pub use rt::*;
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -8,97 +17,104 @@ use std::{
         atomic::{AtomicBool, AtomicU32},
     },
 };
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{Mutex, RwLock, broadcast};
 
-pub mod ctr;
-pub mod dummy_graph;
-pub mod effect;
-pub mod fluid_graph;
+mod ctr;
+pub mod effects;
 pub mod graph;
 pub mod instrument_graph;
-pub mod rt;
-pub mod sfizz_graph;
-pub mod stored;
+pub mod project;
+mod rt;
+pub mod synth_graph;
+pub mod user_presets;
 
-pub async fn load(
-    assets_dir: &Path,
-    stored: stored::Project,
-    min_instrument_slots: usize,
-    min_synths_per_graph: usize,
-    sample_rate: u32,
-) -> synths::Result<(ctr::Project, rt::Project)> {
-    let (ctr_instrument_graph, rt_instrument_graph) =
-        instrument_graph::prepare(stored.instrument_graph, min_instrument_slots);
+pub const RETIREMENT_QUEUE_CAPACITY: usize = 16;
 
-    let (ctr_dummy_graph, rt_dummy_graph) =
-        dummy_graph::prepare(stored.dummy_graph, min_synths_per_graph, sample_rate);
-
-    let (ctr_fluid_graph, rt_fluid_graph) =
-        fluid_graph::prepare(assets_dir, stored.fluid_graph, min_synths_per_graph, sample_rate)
-            .await
-            .unwrap_or_else(|_| fluid_graph::default(min_synths_per_graph));
-
-    let (ctr_sfizz_graph, rt_sfizz_graph) =
-        sfizz_graph::prepare(assets_dir, stored.sfizz_graph, min_synths_per_graph, sample_rate)
-            .await
-            .unwrap_or_else(|_| sfizz_graph::default(min_synths_per_graph));
-
-    let ctr_project = ctr::Project {
-        name: stored.name,
-        instrument_graph: ctr_instrument_graph,
-        dummy_graph: ctr_dummy_graph,
-        fluid_graph: ctr_fluid_graph,
-        sfizz_graph: ctr_sfizz_graph,
-    };
-
-    let rt_project = rt::Project {
-        instrument_graph: rt_instrument_graph,
-        dummy_graph: rt_dummy_graph,
-        fluid_graph: rt_fluid_graph,
-        sfizz_graph: rt_sfizz_graph,
-    };
-
-    Ok((ctr_project, rt_project))
+#[derive(Clone)]
+pub struct EngineContext<'a> {
+    pub assets_dir: &'a Path,
+    pub stream_error: Arc<AtomicBool>,
+    pub cmd_capacity: usize,
+    pub midi_capacity: usize,
+    pub recording_queue_capacity: usize,
+    pub min_instruments: usize,
+    pub min_synths: usize,
+    pub project_change_tx: broadcast::Sender<Arc<ProjectChange>>,
 }
 
-pub async fn create_engine(
-    assets_dir: &Path,
-    project: stored::Project,
-    stream_error: Arc<AtomicBool>,
-    cmd_capacity: usize,
-    midi_capacity: usize,
-    min_instrument_slots: usize,
-    min_synths_per_graph: usize,
-) -> synths::Result<(Arc<Mutex<rt::Engine>>, ctr::EngineHandle, ctr::Runtime)> {
-    let (cmd_tx, cmd_rx) = rt_channels::create_notified_mpsc(cmd_capacity);
-    let (reply_tx, reply_rx) = rt_channels::create_spsc(cmd_capacity);
-    let (midi_tx, midi_rx) = rt_channels::create_notified_mpsc(midi_capacity);
+impl<'a> From<&EngineContext<'a>> for ProjectContext<'a> {
+    fn from(value: &EngineContext<'a>) -> Self {
+        Self {
+            assets_dir: value.assets_dir,
+            min_instruments: value.min_instruments,
+            min_synths: value.min_synths,
+            stream_config: &AudioOutputStreamConfig {
+                channel_count: DEFAULT_CHANNEL_COUNT,
+                sample_rate: DEFAULT_SAMPLE_RATE,
+                max_block_size: MAX_BLOCK_SIZE,
+            },
+        }
+    }
+}
+
+pub async fn create_engine<'a>(
+    project: ProjectAsset,
+    ctx: EngineContext<'a>,
+) -> Result<(Arc<Mutex<Engine>>, EngineHandle, Runtime), SynthGraphError> {
+    let (cmd_tx, cmd_rx) = rt_channels::create_notified_mpsc(ctx.cmd_capacity);
+    let (reply_tx, reply_rx) = rt_channels::create_spsc(ctx.cmd_capacity);
+    let (midi_tx, midi_rx) = rt_channels::create_notified_mpsc(ctx.midi_capacity);
+    let (recording_tx, recording_rx) = rt_channels::create_spsc(ctx.recording_queue_capacity);
     let pending_replies = Arc::new(Mutex::new(HashMap::new()));
+    let audio_rec_capture_enabled = Arc::new(AtomicBool::new(false));
+    let audio_rec_state = Arc::new(RwLock::new(AudioRecordingState::default()));
+    let audio_rec_params = Arc::new(Mutex::new(AudioRecordingParams {
+        sample_rate: DEFAULT_SAMPLE_RATE,
+        file_path: PathBuf::new(),
+    }));
 
-    let (ctr_project, rt_project) =
-        load(assets_dir, project, min_instrument_slots, min_synths_per_graph, DEFAULT_SAMPLE_RATE)
-            .await?;
+    let (ctr_project, rt_project) = project::prepare(project, (&ctx).into()).await?;
 
-    let handle = ctr::EngineHandle {
+    let handle = EngineHandle {
         cmd_tx,
         pending_replies: Arc::clone(&pending_replies),
         midi_tx,
         next_cmd_id: Arc::new(AtomicU32::new(0)),
         project: Arc::new(RwLock::new(ctr_project)),
+        project_change_tx: ctx.project_change_tx,
+        audio_rec_state: Arc::clone(&audio_rec_state),
+        audio_rec_params: Arc::clone(&audio_rec_params),
     };
 
     let (cmd_rx, cmd_notify) = cmd_rx.unwrap();
     let (midi_rx, midi_notify) = midi_rx.unwrap();
-    let engine = rt::Engine { project: rt_project, audio_blocks: None, midi_rx, cmd_rx, reply_tx };
+    let engine = Engine {
+        project: rt_project,
+        audio_blocks: None,
+        midi_rx,
+        cmd_rx,
+        reply_tx,
+        recording_tx,
+        sample_rate: DEFAULT_SAMPLE_RATE as f32,
+        audio_rec_capture_enabled: Arc::clone(&audio_rec_capture_enabled),
+    };
     let engine = Arc::new(Mutex::new(engine));
 
-    let runtime = ctr::Runtime {
+    let runtime = Runtime {
         pending_replies,
         reply_rx,
+        recording_rx,
         cmd_notify,
         midi_notify,
-        stream_error,
+        stream_error: ctx.stream_error,
         engine: Arc::clone(&engine),
+        audio_rec_state,
+        audio_rec_params,
+        audio_rec_capture_enabled,
+        audio_rec_active_sample_rate: DEFAULT_SAMPLE_RATE,
+        audio_rec_file: None,
+        audio_rec_buffer: Vec::with_capacity(MAX_BLOCK_SIZE * 4),
+        audio_rec_bytes: 0,
     };
 
     Ok((engine, handle, runtime))

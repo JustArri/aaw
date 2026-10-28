@@ -1,4 +1,4 @@
-use crate::audio::block::AudioBlock;
+use crate::audio::AudioBlock;
 use crate::ffi::sfizz as sys;
 use crate::midi::{MidiEvent, MidiEventKind};
 use crate::synths::{Error, Result, path_to_c_string};
@@ -10,6 +10,12 @@ use std::path::{Path, PathBuf};
 use std::ptr::NonNull;
 use std::sync::Arc;
 use utoipa::ToSchema;
+
+pub const DEFAULT_VOICE_COUNT: usize = 64;
+pub const MAX_VOICE_COUNT: usize = 256;
+const PRELOAD_SIZE: u32 = 65_536;
+const LIVE_SAMPLE_QUALITY: i32 = 2;
+const RENDER_BLOCK_SIZE: usize = 512;
 
 #[derive(Clone)]
 pub struct SfzAsset {
@@ -112,16 +118,24 @@ impl Synth {
     pub async fn load(
         sample_rate: f32,
         max_block_size: usize,
+        voice_count: usize,
         path: impl AsRef<Path>,
     ) -> Result<Self> {
         let asset = SfzAsset::load(path).await?;
-        tokio::task::spawn_blocking(move || Self::from_asset(sample_rate, max_block_size, &asset))
-            .await
-            .map_err(Error::AssetTask)?
+        tokio::task::spawn_blocking(move || {
+            Self::from_asset(sample_rate, max_block_size, voice_count, &asset)
+        })
+        .await
+        .map_err(Error::AssetTask)?
     }
 
-    pub fn from_asset(sample_rate: f32, max_block_size: usize, asset: &SfzAsset) -> Result<Self> {
-        let mut synth = Self::new(sample_rate, max_block_size)?;
+    pub fn from_asset(
+        sample_rate: f32,
+        max_block_size: usize,
+        voice_count: usize,
+        asset: &SfzAsset,
+    ) -> Result<Self> {
+        let mut synth = Self::new(sample_rate, max_block_size, voice_count)?;
         synth.load_asset(asset)?;
         Ok(synth)
     }
@@ -156,11 +170,13 @@ impl Synth {
     }
 
     pub fn set_max_block_size(&mut self, max_block_size: usize) -> Result<()> {
-        let block_size = i32::try_from(max_block_size)
+        let block_size = max_block_size.min(RENDER_BLOCK_SIZE);
+        let native_block_size = i32::try_from(block_size)
             .ok()
             .filter(|size| *size > 0)
             .ok_or(Error::InvalidArgument("maximum block size must be in 1..=i32::MAX"))?;
-        unsafe { sys::sfizz_set_samples_per_block(self.synth.as_ptr(), block_size) };
+        unsafe { sys::sfizz_set_samples_per_block(self.synth.as_ptr(), native_block_size) };
+        self.max_block_size = block_size;
         Ok(())
     }
 
@@ -284,7 +300,15 @@ impl Synth {
 
         let (left, remaining) = samples.split_at_mut(1);
 
-        self.render(&mut left[0][..frame_count], &mut remaining[0][..frame_count])
+        let block_size = self.max_block_size;
+        for (left, right) in left[0][..frame_count]
+            .chunks_mut(block_size)
+            .zip(remaining[0][..frame_count].chunks_mut(block_size))
+        {
+            self.render(left, right)?;
+        }
+
+        Ok(())
     }
 
     fn note_on(&mut self, delay: usize, note: u8, velocity: u8) {
@@ -340,23 +364,40 @@ impl Synth {
             Some(self.latest_event_delay.map_or(delay, |current| current.max(delay)));
     }
 
-    fn new(sample_rate: f32, max_block_size: usize) -> Result<Self> {
+    fn new(sample_rate: f32, max_block_size: usize, voice_count: usize) -> Result<Self> {
         if !sample_rate.is_finite() || sample_rate <= 0.0 {
             return Err(Error::InvalidArgument("sample rate must be finite and greater than zero"));
         }
-        let block_size = i32::try_from(max_block_size)
+        let block_size = max_block_size.min(RENDER_BLOCK_SIZE);
+        let native_block_size = i32::try_from(block_size)
             .ok()
             .filter(|size| *size > 0)
             .ok_or(Error::InvalidArgument("maximum block size must be in 1..=i32::MAX"))?;
+        let voice_count = i32::try_from(voice_count)
+            .ok()
+            .filter(|count| (1..=MAX_VOICE_COUNT as i32).contains(count))
+            .ok_or(Error::InvalidArgument("sfizz voice count must be in 1..=256"))?;
 
         let synth = NonNull::new(unsafe { sys::sfizz_create_synth() })
             .ok_or(Error::Native("sfizz could not create a synthesizer"))?;
         unsafe {
+            sys::sfizz_set_preload_size(synth.as_ptr(), PRELOAD_SIZE);
             sys::sfizz_set_sample_rate(synth.as_ptr(), sample_rate);
-            sys::sfizz_set_samples_per_block(synth.as_ptr(), block_size);
+            sys::sfizz_set_samples_per_block(synth.as_ptr(), native_block_size);
+            sys::sfizz_set_sample_quality(
+                synth.as_ptr(),
+                sys::sfizz_process_mode_t_SFIZZ_PROCESS_LIVE,
+                LIVE_SAMPLE_QUALITY,
+            );
+            sys::sfizz_set_num_voices(synth.as_ptr(), voice_count);
         }
 
-        Ok(Self { synth, max_block_size, latest_event_delay: None, _not_sync: PhantomData })
+        Ok(Self {
+            synth,
+            max_block_size: block_size,
+            latest_event_delay: None,
+            _not_sync: PhantomData,
+        })
     }
 }
 
@@ -414,7 +455,10 @@ unsafe extern "C" fn receive_metadata(
 
 #[cfg(test)]
 mod tests {
-    use super::{SfzAsset, SfzKeyRange, Synth, key_ranges_from_mask};
+    use super::{
+        DEFAULT_VOICE_COUNT, RENDER_BLOCK_SIZE, SfzAsset, SfzKeyRange, Synth, key_ranges_from_mask,
+    };
+    use crate::audio::AudioBlock;
 
     #[test]
     fn sfz_info_merges_enabled_note_triggered_region_ranges() {
@@ -426,7 +470,7 @@ mod tests {
                 "<region> sample=*sine key=40\n",
             ),
         );
-        let mut synth = Synth::from_asset(48_000.0, 64, &asset).unwrap();
+        let mut synth = Synth::from_asset(48_000.0, 64, DEFAULT_VOICE_COUNT, &asset).unwrap();
 
         assert_eq!(
             synth.sfz_info().unwrap().key_ranges,
@@ -449,5 +493,16 @@ mod tests {
                 SfzKeyRange { start: 126, end: 127 },
             ]
         );
+    }
+
+    #[test]
+    fn engine_blocks_are_rendered_in_bounded_chunks() {
+        let asset = SfzAsset::from_text("sine.sfz", "<region> sample=*sine key=60\n");
+        let mut synth = Synth::from_asset(48_000.0, 8192, DEFAULT_VOICE_COUNT, &asset).unwrap();
+        let mut output = AudioBlock::new(2, RENDER_BLOCK_SIZE * 2);
+        assert!(output.resize(RENDER_BLOCK_SIZE * 2));
+
+        assert_eq!(synth.max_block_size, RENDER_BLOCK_SIZE);
+        synth.render_audio_block(&mut output).unwrap();
     }
 }

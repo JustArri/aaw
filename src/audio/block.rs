@@ -5,6 +5,8 @@ pub struct AudioBlock {
     samples: Vec<Vec<f32>>,
 }
 
+//TODO: implement pan feature (write with pan)
+
 impl AudioBlock {
     pub fn new(channel_count: usize, max_sample_count_per_channel: usize) -> Self {
         Self {
@@ -42,6 +44,10 @@ impl AudioBlock {
         self.channel_count
     }
 
+    pub fn samples(&self) -> &Vec<Vec<f32>> {
+        &self.samples
+    }
+
     pub fn samples_mut(&mut self) -> &mut Vec<Vec<f32>> {
         &mut self.samples
     }
@@ -55,6 +61,30 @@ impl AudioBlock {
                 local_samples[i] += other_samples[i];
             }
         }
+    }
+
+    pub fn multiply_samples(&mut self, factor: f32) {
+        for channel in 0..self.channel_count {
+            for sample in &mut self.samples[channel][..self.sample_count] {
+                *sample *= factor;
+            }
+        }
+    }
+
+    pub fn multiply_samples_transition(
+        &mut self,
+        mut actual_gain: f32,
+        target_gain: f32,
+        alpha: f32,
+    ) -> f32 {
+        for i in 0..self.sample_count {
+            actual_gain += alpha * (target_gain - actual_gain);
+            for channel in 0..self.channel_count {
+                self.samples[channel][i] *= actual_gain;
+            }
+        }
+
+        actual_gain
     }
 
     pub fn write_interleaved_f32(&self, output: &mut [f32]) {

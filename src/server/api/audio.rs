@@ -1,19 +1,26 @@
-use crate::audio;
+use crate::engine::AudioRecordingState;
+use crate::{MAX_BLOCK_SIZE, audio, files};
 use crate::{
     app_state::AppState,
     audio::params::{DeviceCfgSelection, LatencySelection, SampleRateSelection},
 };
 use axum::{Json, extract::State, http::StatusCode};
+use cpal::traits::StreamTrait;
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 use std::sync::Arc;
 use utoipa::ToSchema;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
-        .routes(routes!(outputs))
-        .routes(routes!(output_stream))
-        .routes(routes!(set_output_stream))
+        .routes(routes!(audio_host_outputs))
+        .routes(routes!(audio_output_stream))
+        .routes(routes!(set_audio_output_stream))
+        .routes(routes!(audio_recording))
+        .routes(routes!(start_audio_recording))
+        .routes(routes!(stop_audio_recording))
+        .routes(routes!(set_audio_recording_paused))
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -35,16 +42,37 @@ pub struct AudioOutput {
     pub is_default: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct AudioOutputStream {
+    pub stream: cpal::Stream,
+    pub info: AudioOutputStreamInfo,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct AudioOutputStreamInfo {
     pub host_id: String,
     pub output_id: String,
     pub channel_count: u32,
     pub sample_rate: u32,
+    pub max_block_size: usize,
     pub sample_format: String,
+    pub buffer_size: u32,
+}
 
-    #[schema(required)]
-    pub buffer_size: Option<u32>,
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, ToSchema)]
+pub struct AudioOutputStreamConfig {
+    pub channel_count: usize,
+    pub sample_rate: u32,
+    pub max_block_size: usize,
+}
+
+impl From<&AudioOutputStreamInfo> for AudioOutputStreamConfig {
+    fn from(value: &AudioOutputStreamInfo) -> Self {
+        Self {
+            channel_count: value.channel_count as usize,
+            sample_rate: value.sample_rate,
+            max_block_size: value.max_block_size,
+        }
+    }
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -53,11 +81,16 @@ pub struct AudioOutputStream {
     get,
     path = "/outputs",
     responses(
-        (status = OK, body = Vec<AudioOutput>, description = "OK"),
+        (
+            status = OK,
+            body = Vec<AudioHostOutputs>,
+            content_type = "aplication/json",
+            description = "OK"
+        ),
         (status = INTERNAL_SERVER_ERROR, description = "Internal Server Error"),
     )
 )]
-async fn outputs() -> Result<Json<Vec<AudioHostOutputs>>, (StatusCode, String)> {
+async fn audio_host_outputs() -> Result<Json<Vec<AudioHostOutputs>>, (StatusCode, String)> {
     let outputs = crate::audio::info::list_hosts()
         .iter()
         .filter_map(|h| {
@@ -88,11 +121,13 @@ async fn outputs() -> Result<Json<Vec<AudioHostOutputs>>, (StatusCode, String)> 
     get,
     path = "/output/stream",
     responses(
-        (status = OK, body = Option<AudioOutputStream>, description = "OK"),
+        (status = OK, body = Option<AudioOutputStreamInfo>, description = "OK"),
     )
 )]
-async fn output_stream(State(app_state): State<AppState>) -> Json<Option<AudioOutputStream>> {
-    Json(app_state.output_stream.lock().await.as_ref().map(|s| s.1.clone()))
+async fn audio_output_stream(
+    State(app_state): State<AppState>,
+) -> Json<Option<AudioOutputStreamInfo>> {
+    Json(app_state.output_stream.lock().await.as_ref().map(|s| s.info.clone()))
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -148,29 +183,21 @@ impl From<OutputStreamSampleRate> for SampleRateSelection {
     path = "/output/stream",
     request_body = Option<SetOutputStreamRequest>,
     responses(
-        (status = OK, body = Option<AudioOutputStream>, description = "OK"),
+        (status = OK, body = Option<AudioOutputStreamInfo>, description = "OK"),
         (status = BAD_REQUEST, body = String, description = "Bad Request"),
         (status = INTERNAL_SERVER_ERROR, body = String, description = "Internal Server Error"),
     )
 )]
-async fn set_output_stream(
+async fn set_audio_output_stream(
     State(app_state): State<AppState>,
     Json(req): Json<Option<SetOutputStreamRequest>>,
-) -> Result<Json<Option<AudioOutputStream>>, (StatusCode, String)> {
+) -> Result<Json<Option<AudioOutputStreamInfo>>, (StatusCode, String)> {
     let Some(req) = req else {
-        if let Some((stream, _)) = app_state.output_stream.lock().await.take() {
+        if let Some(stream) = app_state.output_stream.lock().await.take() {
             drop(stream);
         }
         return Ok(Json(None));
     };
-
-    // #[cfg(debug_assertions)]
-    // const LATENCY_SEL: audio::params::LatencySelection =
-    //     audio::params::LatencySelection::CustomBufferSize(1024);
-
-    // #[cfg(not(debug_assertions))]
-    // const LATENCY_SEL: audio::params::LatencySelection =
-    //     audio::params::LatencySelection::CustomBufferSize(256);
 
     let device_config = audio::output::ResolvedConfig::find(DeviceCfgSelection {
         host: audio::params::HostSelection::Id(req.host_id.as_str()),
@@ -183,19 +210,20 @@ async fn set_output_stream(
     let sample_format = resolved_config.sample_format().to_string();
     let stream_cfg = resolved_config.config();
 
-    let stream_info = AudioOutputStream {
+    let mut stream_info = AudioOutputStreamInfo {
         host_id: req.host_id,
         output_id: req.output_id,
         buffer_size: match stream_cfg.buffer_size {
-            cpal::BufferSize::Default => None,
-            cpal::BufferSize::Fixed(size) => Some(size),
+            cpal::BufferSize::Default => 0,
+            cpal::BufferSize::Fixed(size) => size,
         },
         channel_count: stream_cfg.channels as u32,
         sample_rate: stream_cfg.sample_rate,
+        max_block_size: MAX_BLOCK_SIZE,
         sample_format,
     };
 
-    if let Some((stream, _)) = app_state.output_stream.lock().await.take() {
+    if let Some(stream) = app_state.output_stream.lock().await.take() {
         drop(stream);
     }
 
@@ -204,9 +232,125 @@ async fn set_output_stream(
         .await
         .map_err(map_audio_error)?;
 
-    *app_state.output_stream.lock().await = Some((stream, stream_info.clone()));
+    if stream_info.buffer_size == 0 {
+        stream_info.buffer_size = stream.buffer_size().unwrap_or_default();
+    }
+
+    *app_state.output_stream.lock().await =
+        Some(AudioOutputStream { stream, info: stream_info.clone() });
+
+    files::save(&app_state.aaw_root_dir, crate::CFG_AUDIO_OUTPUT, &stream_info).await;
 
     Ok(Json(Some(stream_info)))
+}
+
+//--------------------------------------------------------------------------------------------------
+
+#[derive(Serialize, ToSchema)]
+struct AudioRecordingInfo {
+    #[schema(value_type = Option<String>)]
+    #[schema(required)]
+    output_file: Option<PathBuf>,
+
+    #[schema(required)]
+    sample_rate: Option<u32>,
+
+    state: AudioRecordingState,
+}
+
+//--------------------------------------------------------------------------------------------------
+
+#[utoipa::path(
+    get,
+    path = "/recording",
+    responses(
+        (
+            status = OK,
+            body = Option<AudioRecordingInfo>,
+            content_type = "application/json",
+            description = "OK"
+        ),
+        (status = BAD_REQUEST, body = String, description = "Bad Request"),
+        (status = INTERNAL_SERVER_ERROR, body = String, description = "Internal Server Error"),
+    )
+)]
+async fn audio_recording(State(app_state): State<AppState>) -> Json<AudioRecordingInfo> {
+    let state = app_state.engine_handle.audio_recording_state().await;
+
+    let (output_file, sample_rate) = if state != AudioRecordingState::Stopped {
+        let params = app_state.engine_handle.audio_recording_parameters().await;
+        (Some(params.file_path), Some(params.sample_rate))
+    } else {
+        (None, None)
+    };
+
+    Json(AudioRecordingInfo { output_file, sample_rate, state })
+}
+
+//--------------------------------------------------------------------------------------------------
+
+#[utoipa::path(
+    post,
+    path = "/recording/start",
+    responses(
+        (status = NO_CONTENT, description = "Recording started"),
+        (status = BAD_REQUEST, body = String, description = "Bad Request"),
+        (status = INTERNAL_SERVER_ERROR, body = String, description = "Internal Server Error"),
+    )
+)]
+async fn start_audio_recording(
+    State(app_state): State<AppState>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    app_state
+        .engine_handle
+        .start_recording(
+            app_state.stream_config().await.sample_rate,
+            app_state
+                .recordings_dir
+                .join(format!("{}.wav", chrono::Local::now().format("%Y-%m-%d_%H-%M-%S%.3f"))),
+        )
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+//--------------------------------------------------------------------------------------------------
+
+#[utoipa::path(
+    post,
+    path = "/recording/stop",
+    responses(
+        (status = NO_CONTENT, description = "Recording started"),
+        (status = INTERNAL_SERVER_ERROR, body = String, description = "Internal Server Error"),
+    )
+)]
+async fn stop_audio_recording(
+    State(app_state): State<AppState>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    app_state.engine_handle.stop_recording().await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+//--------------------------------------------------------------------------------------------------
+
+#[utoipa::path(
+    post,
+    path = "/recording/paused",
+    request_body(
+        content = bool,
+        content_type = "application/json",
+    ),
+    responses(
+        (status = NO_CONTENT, description = "Recording started"),
+        (status = BAD_REQUEST, body = String, description = "Bad Request"),
+        (status = INTERNAL_SERVER_ERROR, body = String, description = "Internal Server Error"),
+    )
+)]
+async fn set_audio_recording_paused(
+    State(app_state): State<AppState>,
+    Json(flag): Json<bool>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    app_state.engine_handle.set_recording_paused(flag).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -223,7 +367,7 @@ fn map_audio_error(err: audio::output::Error) -> (StatusCode, String) {
         Error::UnsupportedSampleFormat(_) => StatusCode::BAD_REQUEST,
         Error::FailedToBuildStream(_) => StatusCode::INTERNAL_SERVER_ERROR,
         Error::FailedToStartStream(_) => StatusCode::INTERNAL_SERVER_ERROR,
-        Error::EngineInit(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        Error::EngineReconfiguration(_) => StatusCode::INTERNAL_SERVER_ERROR,
     };
     (code, err.to_string())
 }

@@ -1,4 +1,4 @@
-use crate::midi::CompiledMidiKeyTransform;
+use crate::midi::{CompiledMidiKeyTransform, CompiledMidiVelocityTransform};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -7,6 +7,7 @@ pub struct TimedMidiEvent {
     #[schema(required)]
     pub timestamp: Option<u64>,
 
+    pub slot: usize,
     pub channel: u8,
 
     #[serde(flatten)]
@@ -19,12 +20,13 @@ impl TimedMidiEvent {
     }
 
     pub fn split(self) -> (Option<u64>, MidiEvent) {
-        (self.timestamp, MidiEvent { channel: self.channel, kind: self.kind })
+        (self.timestamp, MidiEvent { slot: self.slot, channel: self.channel, kind: self.kind })
     }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, ToSchema)]
 pub struct MidiEvent {
+    pub slot: usize,
     pub channel: u8,
 
     #[serde(flatten)]
@@ -33,28 +35,32 @@ pub struct MidiEvent {
 
 impl From<TimedMidiEvent> for MidiEvent {
     fn from(value: TimedMidiEvent) -> Self {
-        Self { channel: value.channel, kind: value.kind }
+        Self { slot: value.slot, channel: value.channel, kind: value.kind }
     }
 }
 
 impl MidiEvent {
     pub fn transformed(
         self,
-        transform: &CompiledMidiKeyTransform,
+        key_transform: Option<&CompiledMidiKeyTransform>,
+        velocity_transform: Option<&CompiledMidiVelocityTransform>,
         transposition: i8,
     ) -> Option<Self> {
+        let transform_key = |key| match key_transform {
+            Some(t) => t.apply(key, transposition),
+            None => Some(key),
+        };
+
         let kind = match self.kind {
-            MidiEventKind::NoteOn { key, velocity } => {
-                MidiEventKind::NoteOn { key: transform.apply(key, transposition)?, velocity }
-            }
-            MidiEventKind::NoteOff { key, velocity } => {
-                MidiEventKind::NoteOff { key: transform.apply(key, transposition)?, velocity }
+            MidiEventKind::NoteOn { key, velocity } => MidiEventKind::NoteOn {
+                key: transform_key(key)?,
+                velocity: velocity_transform.map(|t| t.apply(velocity)).unwrap_or(velocity),
+            },
+            MidiEventKind::NoteOff { key, .. } => {
+                MidiEventKind::NoteOff { key: transform_key(key)?, velocity: 0 }
             }
             MidiEventKind::PolyphonicAftertouch { key, value } => {
-                MidiEventKind::PolyphonicAftertouch {
-                    key: transform.apply(key, transposition)?,
-                    value,
-                }
+                MidiEventKind::PolyphonicAftertouch { key: transform_key(key)?, value }
             }
             kind => kind,
         };
@@ -74,7 +80,7 @@ pub enum MidiEventKind {
     PolyphonicAftertouch { key: u8, value: u8 },
 }
 
-pub fn parse_midi_message(message: &[u8]) -> Option<TimedMidiEvent> {
+pub fn parse_midi_message(slot: usize, message: &[u8]) -> Option<TimedMidiEvent> {
     let status = *message.first()?;
     let channel = status & 0x0f;
     let data = &message[1..];
@@ -110,5 +116,5 @@ pub fn parse_midi_message(message: &[u8]) -> Option<TimedMidiEvent> {
         _ => return None,
     };
 
-    Some(TimedMidiEvent { timestamp: None, channel, kind })
+    Some(TimedMidiEvent { timestamp: None, slot, channel, kind })
 }

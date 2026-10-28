@@ -7,8 +7,7 @@ use crate::{
             SampleRateSelection,
         },
     },
-    engine::rt::Engine,
-    synths,
+    engine::{Engine, synth_graph::SynthGraphError},
 };
 use cpal::{
     BufferSize,
@@ -47,7 +46,7 @@ pub enum Error {
     FailedToStartStream(#[source] cpal::Error),
 
     #[error("failed to init engine: {0}")]
-    EngineInit(#[source] synths::Error),
+    EngineReconfiguration(#[source] SynthGraphError),
 }
 
 type StdResult<T, E> = std::result::Result<T, E>;
@@ -123,8 +122,8 @@ where
     engine
         .lock()
         .await
-        .init(channel_count, config.sample_rate, MAX_BLOCK_SIZE)
-        .map_err(Error::EngineInit)?;
+        .reconfigure(channel_count, config.sample_rate, MAX_BLOCK_SIZE)
+        .map_err(Error::EngineReconfiguration)?;
 
     let mut scratch = vec![0.0_f32; channel_count * MAX_BLOCK_SIZE];
 

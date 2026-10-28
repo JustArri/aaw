@@ -1,49 +1,77 @@
-use crate::{engine::graph::LocalId, memory::Siv};
-use serde::{Deserialize, Serialize};
+use crate::memory::Siv;
+pub use ctr::*;
+pub use rt::*;
 use std::collections::HashMap;
-use utoipa::ToSchema;
+pub use stored::*;
 
-pub mod ctr;
-pub mod rt;
-pub mod stored;
+mod ctr;
+mod rt;
+mod stored;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-pub enum SynthKind {
-    Dummy,
-    Fluid,
-    Sfizz,
+#[derive(Clone, Copy)]
+pub struct InstrumentGraphContext {
+    pub num_instruments: usize,
+    pub channel_count: usize,
+    pub sample_rate: u32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
-pub struct SynthId {
-    pub kind: SynthKind,
-    pub id: LocalId,
-}
-
-pub fn prepare(stored: stored::Graph, num_slots: usize) -> (ctr::Graph, rt::Graph) {
+pub fn prepare(
+    stored: StoredInstrumentGraph,
+    ctx: InstrumentGraphContext,
+) -> (CtrInstrumentGraph, RtInstrumentGraph) {
     let global_transposition = stored.global_transposition;
+    let mut ctr_instruments = HashMap::new();
+    let mut rt_instruments = HashMap::new();
 
-    let rt_slots: HashMap<_, _> = stored.slots.iter().map(ctr_slot_to_rt).collect();
-    let mut rt_slots: Siv<_, _> = rt_slots.into();
-    let mut ctr_slots: Siv<_, _> = stored.slots.into();
+    for (id, strored) in stored.instruments {
+        let (ctr, rt) = prepare_instrument(strored);
+        ctr_instruments.insert(id, ctr);
+        rt_instruments.insert(id, rt);
+    }
 
-    rt_slots.ensure_capacity(num_slots);
-    ctr_slots.ensure_capacity(num_slots);
+    let mut rt_instruments: Siv<_, _> = rt_instruments.into();
+    let mut ctr_instruments: Siv<_, _> = ctr_instruments.into();
 
-    let rt_graph = rt::Graph { slots: rt_slots, global_transposition };
-    let ctr_graph = ctr::Graph { slots: ctr_slots, global_transposition };
+    rt_instruments.ensure_capacity(ctx.num_instruments);
+    ctr_instruments.ensure_capacity(ctx.num_instruments);
+
+    let rt_graph = RtInstrumentGraph { instruments: rt_instruments, global_transposition };
+    let ctr_graph = CtrInstrumentGraph { instruments: ctr_instruments, global_transposition };
 
     (ctr_graph, rt_graph)
 }
 
-fn ctr_slot_to_rt((slot_id, slot): (&LocalId, &ctr::Slot)) -> (LocalId, rt::Slot) {
-    let slot = rt::Slot {
-        synth_id: slot.synth_id,
-        enabled: slot.enabled,
-        key_transform: slot.key_transform.compile(),
-        channel_mask: slot.channel_filter.as_u16(),
-        cc_mask: slot.cc_filter.as_u128(),
-        use_global_transposition: slot.use_global_transposition,
+pub fn prepare_instrument(stored: StoredInstrument) -> (CtrInstrument, RtInstrument) {
+    let rt_instrument = RtInstrument {
+        synth_id: stored.synth_id,
+        enabled: stored.enabled,
+        ignore_key_transform: stored.ignore_key_transform,
+        key_transform: stored.key_transform.compile(),
+        ignore_velocity_transform: stored.ignore_velocity_transform,
+        velocity_transform: stored.velocity_transform.compile(),
+        channel_mask: stored.channel_filter.as_u16(),
+        cc_mask: stored.cc_filter.as_u128(),
+        ignore_pitch_bend: stored.ignore_pitch_bend,
+        ignore_program_change: stored.ignore_program_change,
+        ignore_channel_aftertouch: stored.ignore_channel_aftertouch,
+        ignore_polyphonic_aftertouch: stored.ignore_polyphonic_aftertouch,
+        use_global_transposition: stored.use_global_transposition,
     };
-    (*slot_id, slot)
+    let ctr_instrument = CtrInstrument {
+        synth_id: stored.synth_id,
+        enabled: stored.enabled,
+        ignore_key_transform: stored.ignore_key_transform,
+        key_transform: stored.key_transform,
+        ignore_velocity_transform: stored.ignore_velocity_transform,
+        velocity_transform: stored.velocity_transform,
+        channel_filter: stored.channel_filter,
+        cc_filter: stored.cc_filter,
+        ignore_pitch_bend: stored.ignore_pitch_bend,
+        ignore_program_change: stored.ignore_program_change,
+        ignore_channel_aftertouch: stored.ignore_channel_aftertouch,
+        ignore_polyphonic_aftertouch: stored.ignore_polyphonic_aftertouch,
+        use_global_transposition: stored.use_global_transposition,
+        name: stored.name,
+    };
+    (ctr_instrument, rt_instrument)
 }

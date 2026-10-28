@@ -1,5 +1,6 @@
 use crate::{
-    midi::{MidiEvent, MidiRuntime},
+    engine::EngineHandle,
+    midi::{ControlChange, MidiEvent, MidiEventKind, MidiRuntime},
     rt_channels::NotifiedRtConsumer,
 };
 use serde::Serialize;
@@ -14,8 +15,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
 pub mod app_state;
+pub mod assets;
 pub mod audio;
-pub mod effects;
 pub mod engine;
 pub mod ffi;
 pub mod files;
@@ -30,7 +31,20 @@ pub mod system;
 pub const PACKAGE_NAME: &str = env!("CARGO_PKG_NAME");
 pub const APP_VERSION: &str = env!("APP_VERSION");
 
-pub const MAX_BLOCK_SIZE: usize = 16384;
+pub const AAW_ROOT_DIR_ENV: &str = "AAW_ROOT_DIR";
+pub const CFG_AUDIO_OUTPUT: (&str, &str) = ("config/audio-output.json", "audio output config");
+pub const CFG_LAST_PROJECT_SUBJECT: &str = "last project";
+pub const CFG_LAST_PROJECT: (&str, &str) = ("config/last-project.json", CFG_LAST_PROJECT_SUBJECT);
+pub const CFG_MIDI_AC: (&str, &str) =
+    ("config/midi-auto-connections.json", "midi auto-connections");
+pub const CFG_PREFERENCES: (&str, &str) = ("config/preferences.json", "preferences");
+pub const PROJECTS_DIR: &str = "projects";
+pub const ASSETS_DIR: &str = "assets";
+pub const RECORDINGS_DIR: &str = "recordings";
+
+pub const DEFAULT_CHANNEL_COUNT: usize = 2;
+pub const DEFAULT_SAMPLE_RATE: u32 = 48000;
+pub const MAX_BLOCK_SIZE: usize = 8192;
 
 pub fn subscribe_tracing(default_filter: &str) {
     tracing_subscriber::fmt()
@@ -78,34 +92,6 @@ pub fn spawn_midi_runtime_task(
     })
 }
 
-pub fn spawn_engine_runtime_task(
-    stop: CancellationToken,
-    mut runtime: engine::ctr::Runtime,
-) -> JoinHandle<()> {
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_millis(1));
-        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-
-        loop {
-            tokio::select! {
-                _ = stop.cancelled() => break,
-
-                _ = interval.tick() => runtime.process_replies().await,
-
-                _ = runtime.cmd_notified(), if runtime.stream_error() => {
-                    tracing::info!(target: "engine-runtime", "idle processing commands");
-                    runtime.engine.lock().await.idle_process_commands();
-                }
-
-                _ = runtime.midi_notified(), if runtime.stream_error() => {
-                    tracing::info!(target: "engine-runtime", "idle processing midi events");
-                    runtime.engine.lock().await.idle_process_midi_events();
-                }
-            }
-        }
-    })
-}
-
 pub fn spawn_midi_relay_task(
     stop: CancellationToken,
     mut midi_rx: NotifiedRtConsumer<MidiEvent>,
@@ -119,6 +105,44 @@ pub fn spawn_midi_relay_task(
                 event = midi_rx.recv() => {
                     info!(target: "midi-event", "{event:?}");
                     let _ = midi_tx.send(Arc::new(event));
+                }
+            }
+        }
+    })
+}
+
+pub fn spawn_midi_watcher_task(
+    stop: CancellationToken,
+    engine_handle: EngineHandle,
+    mut midi_rx: broadcast::Receiver<Arc<MidiEvent>>,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = stop.cancelled() => break,
+
+                event = midi_rx.recv() => match event {
+                    Ok(event) => {
+                        let channel = event.channel;
+
+                        match event.kind {
+                            MidiEventKind::ControlChange { controller, value } => {
+                                engine_handle
+                                    .handle_control_change(channel, controller, value)
+                                    .await;
+
+                                if controller == ControlChange::BankSelectLsb as u8 {
+                                    engine_handle.handle_bank_lsb_change(channel, value).await
+                                }
+                            }
+                            MidiEventKind::ProgramChange { program } => {
+                                engine_handle.handle_program_change(channel, program).await
+                            }
+                            _ => {}
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(broadcast::error::RecvError::Closed) => break,
                 }
             }
         }
