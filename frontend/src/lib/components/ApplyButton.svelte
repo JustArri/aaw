@@ -1,5 +1,6 @@
 <script lang="ts">
     import Icon from '@iconify/svelte';
+    import Button from '$lib/components/Button.svelte';
 
     let {
         saving = false,
@@ -14,15 +15,18 @@
     } = $props();
 </script>
 
-<button
-    class={`grid size-9 shrink-0 place-items-center rounded-lg border-0 bg-transparent transition-colors ${saving ? 'text-accent cursor-wait' : disabled || !pending ? 'text-foreground-icon cursor-default opacity-50' : 'text-accent hover:bg-accent/10 cursor-pointer'}`}
+<Button
+    variant="accent"
+    size="sm"
+    class="justify-self-end"
     type="submit"
     aria-label={label}
     title={label}
     aria-busy={saving}
+    busy={saving}
     disabled={disabled || saving || !pending}>
-    <Icon
-        icon={saving ? 'lucide:loader-circle' : 'lucide:check'}
-        width="1.125rem"
-        class={saving ? 'animate-spin' : ''} />
-</button>
+    {#if saving}
+        <Icon icon="lucide:loader-circle" width="0.875rem" class="animate-spin" />
+    {/if}
+    {saving ? 'Applying…' : 'Apply'}
+</Button>

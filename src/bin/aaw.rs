@@ -62,16 +62,16 @@ struct Args {
     #[arg(
         long,
         default_value_t = 32,
-        help = "Minimum instrument capacity (can be overriden by a project)"
+        help = "Minimum controller capacity (can be overridden by a project)"
     )]
-    min_instruments: usize,
+    min_controllers: usize,
 
     #[arg(
         long,
         default_value_t = 32,
-        help = "Minimum synth capacity (can be overriden by a project)"
+        help = "Minimum instrument capacity (can be overridden by a project)"
     )]
-    min_synths: usize,
+    min_instruments: usize,
 
     #[arg(long, help = "Create a migrated copy of specified project")]
     migrate_project: Option<PathBuf>,
@@ -173,7 +173,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
             midi_capacity: args.midi_to_engine_capacity,
             recording_queue_capacity: args.recording_queue_capacity,
             min_instruments: args.min_instruments,
-            min_synths: args.min_synths,
+            min_controllers: args.min_controllers,
             project_change_tx,
         },
     )
@@ -181,20 +181,27 @@ async fn run(args: Args) -> anyhow::Result<()> {
     .context("failed to create engine")?;
 
     let midi_auto_connections = load_opt(&aaw_root_dir, aaw::CFG_MIDI_AC).await.unwrap_or_default();
-    let midi_event_senders: Arc<[_]> = Arc::new([engine_handle.midi_sender(), midi_relay_tx]);
+    let midi_event_senders: Arc<[_]> = Arc::new([midi_relay_tx]);
 
     let midi_runtime = Arc::new(Mutex::new(
         MidiRuntime::new(16, "aaw", Arc::clone(&midi_event_senders), midi_auto_connections)
             .context("failed to create midi runtime")?,
     ));
 
+    let audio_metrics = Arc::new(audio::metrics::AudioMetrics::default());
+
     let output_stream = if let Some(info) =
         load_opt::<AudioOutputStreamInfo>(&aaw_root_dir, aaw::CFG_AUDIO_OUTPUT).await
     {
-        try_start_stream(info, Arc::clone(&engine), Arc::clone(&stream_error))
-            .await
-            .inspect_err(|err| warn!("{err}"))
-            .ok()
+        try_start_stream(
+            info,
+            Arc::clone(&engine),
+            Arc::clone(&stream_error),
+            Arc::clone(&audio_metrics),
+        )
+        .await
+        .inspect_err(|err| warn!("{err}"))
+        .ok()
     } else {
         None
     };
@@ -210,8 +217,9 @@ async fn run(args: Args) -> anyhow::Result<()> {
             engine_handle: engine_handle.clone(),
             output_stream: Arc::clone(&output_stream),
             min_instruments: args.min_instruments,
-            min_synths: args.min_synths,
+            min_controllers: args.min_controllers,
             stream_error: Arc::clone(&stream_error),
+            audio_metrics,
             aaw_root_dir: aaw_root_dir.into(),
             projects: Arc::new(RwLock::new(
                 Projects::new(projects_dir).await.context("failed to load projects")?,
@@ -224,11 +232,14 @@ async fn run(args: Args) -> anyhow::Result<()> {
         });
 
     let stop = CancellationToken::new();
-    let relay_handle = aaw::spawn_midi_relay_task(stop.clone(), midi_relay_rx, midi_bc_tx.clone());
+    let relay_handle = aaw::spawn_midi_relay_task(
+        stop.clone(),
+        engine_handle.clone(),
+        midi_relay_rx,
+        midi_bc_tx.clone(),
+    );
     let server_handle = aaw::spawn_web_server_task(stop.clone(), listener, root_router);
     let midi_rt_handle = aaw::spawn_midi_runtime_task(stop.clone(), Arc::clone(&midi_runtime));
-    let pgc_watchdog_handle =
-        aaw::spawn_midi_watcher_task(stop.clone(), engine_handle.clone(), midi_bc_tx.subscribe());
     let engine_rt_handle = tokio::spawn(engine_runtime.into_future(stop.clone()));
 
     info!("http server started @ http://localhost:{port}");
@@ -247,7 +258,6 @@ async fn run(args: Args) -> anyhow::Result<()> {
     relay_handle.await?;
     let _ = server_handle.await?;
     midi_rt_handle.await?;
-    pgc_watchdog_handle.await?;
     let _ = engine_rt_handle.await?;
 
     Ok(())
@@ -277,6 +287,7 @@ async fn try_start_stream(
     stream_info: AudioOutputStreamInfo,
     engine: Arc<Mutex<engine::Engine>>,
     stream_error: Arc<AtomicBool>,
+    audio_metrics: Arc<audio::metrics::AudioMetrics>,
 ) -> anyhow::Result<AudioOutputStream> {
     let device_config = audio::output::ResolvedConfig::find(DeviceCfgSelection {
         host: audio::params::HostSelection::Id(stream_info.host_id.as_str()),
@@ -307,7 +318,7 @@ async fn try_start_stream(
     };
 
     let stream = resolved_config
-        .start_stream(Arc::clone(&engine), stream_error)
+        .start_stream(Arc::clone(&engine), stream_error, audio_metrics)
         .await
         .context("failed to start audio stream")?;
 

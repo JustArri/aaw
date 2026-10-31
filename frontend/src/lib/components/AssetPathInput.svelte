@@ -1,5 +1,6 @@
 <script lang="ts">
     import Icon from '@iconify/svelte';
+    import Button from '$lib/components/Button.svelte';
     import SelectDropdown from '$lib/components/SelectDropdown.svelte';
     import { notify } from '$lib/push-notifications.svelte';
 
@@ -76,21 +77,12 @@
             {placeholder}
             {disabled}
             {compact}
+            clearable
             searchable
             searchPlaceholder="Search assets"
             noMatchesText="No matching assets"
             ariaLabel="Asset path"
             bind:value />
-        {#if value && !disabled}
-            <button
-                class={`text-foreground-muted hover:bg-surface-hover hover:text-foreground absolute top-1/2 z-10 grid -translate-y-1/2 cursor-pointer place-items-center rounded-md border-0 bg-transparent transition-colors ${compact ? 'right-7 size-7' : 'right-8 size-8'}`}
-                type="button"
-                aria-label="Clear asset path"
-                title="Clear asset path"
-                onclick={() => (value = '')}>
-                <Icon icon="lucide:x" width="1rem" />
-            </button>
-        {/if}
         {#if required}
             <input
                 class="pointer-events-none absolute size-px opacity-0"
@@ -102,11 +94,15 @@
         {/if}
     </div>
 
-    <button
-        class={`border-border-strong bg-surface-button text-foreground-muted hover:border-accent/40 hover:bg-accent/10 hover:text-accent grid shrink-0 cursor-pointer place-items-center rounded-lg border transition-colors disabled:cursor-wait disabled:opacity-60 ${compact ? 'size-9' : 'size-10'}`}
+    <Button
+        variant="secondary"
+        size={compact ? 'md' : 'lg'}
+        square
+        class="text-foreground-muted enabled:hover:border-accent/40 enabled:hover:bg-accent/10 enabled:hover:text-accent"
         type="button"
         aria-label="Reload assets"
         title="Reload assets"
+        busy={reloading}
         disabled={reloading}
         onclick={reload}>
         <Icon
@@ -117,5 +113,5 @@
                   : 'lucide:refresh-cw'}
             width="1.125rem"
             class={reloading ? 'animate-spin' : reloadDone ? 'text-success' : ''} />
-    </button>
+    </Button>
 </div>

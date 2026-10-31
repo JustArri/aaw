@@ -53,6 +53,7 @@
     --synth-fluid: #60c7ff;
     --synth-sfizz: #a696ff;
     --synth-dummy: #50d4a0;
+    --synth-clap: #d49650;
     --synth-warm: #ffad72;
     --synth-unassigned: #747d88;
     --preset-rose: #ff7088;
@@ -206,6 +207,7 @@
     --color-synth-fluid: var(--synth-fluid);
     --color-synth-sfizz: var(--synth-sfizz);
     --color-synth-dummy: var(--synth-dummy);
+    --color-synth-clap: var(--synth-clap);
     --color-synth-warm: var(--synth-warm);
     --color-synth-unassigned: var(--synth-unassigned);
     --color-preset-rose: var(--preset-rose);

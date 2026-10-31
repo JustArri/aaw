@@ -52,7 +52,7 @@ export async function setGlobalEffects(effects: Effects) {
 }
 
 export async function setSynthEffects(id: number, effects: Effects) {
-    const response = await request(() => api.synthSetEffects(id, effects));
+    const response = await request(() => api.instrumentSetEffects(id, effects));
     if (response.status !== 204) {
         responseError(response.status, response.data);
     }

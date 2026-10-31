@@ -1,3 +1,4 @@
+pub use clap::{ParameterInfo as ClapParameterInfo, synth::Synth as Clap};
 pub use dummy::{DEFAULT_VOICE_COUNT as DUMMY_DEFAULT_VOICE_COUNT, Dummy};
 pub use error::{Error, Result};
 pub use fluidsynth::{
@@ -5,10 +6,12 @@ pub use fluidsynth::{
     SoundFontNoteRange, SoundFontPresetInfo, SoundFontProgram, Synth as Fluid,
 };
 pub use sfizz::{
+    DEFAULT_PRELOAD_SIZE as SFIZZ_DEFAULT_PRELOAD_SIZE,
     DEFAULT_VOICE_COUNT as SFIZZ_DEFAULT_VOICE_COUNT, MAX_VOICE_COUNT as SFIZZ_MAX_VOICE_COUNT,
     SfzInfo, SfzKeyRange, Synth as Sfizz,
 };
 
+mod clap;
 mod dummy;
 mod error;
 mod fluidsynth;

@@ -17,6 +17,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(audio_host_outputs))
         .routes(routes!(audio_output_stream))
         .routes(routes!(set_audio_output_stream))
+        .routes(routes!(audio_metrics, reset_audio_metrics))
         .routes(routes!(audio_recording))
         .routes(routes!(start_audio_recording))
         .routes(routes!(stop_audio_recording))
@@ -132,6 +133,29 @@ async fn audio_output_stream(
 
 //--------------------------------------------------------------------------------------------------
 
+#[utoipa::path(
+    get,
+    path = "/metrics",
+    responses((status = OK, body = audio::metrics::AudioMetricsSnapshot, description = "Real-time audio performance metrics"))
+)]
+async fn audio_metrics(
+    State(app_state): State<AppState>,
+) -> Json<audio::metrics::AudioMetricsSnapshot> {
+    Json(app_state.audio_metrics.snapshot())
+}
+
+#[utoipa::path(
+    post,
+    path = "/metrics/reset",
+    responses((status = NO_CONTENT, description = "Audio metrics reset"))
+)]
+async fn reset_audio_metrics(State(app_state): State<AppState>) -> StatusCode {
+    app_state.audio_metrics.reset();
+    StatusCode::NO_CONTENT
+}
+
+//--------------------------------------------------------------------------------------------------
+
 #[derive(Deserialize, ToSchema)]
 pub struct SetOutputStreamRequest {
     host_id: String,
@@ -196,6 +220,7 @@ async fn set_audio_output_stream(
         if let Some(stream) = app_state.output_stream.lock().await.take() {
             drop(stream);
         }
+        app_state.audio_metrics.set_active(false);
         return Ok(Json(None));
     };
 
@@ -226,9 +251,14 @@ async fn set_audio_output_stream(
     if let Some(stream) = app_state.output_stream.lock().await.take() {
         drop(stream);
     }
+    app_state.audio_metrics.set_active(false);
 
     let stream = resolved_config
-        .start_stream(Arc::clone(&app_state.engine), Arc::clone(&app_state.stream_error))
+        .start_stream(
+            Arc::clone(&app_state.engine),
+            Arc::clone(&app_state.stream_error),
+            Arc::clone(&app_state.audio_metrics),
+        )
         .await
         .map_err(map_audio_error)?;
 

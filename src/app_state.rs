@@ -1,13 +1,17 @@
 use crate::{
     DEFAULT_CHANNEL_COUNT, DEFAULT_SAMPLE_RATE, MAX_BLOCK_SIZE,
     assets::Assets,
+    audio::metrics::AudioMetrics,
     engine::{Engine, EngineHandle},
     files,
     midi::{MidiEvent, MidiRuntime},
     projects::Projects,
     rt_channels::NotifiedRtSharedProducer,
     server::api::audio::{AudioOutputStream, AudioOutputStreamConfig},
-    synths::{DUMMY_DEFAULT_VOICE_COUNT, FLUID_DEFAULT_VOICE_COUNT, SFIZZ_DEFAULT_VOICE_COUNT},
+    synths::{
+        DUMMY_DEFAULT_VOICE_COUNT, FLUID_DEFAULT_VOICE_COUNT, SFIZZ_DEFAULT_PRELOAD_SIZE,
+        SFIZZ_DEFAULT_VOICE_COUNT,
+    },
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -29,8 +33,9 @@ pub struct AppState {
     pub engine_handle: EngineHandle,
     pub output_stream: Arc<Mutex<Option<AudioOutputStream>>>,
     pub min_instruments: usize,
-    pub min_synths: usize,
+    pub min_controllers: usize,
     pub stream_error: Arc<AtomicBool>,
+    pub audio_metrics: Arc<AudioMetrics>,
     pub aaw_root_dir: Arc<Path>,
     pub projects: Arc<RwLock<Projects>>,
     pub assets: Arc<RwLock<Assets>>,
@@ -69,6 +74,7 @@ pub struct Preferences {
     pub dummy_max_voices: usize,
     pub fluid_max_voices: usize,
     pub sfizz_max_voices: usize,
+    pub sfizz_preload_size: u32,
 }
 
 impl Default for Preferences {
@@ -77,6 +83,7 @@ impl Default for Preferences {
             dummy_max_voices: DUMMY_DEFAULT_VOICE_COUNT,
             fluid_max_voices: FLUID_DEFAULT_VOICE_COUNT,
             sfizz_max_voices: SFIZZ_DEFAULT_VOICE_COUNT,
+            sfizz_preload_size: SFIZZ_DEFAULT_PRELOAD_SIZE,
         }
     }
 }

@@ -13,18 +13,35 @@ pub fn router() -> OpenApiRouter<AppState> {
 }
 
 #[derive(Serialize, ToSchema)]
+struct ClapAsset {
+    #[schema(value_type = String)]
+    file_path: PathBuf,
+
+    plugin_id: String,
+
+    #[schema(required)]
+    name: Option<String>,
+
+    #[schema(required)]
+    version: Option<String>,
+}
+
+#[derive(Serialize, ToSchema)]
 struct Assets {
     #[schema(value_type = Vec<String>)]
     fluid: Vec<PathBuf>,
 
     #[schema(value_type = Vec<String>)]
     sfizz: Vec<PathBuf>,
+
+    clap_instruments: Vec<ClapAsset>,
 }
 
 #[derive(Serialize, ToSchema)]
 struct AssetFileExtensions {
     fluid: &'static [&'static str],
     sfizz: &'static [&'static str],
+    clap: &'static [&'static str],
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -39,7 +56,20 @@ struct AssetFileExtensions {
 )]
 async fn assets(State(app_state): State<AppState>) -> Result<Json<Assets>, (StatusCode, String)> {
     let assets = app_state.assets.read().await;
-    Ok(Json(Assets { fluid: assets.fluid_list.clone(), sfizz: assets.sfizz_list.clone() }))
+    Ok(Json(Assets {
+        fluid: assets.fluid_list.clone(),
+        sfizz: assets.sfizz_list.clone(),
+        clap_instruments: assets
+            .clap_instrument_list
+            .iter()
+            .map(|plugin| ClapAsset {
+                file_path: plugin.file_path.clone(),
+                plugin_id: plugin.plugin_id.clone(),
+                name: plugin.name.clone(),
+                version: plugin.version.clone(),
+            })
+            .collect(),
+    }))
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -60,6 +90,7 @@ async fn asset_file_extensions() -> Json<AssetFileExtensions> {
     Json(AssetFileExtensions {
         fluid: crate::assets::FLUID_EXTENSIONS,
         sfizz: crate::assets::SFIZZ_EXTENSIONS,
+        clap: crate::assets::CLAP_EXTENSIONS,
     })
 }
 

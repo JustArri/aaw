@@ -1,6 +1,5 @@
-use crate::engine::{instrument_graph::RtInstrumentGraph, synth_graph::RtSynthGraph};
+use crate::engine::instrument_graph::RtInstrumentGraph;
 
 pub struct RtProject {
     pub instrument_graph: RtInstrumentGraph,
-    pub synth_graph: RtSynthGraph,
 }

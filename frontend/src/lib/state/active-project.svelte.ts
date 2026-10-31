@@ -127,13 +127,13 @@ export function updateActiveProjectName(name: string) {
 
 export function updateActiveProjectGlobalEffects(effects: Effects) {
     if (projectState) {
-        projectState.synth_graph.global_effects = effects;
+        projectState.instrument_graph.global_effects = effects;
     }
 }
 
 export function updateActiveProjectGlobalGain(gain: number) {
     if (projectState) {
-        projectState.synth_graph.global_gain = gain;
+        projectState.instrument_graph.global_gain = gain;
     }
 }
 

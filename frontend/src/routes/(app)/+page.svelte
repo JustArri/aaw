@@ -3,7 +3,6 @@
     import { onMount } from 'svelte';
     import NumericControl from '$lib/components/NumericControl.svelte';
     import { decibelsToLinearGain, linearGainToDecibels } from '$lib/gain';
-    import type { SynthId } from '$lib/generated/models';
     import { icons } from '$lib/icons';
     import { notify } from '$lib/push-notifications.svelte';
     import { activeProject } from '$lib/state/active-project.svelte';
@@ -40,7 +39,7 @@
             .sort((left, right) => left.id - right.id)
     );
     let project = $derived(activeProject());
-    let globalGainDb = $derived(linearGainToDecibels(project?.synth_graph.global_gain ?? 1));
+    let globalGainDb = $derived(linearGainToDecibels(project?.instrument_graph.global_gain ?? 1));
     let availableSynths = $derived(synths());
     let enabledInstrumentIds = $derived(
         instruments.filter(({ slot }) => slot.enabled).map(({ id }) => id)
@@ -67,7 +66,7 @@
         }
     });
 
-    function synthEntry(id: SynthId | null) {
+    function synthEntry(id: number | null) {
         if (id === null) {
             return undefined;
         }
@@ -77,7 +76,7 @@
     function synthName(entry: SynthEntry | undefined) {
         return (
             entry?.synth.name.trim() ||
-            (entry ? `Unnamed ${entry.kind.toLowerCase()} synth #${entry.id}` : 'No synth assigned')
+            (entry ? `${entry.kind} instrument #${entry.id + 1}` : 'Instrument')
         );
     }
 
@@ -85,7 +84,7 @@
         return name.trim() || `Unnamed preset #${index + 1}`;
     }
 
-    function synthColor(id: SynthId | null) {
+    function synthColor(id: number | null) {
         switch (synthEntry(id)?.kind) {
             case SynthKind.Fluid:
                 return 'var(--color-synth-fluid)';
@@ -303,7 +302,7 @@
                     {#each instruments as instrument (instrument.id)}
                         {@const assignedSynth = synthEntry(instrument.slot.synth_id)}
                         <button
-                            class={`grid min-h-14.5 cursor-pointer grid-cols-[0.1875rem_minmax(0,1fr)_2.125rem] items-center gap-2.5 border-0 px-2.5 py-1.75 text-left disabled:cursor-wait min-[56.25rem]:min-h-15.5 min-[56.25rem]:px-3.25 ${instrument.slot.enabled ? 'bg-surface-item-active' : 'bg-surface-disabled'}`}
+                            class={`grid min-h-14.5 cursor-pointer grid-cols-[0.1875rem_minmax(0,1fr)_2.125rem] items-center gap-2.5 border-0 px-2.5 py-1.75 text-left transition-[filter] enabled:hover:brightness-110 disabled:cursor-wait min-[56.25rem]:min-h-15.5 min-[56.25rem]:px-3.25 ${instrument.slot.enabled ? 'bg-surface-item-active' : 'bg-surface-disabled'}`}
                             type="button"
                             aria-pressed={instrument.slot.enabled}
                             disabled={togglingInstrument === instrument.id}
@@ -316,8 +315,7 @@
                             <span class="min-w-0">
                                 <strong
                                     class={`block overflow-hidden text-sm font-semibold text-ellipsis whitespace-nowrap min-[56.25rem]:text-sm ${instrument.slot.name.trim() ? (instrument.slot.enabled ? 'text-foreground' : 'text-foreground-disabled') : 'text-foreground-muted italic'}`}>
-                                    {instrument.slot.name.trim() ||
-                                        `Unnamed instrument #${instrument.id + 1}`}
+                                    {instrument.slot.name.trim() || 'MIDI input controller'}
                                 </strong>
                                 <small
                                     class="text-foreground-caption mt-1 block overflow-hidden text-xs text-ellipsis whitespace-nowrap min-[56.25rem]:text-sm">

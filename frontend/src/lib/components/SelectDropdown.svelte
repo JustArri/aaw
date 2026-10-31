@@ -1,6 +1,7 @@
 <script lang="ts">
     import Icon from '@iconify/svelte';
     import { tick } from 'svelte';
+    import Button from '$lib/components/Button.svelte';
 
     export type SelectOption = {
         value: string;
@@ -19,6 +20,7 @@
         disabled?: boolean;
         busy?: boolean;
         compact?: boolean;
+        clearable?: boolean;
         searchable?: boolean;
         searchPlaceholder?: string;
         noMatchesText?: string;
@@ -35,6 +37,7 @@
         disabled = false,
         busy = false,
         compact = false,
+        clearable = false,
         searchable = false,
         searchPlaceholder = 'Search options',
         noMatchesText = 'No matching options',
@@ -56,6 +59,7 @@
     let suppressSelection = false;
     let suppressClick = false;
     let selected = $derived(options.find((option) => option.value === value));
+    let selectedText = $derived(selected?.selectionLabel ?? selected?.label ?? placeholder);
     let visibleOptions = $derived(
         options
             .map((option, index) => ({ option, index }))
@@ -141,6 +145,15 @@
         if (changed) {
             onchange?.(value);
         }
+    }
+
+    function clearSelection() {
+        if (!value) {
+            return;
+        }
+        value = '';
+        closeMenu();
+        onchange?.('');
     }
 
     function moveActive(direction: -1 | 1) {
@@ -276,14 +289,11 @@
         }
     }
 
-    function selectFromTouch(event: PointerEvent, option: SelectOption) {
+    function finishTouch(event: PointerEvent) {
         if (event.pointerType !== 'touch') {
             return;
         }
-        suppressClick = true;
-        if (!suppressSelection) {
-            select(option);
-        }
+        suppressClick = suppressSelection;
     }
 
     function selectFromMenu(event: MouseEvent, option: SelectOption) {
@@ -307,7 +317,7 @@
 <div bind:this={root} class={`relative min-w-0 ${className}`} onfocusout={handleFocusOut}>
     <button
         {id}
-        class={`border-border-strong bg-surface-inset text-foreground flex w-full min-w-0 items-center justify-between gap-2 border text-left transition-colors ${disabled ? 'cursor-not-allowed opacity-50' : busy ? 'cursor-wait' : 'hover:border-accent/40 cursor-pointer'} ${compact ? 'h-9 rounded-md px-2 text-xs' : 'h-10 rounded-lg px-2.5 text-sm'} ${open ? 'border-accent/50' : ''}`}
+        class={`border-border-strong bg-surface-inset text-foreground flex w-full min-w-0 items-center justify-between gap-2 border text-left transition-colors ${disabled ? 'cursor-not-allowed opacity-50' : busy ? 'cursor-wait' : 'hover:border-accent/40 cursor-pointer'} ${compact ? `h-9 rounded-md pl-2 text-xs ${clearable && value ? 'pr-8' : 'pr-2'}` : `h-10 rounded-lg pl-2.5 text-sm ${clearable && value ? 'pr-9' : 'pr-2.5'}`} ${open ? 'border-accent/50' : ''}`}
         type="button"
         role="combobox"
         aria-label={ariaLabel}
@@ -319,16 +329,31 @@
             : undefined}
         disabled={disabled || busy}
         aria-busy={busy}
+        title={selected ? selectedText : undefined}
         onclick={() => (open ? closeMenu() : openMenu())}
         onkeydown={handleKeydown}>
         <span class={`min-w-0 flex-1 truncate ${selected ? '' : 'text-foreground-muted'}`}>
-            {selected?.selectionLabel ?? selected?.label ?? placeholder}
+            {selectedText}
         </span>
         <Icon
             class={`text-foreground-muted shrink-0 transition-transform ${open ? 'rotate-180' : ''}`}
             icon="lucide:chevron-down"
             width={compact ? '0.875rem' : '1rem'} />
     </button>
+
+    {#if clearable && value && !disabled && !busy}
+        <Button
+            variant="ghost"
+            size={compact ? 'xs' : 'sm'}
+            square
+            class="absolute top-1/2 right-1 z-10 -translate-y-1/2"
+            type="button"
+            aria-label="Clear selection"
+            title="Clear"
+            onclick={clearSelection}>
+            <Icon icon="lucide:x" width="1rem" />
+        </Button>
+    {/if}
 
     {#if open}
         <button
@@ -345,17 +370,28 @@
             style={panelStyle}
             class="border-border-strong bg-surface-card fixed inset-3 z-[100] flex min-h-0 flex-col overflow-hidden rounded-xl border shadow-lg min-[37.5rem]:inset-auto min-[37.5rem]:max-h-none min-[37.5rem]:rounded-lg">
             <div
-                class="border-border flex min-h-12 items-center justify-between gap-3 border-b px-3 min-[37.5rem]:hidden">
-                <span class="text-foreground-strong truncate text-sm font-semibold">
-                    {ariaLabel ?? placeholder}
-                </span>
-                <button
-                    class="text-foreground-muted hover:bg-surface-hover hover:text-foreground grid size-9 shrink-0 cursor-pointer place-items-center rounded-lg border-0 bg-transparent transition-colors"
+                class="border-border flex min-h-12 items-start justify-between gap-3 border-b px-3 py-2 min-[37.5rem]:hidden">
+                <div class="min-w-0 flex-1">
+                    <span class="text-foreground-strong block text-sm font-semibold">
+                        {ariaLabel ?? placeholder}
+                    </span>
+                    {#if selected}
+                        <span
+                            class="text-foreground-muted mt-0.5 block text-xs break-all"
+                            title={selectedText}>
+                            {selectedText}
+                        </span>
+                    {/if}
+                </div>
+                <Button
+                    variant="ghost"
+                    size="md"
+                    square
                     type="button"
                     aria-label="Close options"
                     onclick={closeMenu}>
                     <Icon icon="lucide:x" width="1.125rem" />
-                </button>
+                </Button>
             </div>
             {#if searchable}
                 <div class="border-border border-b p-1.5">
@@ -395,21 +431,25 @@
                     <button
                         id={id ? `${id}-option-${index}` : undefined}
                         data-option-index={index}
-                        class={`text-foreground hover:bg-surface-hover block w-full rounded-md border-0 px-2.5 py-2 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${index === activeIndex ? 'bg-surface-hover' : 'bg-transparent'} ${option.value === value ? 'text-accent' : ''}`}
+                        class={`text-foreground hover:bg-surface-hover block w-full cursor-pointer rounded-md border-0 px-2.5 py-2 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${index === activeIndex ? 'bg-surface-hover' : 'bg-transparent'} ${option.value === value ? 'text-accent' : ''}`}
                         type="button"
                         role="option"
                         aria-selected={option.value === value}
+                        title={[option.label, option.description].filter(Boolean).join(' · ')}
                         disabled={option.disabled}
                         onpointerenter={(event) => {
                             if (event.pointerType === 'mouse' && !option.disabled) {
                                 activeIndex = index;
                             }
                         }}
-                        onpointerup={(event) => selectFromTouch(event, option)}
+                        onpointerup={finishTouch}
                         onclick={(event) => selectFromMenu(event, option)}>
-                        <span class="block truncate text-sm font-semibold">{option.label}</span>
+                        <span class="block text-sm font-semibold break-all min-[37.5rem]:truncate">
+                            {option.label}
+                        </span>
                         {#if option.description}
-                            <span class="text-foreground-muted mt-0.5 block truncate text-xs">
+                            <span
+                                class="text-foreground-muted mt-0.5 block text-xs break-all min-[37.5rem]:truncate">
                                 {option.description}
                             </span>
                         {/if}

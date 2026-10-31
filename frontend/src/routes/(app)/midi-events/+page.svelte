@@ -1,5 +1,6 @@
 <script lang="ts">
     import Icon from '@iconify/svelte';
+    import Button from '$lib/components/Button.svelte';
     import EngineStatusIndicator from '$lib/components/EngineStatusIndicator.svelte';
     import type { MidiEvent } from '$lib/generated/models';
     import { clearMidiEvents, midiEventLogSize, midiEvents } from '$lib/state/midi-events.svelte';
@@ -106,14 +107,17 @@
                 class="bg-surface-badge text-foreground-strong min-w-7 rounded-md px-2 py-1 text-center font-mono text-sm tabular-nums">
                 {midiEvents.length} / {midiEventLogSize()}
             </span>
-            <button
-                class="border-border-strong bg-surface-card text-foreground-muted hover:bg-surface-hover hover:text-foreground grid size-9 cursor-pointer place-items-center rounded-lg border disabled:cursor-not-allowed disabled:opacity-40"
+            <Button
+                variant="secondary"
+                size="md"
+                square
+                class="bg-surface-card text-foreground-muted"
                 type="button"
                 aria-label="Clear MIDI events"
                 disabled={midiEvents.length === 0}
                 onclick={clearEvents}>
                 <Icon icon="lucide:trash-2" width="1rem" />
-            </button>
+            </Button>
         </div>
     </header>
 

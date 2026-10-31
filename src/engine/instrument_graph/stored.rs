@@ -1,51 +1,108 @@
 use crate::{
     engine::{
-        graph::{InstrumentId, SynthId},
-        instrument_graph::{CtrInstrument, CtrInstrumentGraph},
+        controller_graph::StoredController,
+        effects::Effects,
+        graph::{ControllerId, InstrumentId},
+        instrument_graph::{CtrInstrument, CtrInstrumentGraph, CtrInstrumentKind},
     },
-    midi::{MidiFilter, MidiKeyTransform, MidiVelocityTransform},
+    synths::SoundFontProgram,
 };
 use migrations_derive::Migrations;
-use std::collections::HashMap;
+use serde::{Deserialize, Serialize};
+use serde_with::serde_as;
+use std::{collections::HashMap, path::PathBuf};
+use utoipa::ToSchema;
 
-#[derive(Default, Debug, Clone, Migrations)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(tag = "type", content = "data")]
+pub enum StoredInstrumentKind {
+    Dummy {
+        max_voices: usize,
+    },
+    Fluid {
+        #[schema(value_type = String)]
+        file_path: PathBuf,
+
+        program: SoundFontProgram,
+        max_voices: usize,
+    },
+    Sfizz {
+        #[schema(value_type = String)]
+        file_path: PathBuf,
+
+        max_voices: usize,
+        preload_size: u32,
+    },
+    Clap {
+        #[schema(value_type = String)]
+        file_path: PathBuf,
+
+        plugin_id: String,
+    },
+}
+
+impl From<&CtrInstrumentKind> for StoredInstrumentKind {
+    fn from(value: &CtrInstrumentKind) -> Self {
+        match value {
+            CtrInstrumentKind::Dummy { max_voices } => Self::Dummy { max_voices: *max_voices },
+            CtrInstrumentKind::Fluid { file_path, program, max_voices, .. } => Self::Fluid {
+                file_path: file_path.clone(),
+                program: *program,
+                max_voices: *max_voices,
+            },
+            CtrInstrumentKind::Sfizz { file_path, max_voices, preload_size, .. } => Self::Sfizz {
+                file_path: file_path.clone(),
+                max_voices: *max_voices,
+                preload_size: *preload_size,
+            },
+            CtrInstrumentKind::Clap { file_path, plugin_id, .. } => {
+                Self::Clap { file_path: file_path.clone(), plugin_id: plugin_id.clone() }
+            }
+        }
+    }
+}
+
+impl From<CtrInstrumentKind> for StoredInstrumentKind {
+    fn from(value: CtrInstrumentKind) -> Self {
+        match value {
+            CtrInstrumentKind::Dummy { max_voices } => Self::Dummy { max_voices },
+            CtrInstrumentKind::Fluid { file_path, program, max_voices, .. } => {
+                Self::Fluid { file_path, program, max_voices }
+            }
+            CtrInstrumentKind::Sfizz { file_path, max_voices, preload_size, .. } => {
+                Self::Sfizz { file_path, max_voices, preload_size }
+            }
+            CtrInstrumentKind::Clap { file_path, plugin_id, .. } => {
+                Self::Clap { file_path, plugin_id }
+            }
+        }
+    }
+}
+
+#[serde_as]
+#[derive(Debug, Clone, Migrations)]
 #[migrations(version = 1, version_type = u32)]
 pub struct StoredInstrument {
-    #[schema(required)]
-    pub synth_id: Option<SynthId>,
-
-    pub enabled: bool,
-    pub ignore_key_transform: bool,
-    pub key_transform: MidiKeyTransform,
-    pub ignore_velocity_transform: bool,
-    pub velocity_transform: MidiVelocityTransform,
-    pub channel_filter: MidiFilter,
-    pub cc_filter: MidiFilter,
-    pub ignore_pitch_bend: bool,
-    pub ignore_program_change: bool,
-    pub ignore_channel_aftertouch: bool,
-    pub ignore_polyphonic_aftertouch: bool,
-    pub use_global_transposition: bool,
     pub name: String,
+    pub kind: StoredInstrumentKind,
+    pub controllers: HashMap<ControllerId, StoredController>,
+    pub effects: Effects,
+    pub gain: f32,
+
+    #[serde_as(as = "Box<[_; 128]>")]
+    #[schema(value_type = [Option<u8>; 128])]
+    pub last_controller_values: Box<[Option<u8>; 128]>,
 }
 
 impl From<&CtrInstrument> for StoredInstrument {
     fn from(value: &CtrInstrument) -> Self {
         Self {
-            synth_id: value.synth_id,
-            enabled: value.enabled,
-            ignore_key_transform: value.ignore_key_transform,
-            key_transform: value.key_transform.clone(),
-            ignore_velocity_transform: value.ignore_velocity_transform,
-            velocity_transform: value.velocity_transform.clone(),
-            channel_filter: value.channel_filter.clone(),
-            cc_filter: value.cc_filter.clone(),
-            ignore_pitch_bend: value.ignore_pitch_bend,
-            ignore_program_change: value.ignore_program_change,
-            ignore_channel_aftertouch: value.ignore_channel_aftertouch,
-            ignore_polyphonic_aftertouch: value.ignore_polyphonic_aftertouch,
-            use_global_transposition: value.use_global_transposition,
             name: value.name.clone(),
+            kind: (&value.kind).into(),
+            controllers: value.controllers.map_ref(|controller| controller.into()).into(),
+            effects: value.effects.clone(),
+            gain: value.gain,
+            last_controller_values: value.last_controller_values.clone(),
         }
     }
 }
@@ -53,35 +110,42 @@ impl From<&CtrInstrument> for StoredInstrument {
 impl From<CtrInstrument> for StoredInstrument {
     fn from(value: CtrInstrument) -> Self {
         Self {
-            synth_id: value.synth_id,
-            enabled: value.enabled,
-            ignore_key_transform: value.ignore_key_transform,
-            key_transform: value.key_transform,
-            ignore_velocity_transform: value.ignore_velocity_transform,
-            velocity_transform: value.velocity_transform,
-            channel_filter: value.channel_filter,
-            cc_filter: value.cc_filter,
-            ignore_pitch_bend: value.ignore_pitch_bend,
-            ignore_program_change: value.ignore_program_change,
-            ignore_channel_aftertouch: value.ignore_channel_aftertouch,
-            ignore_polyphonic_aftertouch: value.ignore_polyphonic_aftertouch,
-            use_global_transposition: value.use_global_transposition,
             name: value.name,
+            kind: value.kind.into(),
+            controllers: value.controllers.map(Into::into).into(),
+            effects: value.effects,
+            gain: value.gain,
+            last_controller_values: value.last_controller_values,
         }
     }
 }
 
-#[derive(Default, Debug, Clone, Migrations)]
+#[derive(Debug, Clone, Migrations)]
 #[migrations(version = 1, version_type = u32)]
 pub struct StoredInstrumentGraph {
     pub instruments: HashMap<InstrumentId, StoredInstrument>,
+    pub global_effects: Effects,
+    pub global_gain: f32,
     pub global_transposition: i8,
+}
+
+impl Default for StoredInstrumentGraph {
+    fn default() -> Self {
+        Self {
+            instruments: Default::default(),
+            global_effects: Default::default(),
+            global_gain: 1.0,
+            global_transposition: 0,
+        }
+    }
 }
 
 impl From<&CtrInstrumentGraph> for StoredInstrumentGraph {
     fn from(value: &CtrInstrumentGraph) -> Self {
         Self {
-            instruments: value.instruments.map_ref(|s| s.into()).into(),
+            instruments: value.instruments.map_ref(|instrument| instrument.into()).into(),
+            global_effects: value.global_effects.clone(),
+            global_gain: value.global_gain,
             global_transposition: value.global_transposition,
         }
     }
@@ -90,7 +154,9 @@ impl From<&CtrInstrumentGraph> for StoredInstrumentGraph {
 impl From<CtrInstrumentGraph> for StoredInstrumentGraph {
     fn from(value: CtrInstrumentGraph) -> Self {
         Self {
-            instruments: value.instruments.map(|s| s.into()).into(),
+            instruments: value.instruments.map(Into::into).into(),
+            global_effects: value.global_effects,
+            global_gain: value.global_gain,
             global_transposition: value.global_transposition,
         }
     }

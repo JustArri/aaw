@@ -13,6 +13,7 @@ fn main() {
     println!("cargo:rerun-if-changed=ffi/sfizz.h");
     println!("cargo:rerun-if-changed=lib/fluidsynth/CMakeLists.txt");
     println!("cargo:rerun-if-changed=lib/sfizz/CMakeLists.txt");
+    println!("cargo:rerun-if-changed=lib/sfizz/src/sfizz/FilePool.cpp");
 
     load_version();
 

@@ -17,8 +17,8 @@ use serde::Deserialize;
 use utoipa::IntoParams;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
+mod controller_graph;
 mod instrument_graph;
-mod synth_graph;
 
 pub fn router() -> OpenApiRouter<AppState> {
     OpenApiRouter::new()
@@ -33,8 +33,8 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(set_user_presets))
         .routes(routes!(user_presets))
         .routes(routes!(activate_user_preset))
-        .nest("/graph/synth", synth_graph::router())
-        .nest("/graph/instrument", instrument_graph::router())
+        .merge(instrument_graph::router())
+        .merge(controller_graph::router())
 }
 
 //--------------------------------------------------------------------------------------------------
@@ -52,18 +52,18 @@ async fn new_active_project(
 ) -> Result<StatusCode, (StatusCode, String)> {
     let stream_config = app_state.stream_config().await;
 
-    let (ctr_project, rt_project) = project::prepare(
+    let (ctr_project, rt_project, controller_graph) = project::prepare(
         ProjectAsset { project: StoredProject::default(), storage: None },
         ProjectContext {
             assets_dir: &app_state.assets.read().await.dir,
             min_instruments: app_state.min_instruments,
-            min_synths: app_state.min_synths,
+            min_controllers: app_state.min_controllers,
             stream_config: &stream_config,
         },
     )
     .await?;
 
-    app_state.engine_handle.replace_project(ctr_project, rt_project).await?;
+    app_state.engine_handle.replace_project(ctr_project, rt_project, controller_graph).await?;
     app_state.save_last_project(None).await;
 
     Ok(StatusCode::NO_CONTENT)
@@ -107,18 +107,18 @@ async fn import_active_project(
 ) -> Result<StatusCode, (StatusCode, String)> {
     let stream_config = app_state.stream_config().await;
 
-    let (ctr_project, rt_project) = project::prepare(
+    let (ctr_project, rt_project, controller_graph) = project::prepare(
         ProjectAsset { project, storage: None },
         ProjectContext {
             assets_dir: &app_state.assets.read().await.dir,
             min_instruments: app_state.min_instruments,
-            min_synths: app_state.min_synths,
+            min_controllers: app_state.min_controllers,
             stream_config: &stream_config,
         },
     )
     .await?;
 
-    app_state.engine_handle.replace_project(ctr_project, rt_project).await?;
+    app_state.engine_handle.replace_project(ctr_project, rt_project, controller_graph).await?;
     app_state.save_last_project(None).await;
 
     Ok(StatusCode::NO_CONTENT)
@@ -285,14 +285,23 @@ async fn activate_user_preset(
     let Some(preset) = project.user_presets.entries.get(path.preset_id) else {
         return Err((StatusCode::NOT_FOUND, format!("user preset #{} not found", path.preset_id)));
     };
-    let preset_instruments = preset.instruments.clone();
-    let instrument_ids: Vec<_> =
-        project.instrument_graph.instruments.iter_valid_ids().copied().collect();
+    let preset_controllers = preset.controllers.clone();
+    let controller_addresses: Vec<_> = (&project.instrument_graph.instruments)
+        .into_iter()
+        .flat_map(|(instrument_id, instrument)| {
+            instrument.controllers.iter_valid_ids().map(|controller_id| {
+                crate::engine::graph::ControllerAddress {
+                    instrument_id: *instrument_id,
+                    controller_id: *controller_id,
+                }
+            })
+        })
+        .collect();
     drop(project);
 
-    for instrument_id in instrument_ids {
-        let enabled = preset_instruments.contains(&instrument_id);
-        app_state.engine_handle.instrument_set_enabled(instrument_id, enabled).await?;
+    for address in controller_addresses {
+        let enabled = preset_controllers.contains(&address);
+        app_state.engine_handle.controller_set_enabled(address, enabled).await;
     }
 
     Ok(StatusCode::NO_CONTENT)

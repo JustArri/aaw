@@ -1,4 +1,4 @@
-use crate::engine::graph::InstrumentId;
+use crate::engine::graph::ControllerAddress;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -6,7 +6,7 @@ use utoipa::ToSchema;
 #[schema(as = UserPreset)]
 pub struct CtrUserPreset {
     pub name: String,
-    pub instruments: Vec<InstrumentId>,
+    pub controllers: Vec<ControllerAddress>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

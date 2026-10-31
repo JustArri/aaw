@@ -1,6 +1,7 @@
 <script lang="ts">
     import Icon from '@iconify/svelte';
     import { onMount } from 'svelte';
+    import Button from '$lib/components/Button.svelte';
     import SelectDropdown from '$lib/components/SelectDropdown.svelte';
     import TextSuggestionInput from '$lib/components/TextSuggestionInput.svelte';
     import { notify } from '$lib/push-notifications.svelte';
@@ -187,10 +188,14 @@
                     class="bg-surface-count text-foreground-muted rounded-full px-2.5 py-1 font-mono text-sm">
                     {slots.filter((slot) => slot.type === 'Connected').length} / {slots.length}
                 </span>
-                <button
-                    class="border-border-strong bg-surface-card text-foreground-muted hover:bg-surface-hover hover:text-foreground grid size-9 shrink-0 cursor-pointer place-items-center rounded-lg border disabled:cursor-not-allowed disabled:opacity-50"
+                <Button
+                    variant="secondary"
+                    size="md"
+                    square
+                    class="bg-surface-card text-foreground-muted"
                     type="button"
                     aria-label="Refresh MIDI inputs"
+                    busy={refreshing}
                     disabled={refreshing}
                     onclick={() => void refresh()}>
                     <Icon
@@ -201,7 +206,7 @@
                               : 'lucide:refresh-cw'}
                         width="1rem"
                         class={refreshing ? 'animate-spin' : refreshDone ? 'text-success' : ''} />
-                </button>
+                </Button>
             </div>
         </header>
 
@@ -245,9 +250,11 @@
                                     {slot.data.port_id}
                                 </small>
                             </div>
-                            <button
-                                class="border-border-strong text-foreground-muted hover:border-danger/50 hover:bg-danger/10 hover:text-danger-foreground inline-flex min-h-9 cursor-pointer items-center gap-2 rounded-lg border bg-transparent px-3 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50"
+                            <Button
+                                variant="danger-outline"
+                                size="sm"
                                 type="button"
+                                busy={busySlotId === slotId}
                                 disabled={busySlotId !== null}
                                 onclick={() => void disconnect(slotId)}>
                                 {#if busySlotId === slotId}<Icon
@@ -255,7 +262,7 @@
                                         width="0.875rem"
                                         class="animate-spin" />{/if}
                                 {busySlotId === slotId ? 'Disconnecting…' : 'Disconnect'}
-                            </button>
+                            </Button>
                         {:else}
                             <SelectDropdown
                                 bind:value={selectedPorts[slotId]}
@@ -271,9 +278,11 @@
                                     }))
                                 ]}
                                 ariaLabel={`Port for MIDI input slot ${slotId + 1}`} />
-                            <button
-                                class="bg-accent text-accent-foreground inline-flex min-h-9 cursor-pointer items-center gap-2 rounded-lg border-0 px-3 text-sm font-bold disabled:cursor-not-allowed disabled:opacity-50"
+                            <Button
+                                variant="primary"
+                                size="sm"
                                 type="button"
+                                busy={busySlotId === slotId}
                                 disabled={!selectedPorts[slotId] || busySlotId !== null}
                                 onclick={() => void connect(slotId)}>
                                 {#if busySlotId === slotId}<Icon
@@ -281,7 +290,7 @@
                                         width="0.875rem"
                                         class="animate-spin" />{/if}
                                 {busySlotId === slotId ? 'Connecting…' : 'Connect'}
-                            </button>
+                            </Button>
                         {/if}
                     </article>
                 {/each}
@@ -357,16 +366,19 @@
                 </label>
             </div>
 
-            <button
-                class="bg-accent text-accent-foreground inline-flex min-h-10 cursor-pointer items-center justify-center gap-2 rounded-lg border-0 px-4 text-sm font-bold disabled:cursor-not-allowed disabled:opacity-50 min-[31.25rem]:w-fit"
+            <Button
+                variant="primary"
+                size="md"
+                class="min-[31.25rem]:w-fit"
                 type="submit"
+                busy={addingAutoConnection}
                 disabled={!autoPortId.trim() || addingAutoConnection}>
                 {#if addingAutoConnection}<Icon
                         icon="lucide:loader-circle"
                         width="0.875rem"
                         class="animate-spin" />{/if}
                 {addingAutoConnection ? 'Adding…' : 'Add auto-connection'}
-            </button>
+            </Button>
         </form>
 
         {#if autoConnections.length === 0}
@@ -393,10 +405,14 @@
                                     : `Slot ${connection.preferred_slot_id + 1}${connection.slot_id_fixed ? ' only' : ' preferred'}`}
                             </small>
                         </div>
-                        <button
-                            class="text-foreground-muted hover:bg-danger/10 hover:text-danger-foreground grid size-8.5 shrink-0 cursor-pointer place-items-center rounded-lg border-0 bg-transparent disabled:cursor-not-allowed disabled:opacity-50"
+                        <Button
+                            variant="danger-ghost"
+                            size="sm"
+                            square
+                            class="size-8.5"
                             type="button"
                             aria-label={`Delete auto-connection for ${portName(connection.port_id)}`}
+                            busy={deletingPortId === connection.port_id}
                             disabled={deletingPortId !== null}
                             onclick={() => void removeAutoConnection(connection.port_id)}>
                             <Icon
@@ -407,7 +423,7 @@
                                 class={deletingPortId === connection.port_id
                                     ? 'animate-spin'
                                     : ''} />
-                        </button>
+                        </Button>
                     </article>
                 {/each}
             </div>

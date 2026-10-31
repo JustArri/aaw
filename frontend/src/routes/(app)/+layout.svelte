@@ -16,13 +16,7 @@
     const navigation: NavigationEntry[] = [
         { type: 'title', label: 'Active project' },
         { type: 'item', label: 'Live', href: '/', icon: 'lucide:activity' },
-        {
-            type: 'item',
-            label: 'Instruments',
-            href: '/instruments',
-            icon: 'lucide:sliders-horizontal'
-        },
-        { type: 'item', label: 'Synths', href: '/synths', icon: 'lucide:grid-2x2' },
+        { type: 'item', label: 'Instruments', href: '/synths', icon: 'lucide:grid-2x2' },
         { type: 'item', label: 'User Presets', href: '/user-presets', icon: 'lucide:list-music' },
         { type: 'title', label: 'Engine' },
         { type: 'item', label: 'MIDI Inputs', href: '/midi-inputs', icon: 'lucide:cable' },
@@ -39,9 +33,10 @@
     const routeLabels: Record<string, string> = {
         '/': 'Live',
         '/live': 'Live',
-        '/instruments': 'Instruments',
+        '/instruments': 'Controllers',
+        '/controllers': 'Instrument controllers',
         '/user-presets': 'User Presets',
-        '/synths': 'Synths',
+        '/synths': 'Instruments',
         '/midi-inputs': 'MIDI Inputs',
         '/keyboard': 'Keyboard',
         '/midi-events': 'MIDI Events',
@@ -69,14 +64,15 @@
 </svelte:head>
 
 <div
-    class="bg-app-background text-foreground min-h-screen min-w-[20rem] font-sans antialiased min-[56.25rem]:grid min-[56.25rem]:grid-cols-[13.875rem_minmax(0,1fr)]">
+    class="bg-app-background text-foreground min-h-screen min-w-[20rem] font-sans antialiased min-[56.25rem]:grid min-[56.25rem]:h-dvh min-[56.25rem]:min-h-0 min-[56.25rem]:grid-cols-[13.875rem_minmax(0,1fr)] min-[56.25rem]:overflow-hidden">
     <Navigation items={navigation} {activeLabel} />
 
-    <section class="min-w-0">
+    <section
+        class="min-w-0 min-[56.25rem]:grid min-[56.25rem]:min-h-0 min-[56.25rem]:grid-rows-[auto_minmax(0,1fr)]">
         <TopBar {activeLabel} />
 
         <main
-            class="px-3 pt-3 pb-23.5 min-[37.5rem]:px-5 min-[56.25rem]:mx-auto min-[56.25rem]:w-full min-[56.25rem]:max-w-360 min-[56.25rem]:px-7.5 min-[56.25rem]:pt-4 min-[56.25rem]:pb-10">
+            class="px-3 pt-3 pb-23.5 min-[37.5rem]:px-5 min-[56.25rem]:mx-auto min-[56.25rem]:h-full min-[56.25rem]:min-h-0 min-[56.25rem]:w-full min-[56.25rem]:max-w-360 min-[56.25rem]:overflow-y-auto min-[56.25rem]:px-7.5 min-[56.25rem]:pt-4 min-[56.25rem]:pb-10">
             {@render children()}
         </main>
     </section>

@@ -8,6 +8,7 @@
         saving = false,
         disabled = false,
         required = false,
+        showIndicator = true,
         oncommit
     }: {
         id: string;
@@ -16,6 +17,7 @@
         saving?: boolean;
         disabled?: boolean;
         required?: boolean;
+        showIndicator?: boolean;
         oncommit: () => unknown | Promise<unknown>;
     } = $props();
 
@@ -26,7 +28,7 @@
     }
 </script>
 
-<div class="flex gap-2">
+<div class={showIndicator ? 'flex gap-2' : 'flex'}>
     <input
         {id}
         class="border-border-strong bg-surface-inset text-foreground h-10 min-w-0 flex-1 rounded-lg border px-2.5 text-sm"
@@ -40,5 +42,7 @@
                 event.currentTarget.blur();
             }
         }} />
-    <SaveIndicator {saving} {pending} />
+    {#if showIndicator}
+        <SaveIndicator {saving} {pending} />
+    {/if}
 </div>

@@ -27,16 +27,25 @@ impl From<InstrumentId> for usize {
 )]
 #[serde(transparent)]
 #[schema(value_type = usize)]
-pub struct SynthId(pub usize);
+pub struct ControllerId(pub usize);
 
-impl From<usize> for SynthId {
+impl From<usize> for ControllerId {
     fn from(id: usize) -> Self {
         Self(id)
     }
 }
 
-impl From<SynthId> for usize {
-    fn from(id: SynthId) -> Self {
+impl From<ControllerId> for usize {
+    fn from(id: ControllerId) -> Self {
         id.0
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
+pub struct ControllerAddress {
+    #[schema(value_type = usize)]
+    pub instrument_id: InstrumentId,
+
+    #[schema(value_type = usize)]
+    pub controller_id: ControllerId,
 }

@@ -1,7 +1,8 @@
 <script lang="ts">
     import { onMount } from 'svelte';
     import Icon from '@iconify/svelte';
-    import ApplyIconButton from '$lib/components/ApplyIconButton.svelte';
+    import ApplyButton from '$lib/components/ApplyButton.svelte';
+    import Button from '$lib/components/Button.svelte';
     import type { Preferences } from '$lib/generated/models';
     import { notify } from '$lib/push-notifications.svelte';
     import {
@@ -19,7 +20,8 @@
     let synthDefaults = $state<Preferences>({
         dummy_max_voices: 32,
         fluid_max_voices: 256,
-        sfizz_max_voices: 64
+        sfizz_max_voices: 64,
+        sfizz_preload_size: 65_536
     });
     let voiceLimitsLoading = $state(true);
     let voiceLimitsSaving = $state(false);
@@ -28,7 +30,8 @@
         preferences() !== null &&
             (synthDefaults.dummy_max_voices !== preferences()?.dummy_max_voices ||
                 synthDefaults.fluid_max_voices !== preferences()?.fluid_max_voices ||
-                synthDefaults.sfizz_max_voices !== preferences()?.sfizz_max_voices)
+                synthDefaults.sfizz_max_voices !== preferences()?.sfizz_max_voices ||
+                synthDefaults.sfizz_preload_size !== preferences()?.sfizz_preload_size)
     );
 
     onMount(async () => {
@@ -102,7 +105,7 @@
             <div>
                 <h2 class="m-0 text-base min-[56.25rem]:text-lg">Synth defaults</h2>
                 <p class="text-foreground-muted mt-1 mb-0 text-sm">
-                    Suggested voice counts for new synths. They can be changed during creation.
+                    Suggested parameters for new synths. They can be changed during creation.
                 </p>
             </div>
             {#if voiceLimitsLoading}
@@ -112,7 +115,7 @@
                     width="1.125rem"
                     aria-label="Loading synth defaults" />
             {:else}
-                <ApplyIconButton
+                <ApplyButton
                     saving={voiceLimitsSaving}
                     pending={voiceLimitsChanged}
                     disabled={!voiceLimitsLoaded}
@@ -121,7 +124,7 @@
         </header>
 
         <div
-            class="grid gap-3 p-3.75 min-[43.75rem]:grid-cols-3 min-[56.25rem]:gap-4 min-[56.25rem]:p-5">
+            class="grid gap-3 p-3.75 min-[43.75rem]:grid-cols-2 min-[56.25rem]:gap-4 min-[56.25rem]:p-5 min-[75rem]:grid-cols-4">
             <label
                 class="border-border bg-surface-inset flex items-center justify-between gap-4 rounded-xl border p-3.5">
                 <strong class="min-w-0 text-sm font-semibold">Dummy</strong>
@@ -163,6 +166,23 @@
                     disabled={!voiceLimitsLoaded}
                     bind:value={synthDefaults.sfizz_max_voices} />
             </label>
+
+            <label
+                class="border-border bg-surface-inset flex items-center justify-between gap-4 rounded-xl border p-3.5">
+                <span class="min-w-0">
+                    <strong class="block text-sm font-semibold">Sfizz preload</strong>
+                    <span class="text-foreground-muted text-xs">Frames per sample</span>
+                </span>
+                <input
+                    class="border-border-strong bg-surface-card text-foreground h-10 w-25 shrink-0 rounded-lg border px-2.5 text-right font-mono text-sm tabular-nums"
+                    type="number"
+                    min="1"
+                    max="4294967295"
+                    step="1"
+                    required
+                    disabled={!voiceLimitsLoaded}
+                    bind:value={synthDefaults.sfizz_preload_size} />
+            </label>
         </div>
     </form>
 
@@ -195,16 +215,19 @@
 
                 <div class="mt-5 flex min-h-10 items-center justify-end gap-2">
                     {#if confirming === 'reboot'}
-                        <button
-                            class="border-border-strong bg-surface-button text-foreground hover:bg-surface-hover min-h-10 cursor-pointer rounded-lg border px-3 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50"
+                        <Button
+                            variant="secondary"
+                            size="md"
                             type="button"
                             disabled={running !== null}
                             onclick={() => (confirming = null)}>
                             Cancel
-                        </button>
-                        <button
-                            class="bg-danger hover:bg-danger/85 inline-flex min-h-10 cursor-pointer items-center gap-2 rounded-lg border-0 px-3.5 text-sm font-bold text-white transition-colors disabled:cursor-wait disabled:opacity-60"
+                        </Button>
+                        <Button
+                            variant="danger"
+                            size="md"
                             type="button"
+                            busy={running === 'reboot'}
                             disabled={running !== null}
                             onclick={() => void run('reboot')}>
                             <Icon
@@ -214,16 +237,18 @@
                                 width="1rem"
                                 class={running === 'reboot' ? 'animate-spin' : ''} />
                             {running === 'reboot' ? 'Rebooting…' : 'Confirm reboot'}
-                        </button>
+                        </Button>
                     {:else}
-                        <button
-                            class="border-border-strong bg-surface-button text-foreground hover:border-accent/50 hover:bg-accent/10 hover:text-accent inline-flex min-h-10 cursor-pointer items-center gap-2 rounded-lg border px-3.5 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+                        <Button
+                            variant="secondary"
+                            size="md"
+                            class="enabled:hover:border-accent/50 enabled:hover:bg-accent/10 enabled:hover:text-accent"
                             type="button"
                             disabled={running !== null}
                             onclick={() => (confirming = 'reboot')}>
                             <Icon icon="lucide:refresh-cw" width="1rem" />
                             Reboot
-                        </button>
+                        </Button>
                     {/if}
                 </div>
             </article>
@@ -244,16 +269,19 @@
 
                 <div class="mt-5 flex min-h-10 items-center justify-end gap-2">
                     {#if confirming === 'shutdown'}
-                        <button
-                            class="border-border-strong bg-surface-button text-foreground hover:bg-surface-hover min-h-10 cursor-pointer rounded-lg border px-3 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50"
+                        <Button
+                            variant="secondary"
+                            size="md"
                             type="button"
                             disabled={running !== null}
                             onclick={() => (confirming = null)}>
                             Cancel
-                        </button>
-                        <button
-                            class="bg-danger hover:bg-danger/85 inline-flex min-h-10 cursor-pointer items-center gap-2 rounded-lg border-0 px-3.5 text-sm font-bold text-white transition-colors disabled:cursor-wait disabled:opacity-60"
+                        </Button>
+                        <Button
+                            variant="danger"
+                            size="md"
                             type="button"
+                            busy={running === 'shutdown'}
                             disabled={running !== null}
                             onclick={() => void run('shutdown')}>
                             <Icon
@@ -263,16 +291,18 @@
                                 width="1rem"
                                 class={running === 'shutdown' ? 'animate-spin' : ''} />
                             {running === 'shutdown' ? 'Powering off…' : 'Confirm power off'}
-                        </button>
+                        </Button>
                     {:else}
-                        <button
-                            class="border-border-strong bg-surface-button text-foreground hover:border-danger/50 hover:bg-danger/10 hover:text-danger inline-flex min-h-10 cursor-pointer items-center gap-2 rounded-lg border px-3.5 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+                        <Button
+                            variant="secondary"
+                            size="md"
+                            class="enabled:hover:border-danger/50 enabled:hover:bg-danger/10 enabled:hover:text-danger"
                             type="button"
                             disabled={running !== null}
                             onclick={() => (confirming = 'shutdown')}>
                             <Icon icon="lucide:power" width="1rem" />
                             Power off
-                        </button>
+                        </Button>
                     {/if}
                 </div>
             </article>

@@ -1,5 +1,6 @@
 <script lang="ts">
     import Icon from '@iconify/svelte';
+    import Button from '$lib/components/Button.svelte';
     import { icons } from '$lib/icons';
     import { notify } from '$lib/push-notifications.svelte';
     import { activeProject } from '$lib/state/active-project.svelte';
@@ -140,8 +141,11 @@
                     class={`bg-danger ml-2 size-2 rounded-full ${recording.state === AudioRecordingState.Running ? 'animate-pulse' : 'opacity-45'}`}
                     aria-hidden="true">
                 </span>
-                <button
-                    class="text-danger hover:bg-danger/10 grid size-8.5 cursor-pointer place-items-center rounded-lg border-0 bg-transparent disabled:cursor-wait disabled:opacity-50"
+                <Button
+                    variant="danger-ghost"
+                    size="sm"
+                    square
+                    class="size-8.5"
                     type="button"
                     aria-label={recording.state === AudioRecordingState.Running
                         ? 'Pause recording'
@@ -149,6 +153,7 @@
                     title={recording.state === AudioRecordingState.Running
                         ? 'Pause recording'
                         : 'Resume recording'}
+                    busy={changingRecording}
                     disabled={changingRecording || !gatewayOnline()}
                     onclick={onRecordingPauseChange}>
                     <Icon
@@ -159,23 +164,31 @@
                               : 'lucide:play'}
                         width="1rem"
                         class={changingRecording ? 'animate-spin' : ''} />
-                </button>
-                <button
-                    class="text-danger hover:bg-danger/10 grid size-8.5 cursor-pointer place-items-center rounded-lg border-0 bg-transparent disabled:cursor-wait disabled:opacity-50"
+                </Button>
+                <Button
+                    variant="danger-ghost"
+                    size="sm"
+                    square
+                    class="size-8.5"
                     type="button"
                     aria-label="Stop recording"
                     title="Stop recording"
+                    busy={changingRecording}
                     disabled={changingRecording || !gatewayOnline()}
                     onclick={onRecordingStop}>
                     <Icon icon="lucide:square" width="0.9375rem" />
-                </button>
+                </Button>
             </div>
         {:else}
-            <button
-                class="border-danger/40 bg-surface-card text-danger hover:bg-danger/10 grid size-8.5 cursor-pointer place-items-center rounded-lg border disabled:cursor-not-allowed disabled:opacity-40"
+            <Button
+                variant="danger-outline"
+                size="sm"
+                square
+                class="bg-surface-card size-8.5"
                 type="button"
                 aria-label="Start recording"
                 title="Start recording"
+                busy={changingRecording}
                 disabled={changingRecording || !gatewayOnline() || recording === null}
                 onclick={onRecordingStart}>
                 {#if changingRecording}
@@ -183,26 +196,36 @@
                 {:else}
                     <span class="bg-danger size-3 rounded-full" aria-hidden="true"></span>
                 {/if}
-            </button>
+            </Button>
         {/if}
-        <button
-            class="border-danger/40 bg-danger/8 text-danger hover:bg-danger/15 grid size-8.5 cursor-pointer place-items-center rounded-lg border transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+        <Button
+            variant="danger-soft"
+            size="sm"
+            square
+            class="size-8.5"
             type="button"
             aria-label="Panic: silence all synths"
             title="Panic: silence all synths"
+            busy={panicking}
             disabled={panicking || !gatewayOnline()}
             onclick={onPanic}>
             <Icon
                 icon={panicking ? 'lucide:loader-circle' : 'lucide:octagon-alert'}
                 width="1.0625rem"
                 class={panicking ? 'animate-spin' : ''} />
-        </button>
+        </Button>
         <span class="bg-border mx-0.5 h-6 w-px shrink-0" aria-hidden="true"></span>
-        <button
-            class={`grid size-8.5 cursor-pointer place-items-center rounded-lg border transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${saveState === 'new' || saveState === 'unsaved' ? 'border-accent/40 bg-accent/10 text-accent hover:bg-accent/15' : 'border-border bg-surface-card text-foreground-muted hover:bg-surface-hover'}`}
+        <Button
+            variant={saveState === 'new' || saveState === 'unsaved'
+                ? 'accent-outline'
+                : 'secondary'}
+            size="sm"
+            square
+            class="size-8.5"
             type="button"
             aria-label={saveTitle}
             title={saveTitle}
+            busy={saving}
             disabled={saving || !activeProject()}
             onclick={onProjectSave}>
             <Icon
@@ -213,7 +236,7 @@
                       : icons.save}
                 width="1.0625rem"
                 class={saving ? 'animate-spin' : ''} />
-        </button>
+        </Button>
         <span class="bg-border mx-0.5 h-6 w-px shrink-0" aria-hidden="true"></span>
         <a
             class="border-border-strong bg-surface-card text-foreground-strong grid size-8.5 place-items-center rounded-lg border"

@@ -2,21 +2,23 @@
     import { onMount } from 'svelte';
     import Icon from '@iconify/svelte';
     import AssetPathInput from '$lib/components/AssetPathInput.svelte';
+    import ClapPluginInput from '$lib/components/ClapPluginInput.svelte';
     import AutoSaveTextInput from '$lib/components/AutoSaveTextInput.svelte';
-    import DotToggle from '$lib/components/DotToggle.svelte';
+    import Button from '$lib/components/Button.svelte';
     import EffectsEditor from '$lib/components/EffectsEditor.svelte';
     import NumericControl from '$lib/components/NumericControl.svelte';
     import SelectDropdown from '$lib/components/SelectDropdown.svelte';
+    import TimedConfirmButton from '$lib/components/TimedConfirmButton.svelte';
     import { decibelsToLinearGain, linearGainToDecibels } from '$lib/gain';
     import { notify } from '$lib/push-notifications.svelte';
     import { activeProject } from '$lib/state/active-project.svelte';
-    import { assetsForSynth, fetchAssets, refreshAssets } from '$lib/state/assets.svelte';
-    import { setGlobalEffects, setSynthEffects } from '$lib/state/effects.svelte';
     import {
-        addInstrument,
-        setInstrumentName,
-        setInstrumentSynth
-    } from '$lib/state/instruments.svelte';
+        assetsForSynth,
+        clapPlugins,
+        fetchAssets,
+        refreshAssets
+    } from '$lib/state/assets.svelte';
+    import { setGlobalEffects, setSynthEffects } from '$lib/state/effects.svelte';
     import { fetchPreferences, preferences } from '$lib/state/system.svelte';
     import {
         addSynth,
@@ -24,6 +26,7 @@
         instrumentSlots,
         removeSynth,
         replaceSynth,
+        setClapParameter,
         setFluidProgram,
         setSynthGain,
         setSynthName,
@@ -32,36 +35,41 @@
         type SynthKind as SynthKindType,
         type SynthEntry
     } from '$lib/state/synths.svelte';
+    import { unreachable } from '$lib/util';
+    import type { InstrumentPushRequest as SynthPushParams } from '$lib/generated/models';
+    import { errorToUserMessage } from '$lib/error';
 
     const colors: Record<SynthKindType, string> = {
         [SynthKind.Fluid]: 'var(--color-synth-fluid)',
         [SynthKind.Sfizz]: 'var(--color-synth-sfizz)',
-        [SynthKind.Dummy]: 'var(--color-synth-dummy)'
+        [SynthKind.Dummy]: 'var(--color-synth-dummy)',
+        [SynthKind.Clap]: 'var(--color-synth-clap)'
     };
-    const MATCHING_INSTRUMENT_STORAGE_KEY = 'aaw-create-matching-instrument';
     let filter = $state<'All' | SynthKindType>('All');
     let selectedKey = $state('');
     let inspectorOpen = $state(false);
     let addOpen = $state(false);
     let addKind = $state<SynthKindType>(SynthKind.Fluid);
     let addPath = $state('');
+    let addPluginId = $state('');
     let addMaxVoices = $state(256);
-    let addMatchingInstrument = $state(true);
+    let addPreloadSize = $state(65_536);
     let editName = $state('');
     let replacementKind = $state<SynthKindType>(SynthKind.Fluid);
     let replacementPath = $state('');
+    let replacementPluginId = $state('');
     let replacementMaxVoices = $state(256);
+    let replacementPreloadSize = $state(65_536);
     let selectedProgram = $state('');
     let busy = $state(false);
     let busyAction = $state(null as string | null);
     let nameSaving = $state(false);
     let programBusy = $state(false);
-    let removeConfirming = $state(false);
     let removing = $state(false);
     let loading = $state(true);
     let reloadingSynths = $state(false);
     let synthsReloaded = $state(false);
-    let error = $state('');
+    let clapParameterBusy = $state(new Set<number>());
 
     let allSynths = $derived(synths());
     let project = $derived(activeProject());
@@ -69,10 +77,16 @@
         filter === 'All' ? allSynths : allSynths.filter((entry) => entry.kind === filter)
     );
     let selected = $derived(allSynths.find((entry) => key(entry) === selectedKey) ?? allSynths[0]);
+    let selectedName = $derived(selected?.synth.name ?? '');
     let nameChanged = $derived(Boolean(selected && editName.trim() !== selected.synth.name));
     let references = $derived(
         selected
             ? Object.entries(instrumentSlots()).filter(([, slot]) => slot.synth_id === selected.id)
+            : []
+    );
+    let visibleClapParameters = $derived(
+        selected?.kind === SynthKind.Clap
+            ? selected.synth.plugin_parameters.filter((parameter) => (parameter.flags & 4) === 0)
             : []
     );
     let programSuggestions = $derived(
@@ -88,11 +102,30 @@
             : []
     );
 
+    const CLAP_PARAMETER_READ_ONLY = 1 << 3;
+
+    async function submitClapParameter(parameterId: number, value: number) {
+        if (!selected || selected.kind !== SynthKind.Clap) {
+            return;
+        }
+
+        clapParameterBusy = new Set(clapParameterBusy).add(parameterId);
+        try {
+            await setClapParameter(selected.id, parameterId, value);
+        } catch (error) {
+            notify.error(errorToUserMessage(error), { title: 'Set plugin parameter' });
+        } finally {
+            const next = new Set(clapParameterBusy);
+            next.delete(parameterId);
+            clapParameterBusy = next;
+        }
+    }
+
     onMount(async () => {
-        addMatchingInstrument = localStorage.getItem(MATCHING_INSTRUMENT_STORAGE_KEY) !== 'false';
         try {
             await Promise.all([fetchSynths(), fetchAssets(), fetchPreferences()]);
             addMaxVoices = suggestedMaxVoices(addKind);
+            addPreloadSize = suggestedPreloadSize();
             const requestedSynth = new URL(window.location.href).searchParams.get('synth');
             const initial =
                 (requestedSynth === null
@@ -102,7 +135,7 @@
                 select(initial, requestedSynth !== null);
             }
         } catch (cause) {
-            showError(cause);
+            notify.error(errorToUserMessage(cause));
         } finally {
             loading = false;
         }
@@ -115,27 +148,52 @@
         selectedProgram = `${selected.synth.program.bank}:${selected.synth.program.preset_id}`;
     });
 
+    $effect(() => {
+        editName = selectedName;
+    });
+
     function key(entry: SynthEntry) {
         return String(entry.id);
     }
 
     function displayName(entry: SynthEntry) {
-        return entry.synth.name.trim() || `Unnamed ${entry.kind.toLowerCase()} synth #${entry.id}`;
+        return entry.synth.name.trim() || `${entry.kind} instrument #${entry.id + 1}`;
+    }
+
+    function instrumentType(kind: SynthKindType) {
+        switch (kind) {
+            case 'Dummy':
+                return 'Dummy Synth';
+            case 'Fluid':
+                return 'Fluid Synth';
+            case 'Sfizz':
+                return 'Sfizz Synth';
+            case 'Clap':
+                return 'CLAP Plugin';
+            default:
+                unreachable(kind);
+        }
     }
 
     function suggestedMaxVoices(kind: SynthKindType) {
         const value = preferences();
-        if (kind === SynthKind.Dummy) {
-            return value?.dummy_max_voices ?? 32;
+
+        switch (kind) {
+            case 'Dummy':
+                return value?.dummy_max_voices ?? 32;
+            case 'Fluid':
+                return value?.fluid_max_voices ?? 256;
+            case 'Sfizz':
+                return value?.sfizz_max_voices ?? 64;
+            case 'Clap':
+                return 1;
+            default:
+                unreachable(kind);
         }
-        if (kind === SynthKind.Fluid) {
-            return value?.fluid_max_voices ?? 256;
-        }
-        return value?.sfizz_max_voices ?? 64;
     }
 
-    function rememberMatchingInstrumentChoice(enabled: boolean) {
-        localStorage.setItem(MATCHING_INSTRUMENT_STORAGE_KEY, String(enabled));
+    function suggestedPreloadSize() {
+        return preferences()?.sfizz_preload_size ?? 65_536;
     }
 
     function select(entry: SynthEntry, open = true) {
@@ -143,14 +201,15 @@
         editName = entry.synth.name;
         replacementKind = entry.kind;
         replacementPath = entry.kind === SynthKind.Dummy ? '' : entry.synth.file_path;
-        replacementMaxVoices = entry.synth.max_voices;
+        replacementPluginId = entry.kind === SynthKind.Clap ? entry.synth.plugin_id : '';
+        replacementMaxVoices = entry.kind === SynthKind.Clap ? 1 : entry.synth.max_voices;
+        replacementPreloadSize =
+            entry.kind === SynthKind.Sfizz ? entry.synth.preload_size : suggestedPreloadSize();
         selectedProgram =
             entry.kind === SynthKind.Fluid
                 ? `${entry.synth.program.bank}:${entry.synth.program.preset_id}`
                 : '';
-        removeConfirming = false;
         inspectorOpen = open;
-        error = '';
     }
 
     function toggleAdd() {
@@ -158,11 +217,8 @@
         if (addOpen && filter !== 'All') {
             addKind = filter;
             addMaxVoices = suggestedMaxVoices(addKind);
+            addPreloadSize = suggestedPreloadSize();
         }
-    }
-
-    function showError(cause: unknown) {
-        error = cause instanceof Error ? cause.message : String(cause);
     }
 
     async function run(operation: () => Promise<unknown>, title: string) {
@@ -171,12 +227,10 @@
         }
         busy = true;
         busyAction = title;
-        error = '';
         try {
             return await operation();
         } catch (cause) {
-            showError(cause);
-            notify.error(error, { title });
+            notify.error(errorToUserMessage(cause), { title });
         } finally {
             busy = false;
             busyAction = null;
@@ -214,42 +268,62 @@
             return `${entry.synth.info.banks.length} banks · ${presets} presets · ${entry.synth.max_voices} voices`;
         }
         if (entry.kind === SynthKind.Sfizz) {
-            return `SFZ instrument · ${entry.synth.max_voices} voices`;
+            return `SFZ instrument · ${entry.synth.max_voices} voices · ${entry.synth.preload_size.toLocaleString()} preload frames`;
+        }
+        if (entry.kind === SynthKind.Clap) {
+            const parameterCount = entry.synth.plugin_parameters.filter(
+                (parameter) => (parameter.flags & 4) === 0
+            ).length;
+            return [
+                entry.synth.plugin_name || entry.synth.plugin_id,
+                entry.synth.plugin_version,
+                `${parameterCount} parameters`
+            ]
+                .filter(Boolean)
+                .join(' · ');
         }
         return `Diagnostic synth · ${entry.synth.max_voices} voices`;
+    }
+
+    function formatParameterNumber(value: number) {
+        if (Number.isInteger(value)) {
+            return String(value);
+        }
+        return value.toLocaleString(undefined, { maximumFractionDigits: 4 });
+    }
+
+    function parameterValue(parameter: { value: number | null; value_text: string | null }) {
+        const text = parameter.value_text?.trim();
+        if (text) {
+            return text;
+        }
+        if (parameter.value === null) {
+            return 'Unavailable';
+        }
+        return formatParameterNumber(parameter.value);
     }
 
     function instrumentReferences(entry: SynthEntry) {
         return Object.entries(instrumentSlots()).filter(([, slot]) => slot.synth_id === entry.id);
     }
 
-    function instrumentName(id: string, name: string) {
-        return name.trim() || `Unnamed instrument #${Number(id) + 1}`;
-    }
-
     async function submitAdd() {
         let createdId: number | undefined;
         await run(async () => {
-            createdId = await addSynth(
+            let addDetails = createDetails(
                 addKind,
                 addMaxVoices,
-                addKind === SynthKind.Dummy ? undefined : addPath
+                addPreloadSize,
+                addPath,
+                addPluginId
             );
 
-            if (addMatchingInstrument) {
-                const createdSynth = synths().find((entry) => entry.id === createdId);
-                if (!createdSynth) {
-                    throw new Error('The created synth could not be found');
-                }
+            createdId = await addSynth(addDetails);
 
-                const instrumentId = await addInstrument();
-                await setInstrumentSynth(instrumentId, createdId);
-                await setInstrumentName(instrumentId, createdSynth.synth.name);
-                await fetchSynths(true);
-            }
+            // Every new instrument already contains its default MIDI input controller.
 
             return createdId;
-        }, 'Create synth');
+        }, 'Create instrument');
 
         const id = createdId;
         if (typeof id === 'number') {
@@ -259,6 +333,7 @@
             }
             addOpen = false;
             addPath = '';
+            addPluginId = '';
         }
     }
 
@@ -270,7 +345,7 @@
         nameSaving = true;
         const name = editName.trim();
         try {
-            await run(() => setSynthName(selected.id, name), 'Rename synth');
+            await run(() => setSynthName(selected.id, name), 'Rename instrument');
             editName = name;
         } finally {
             nameSaving = false;
@@ -278,20 +353,28 @@
     }
 
     async function submitReplacement() {
-        if (!selected || (replacementKind !== SynthKind.Dummy && !replacementPath.trim())) {
+        if (
+            !selected ||
+            (replacementKind !== SynthKind.Dummy && !replacementPath.trim()) ||
+            (replacementKind === SynthKind.Clap && !replacementPluginId)
+        ) {
             return;
         }
         const id = selected.id;
         let succeeded = false;
         await run(async () => {
             await replaceSynth(
-                replacementKind,
                 id,
-                replacementMaxVoices,
-                replacementKind === SynthKind.Dummy ? undefined : replacementPath.trim()
+                createDetails(
+                    replacementKind,
+                    replacementMaxVoices,
+                    replacementPreloadSize,
+                    replacementPath.trim(),
+                    replacementPluginId
+                )
             );
             succeeded = true;
-        }, 'Replace synth');
+        }, 'Replace instrument');
         if (succeeded) {
             const replaced = synths().find((entry) => entry.id === id);
             if (replaced) {
@@ -308,13 +391,13 @@
         const previousProgram = `${selected.synth.program.bank}:${selected.synth.program.preset_id}`;
         const [bank, presetId] = selectedProgram.split(':').map(Number);
         programBusy = true;
-        error = '';
         try {
             await setFluidProgram(selected.id, { bank, preset_id: presetId });
         } catch (cause) {
             selectedProgram = previousProgram;
-            showError(cause);
-            notify.error(error, { title: 'Select program' });
+            notify.error(errorToUserMessage(cause), {
+                title: 'Select program'
+            });
         } finally {
             programBusy = false;
         }
@@ -388,465 +471,648 @@
                 synthsReloaded = false;
             }, 1200);
         } catch (cause) {
-            showError(cause);
-            notify.error(error, { title: 'Reload synths' });
+            notify.error(errorToUserMessage(cause), { title: 'Reload instruments' });
         } finally {
             reloadingSynths = false;
+        }
+    }
+
+    function createDetails(
+        type: SynthKind,
+        maxVoices: number,
+        preloadSize: number,
+        path: string,
+        pluginId: string
+    ): SynthPushParams {
+        switch (type) {
+            case 'Dummy':
+                return { type, data: { max_voices: maxVoices } };
+            case 'Fluid':
+                return {
+                    type,
+                    data: { max_voices: maxVoices, path }
+                };
+            case 'Sfizz':
+                return {
+                    type,
+                    data: { max_voices: maxVoices, preload_size: preloadSize, path }
+                };
+            case 'Clap': {
+                return {
+                    type,
+                    data: { path, plugin_id: pluginId }
+                };
+            }
+            default:
+                unreachable(type);
+        }
+    }
+
+    function assetPlaceholder(type: SynthKind): string | undefined {
+        switch (type) {
+            case 'Dummy':
+                return undefined;
+            case 'Fluid':
+                return 'fluid/soundfont.sf2';
+            case 'Sfizz':
+                return 'sfizz/instrument.sfz';
+            case 'Clap':
+                return undefined;
+            default:
+                unreachable(type);
         }
     }
 </script>
 
 <svelte:window onkeydown={handleProgramKeydown} />
 
-{#if addOpen}
-    <form
-        class="border-accent/30 bg-surface-card mb-3 grid gap-3 rounded-xl border p-3 min-[37.5rem]:grid-cols-[9rem_minmax(0,1fr)_7rem_auto] min-[37.5rem]:items-end"
-        onsubmit={(event) => {
-            event.preventDefault();
-            void submitAdd();
-        }}>
-        <label class="grid gap-1.5 text-sm font-semibold">
-            Synth type
-            <SelectDropdown
-                bind:value={addKind}
-                options={[
-                    { value: SynthKind.Fluid, label: 'FluidSynth' },
-                    { value: SynthKind.Sfizz, label: 'Sfizz' },
-                    { value: SynthKind.Dummy, label: 'Dummy' }
-                ]}
-                onchange={() => {
-                    addPath = '';
-                    addMaxVoices = suggestedMaxVoices(addKind);
-                }}
-                ariaLabel="Synth type" />
-        </label>
-        <label class="grid gap-1.5 text-sm font-semibold">
-            Asset path
-            <AssetPathInput
-                id="new-synth-asset"
-                assets={assetsForSynth(addKind)}
-                placeholder={addKind === SynthKind.Dummy
-                    ? undefined
-                    : addKind === SynthKind.Fluid
-                      ? 'soundfonts/piano.sf2'
-                      : 'instruments/piano.sfz'}
-                disabled={addKind === SynthKind.Dummy}
-                required={addKind !== SynthKind.Dummy}
-                onreload={refreshAssets}
-                bind:value={addPath} />
-        </label>
-        <label class="grid gap-1.5 text-sm font-semibold">
-            Max voices
-            <input
-                class="border-border-strong bg-surface-card text-foreground h-10 w-full rounded-lg border px-2.5 text-right font-mono text-sm tabular-nums"
-                type="number"
-                min="1"
-                max={addKind === SynthKind.Sfizz ? 256 : 65535}
-                step="1"
-                required
-                bind:value={addMaxVoices} />
-        </label>
-        <button
-            class="bg-accent text-accent-foreground inline-flex h-10 items-center justify-center gap-2 rounded-lg border-0 px-4 text-sm font-bold"
-            disabled={busy}>
-            {#if busyAction === 'Create synth'}<Icon
-                    icon="lucide:loader-circle"
-                    width="0.875rem"
-                    class="animate-spin" />{/if}
-            {busyAction === 'Create synth' ? 'Creating…' : 'Create'}
-        </button>
-        <DotToggle
-            class="min-[37.5rem]:col-span-4 min-[37.5rem]:justify-self-start"
-            label="Create matching instrument and assign this synth"
-            disabled={busy}
-            bind:checked={addMatchingInstrument}
-            onchange={rememberMatchingInstrumentChoice} />
-    </form>
-{/if}
-
-{#if error}<div
-        class="border-danger/30 bg-danger/8 text-danger mb-3 rounded-lg border px-3 py-2 text-sm">
-        {error}
-    </div>{/if}
-
-{#if project}
-    <div class="mb-3">
-        <EffectsEditor
-            title="Global effects"
-            effects={project.synth_graph.global_effects}
-            onsave={setGlobalEffects} />
-    </div>
-{/if}
-
 <div
-    class="-mx-3 mb-3 flex gap-1 overflow-x-auto px-3 pb-1 min-[37.5rem]:mx-0 min-[37.5rem]:px-0"
-    role="tablist">
-    {#each ['All', ...Object.values(SynthKind)] as graph}
-        <button
-            class={`flex min-w-max cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm ${filter === graph ? 'border-accent/40 bg-accent/8 text-accent' : 'border-border bg-surface-card text-foreground-muted'}`}
-            type="button"
-            onclick={() => (filter = graph as typeof filter)}>
-            {graph === 'All' ? 'All synths' : graph}
-            <small class="bg-surface-count grid size-4.25 place-items-center rounded text-xs">
-                {graph === 'All'
-                    ? allSynths.length
-                    : allSynths.filter((entry) => entry.kind === graph).length}
-            </small>
-        </button>
-    {/each}
-</div>
+    class="min-[56.25rem]:flex min-[56.25rem]:h-full min-[56.25rem]:min-h-0 min-[56.25rem]:flex-col">
+    {#if addOpen}
+        <form
+            class={`border-accent/30 bg-surface-card mb-3 grid gap-3 rounded-xl border p-3 min-[37.5rem]:items-end ${addKind === SynthKind.Dummy ? 'min-[37.5rem]:grid-cols-[9rem_auto] min-[37.5rem]:justify-start' : addKind === SynthKind.Clap ? 'min-[37.5rem]:grid-cols-[9rem_minmax(0,1fr)_auto]' : 'min-[37.5rem]:grid-cols-[9rem_minmax(0,1fr)_7rem_auto]'}`}
+            onsubmit={(event) => {
+                event.preventDefault();
+                void submitAdd();
+            }}>
+            <label class="grid gap-1.5 text-sm font-semibold">
+                Synth type
+                <SelectDropdown
+                    bind:value={addKind}
+                    options={[
+                        { value: SynthKind.Dummy, label: 'Dummy' },
+                        { value: SynthKind.Fluid, label: 'FluidSynth' },
+                        { value: SynthKind.Sfizz, label: 'Sfizz' },
+                        { value: SynthKind.Clap, label: 'CLAP' }
+                    ]}
+                    onchange={() => {
+                        addPath = '';
+                        addPluginId = '';
+                        addMaxVoices = suggestedMaxVoices(addKind);
+                        addPreloadSize = suggestedPreloadSize();
+                    }}
+                    ariaLabel="Synth type" />
+            </label>
+            {#if addKind === SynthKind.Clap}
+                <label class="grid min-w-0 gap-1.5 text-sm font-semibold">
+                    Plugin
+                    <ClapPluginInput
+                        id="new-clap-plugin"
+                        plugins={clapPlugins()}
+                        required
+                        onreload={refreshAssets}
+                        bind:filePath={addPath}
+                        bind:pluginId={addPluginId} />
+                </label>
+            {:else if addKind !== SynthKind.Dummy}
+                <label class="grid gap-1.5 text-sm font-semibold">
+                    {addKind === SynthKind.Fluid ? 'SoundFont file' : 'SFZ file'}
+                    <AssetPathInput
+                        id="new-synth-asset"
+                        assets={assetsForSynth(addKind)}
+                        placeholder={assetPlaceholder(addKind)}
+                        required
+                        onreload={refreshAssets}
+                        bind:value={addPath} />
+                </label>
+            {/if}
+            {#if addKind === SynthKind.Fluid || addKind === SynthKind.Sfizz}<label
+                    class="grid gap-1.5 text-sm font-semibold">
+                    Max voices
+                    <input
+                        class="border-border-strong bg-surface-card text-foreground h-10 w-full rounded-lg border px-2.5 text-right font-mono text-sm tabular-nums"
+                        type="number"
+                        min="1"
+                        max={addKind === SynthKind.Sfizz ? 256 : 65535}
+                        step="1"
+                        required
+                        bind:value={addMaxVoices} />
+                </label>{/if}
+            {#if addKind === SynthKind.Sfizz}
+                <label class="grid gap-1.5 text-sm font-semibold">
+                    Preload frames per sample
+                    <input
+                        class="border-border-strong bg-surface-card text-foreground h-10 w-full rounded-lg border px-2.5 text-right font-mono text-sm tabular-nums"
+                        type="number"
+                        min="1"
+                        max="4294967295"
+                        step="1"
+                        required
+                        bind:value={addPreloadSize} />
+                </label>
+            {/if}
+            <Button variant="primary" size="md" type="submit" {busy} disabled={busy}>
+                {#if busyAction === 'Create instrument'}<Icon
+                        icon="lucide:loader-circle"
+                        width="0.875rem"
+                        class="animate-spin" />{/if}
+                {busyAction === 'Create instrument' ? 'Creating…' : 'Create'}
+            </Button>
+        </form>
+    {/if}
 
-<div
-    class="min-[56.25rem]:grid min-[56.25rem]:grid-cols-[minmax(0,1fr)_20rem] min-[56.25rem]:items-start min-[56.25rem]:gap-3.5">
-    <section class="border-border bg-surface-card rounded-xl border">
-        <header class="border-border flex min-h-14.5 items-center justify-between border-b px-3.75">
-            <div class="flex items-baseline gap-2">
-                <h2 class="m-0 text-sm font-semibold">Synths</h2>
-                <span class="text-foreground-muted text-xs">
-                    {visibleSynths.length} total
-                </span>
-            </div>
-            <div class="flex items-center gap-1.5">
-                <button
-                    class="border-border-strong bg-surface-button text-foreground hover:bg-surface-hover grid size-8.5 cursor-pointer place-items-center rounded-lg border transition-colors"
-                    type="button"
-                    aria-label={addOpen ? 'Cancel adding synth' : 'Add synth'}
-                    title={addOpen ? 'Cancel' : 'Add synth'}
-                    onclick={toggleAdd}>
-                    <Icon icon={addOpen ? 'lucide:x' : 'lucide:plus'} width="1.0625rem" />
-                </button>
-                <button
-                    class="text-foreground-muted hover:bg-surface-hover grid size-8.5 cursor-pointer place-items-center rounded-lg border-0 bg-transparent"
-                    type="button"
-                    aria-label="Reload synths"
-                    disabled={reloadingSynths}
-                    onclick={() => void reloadSynths()}>
-                    <Icon
-                        icon={loading || reloadingSynths
-                            ? 'lucide:loader-circle'
-                            : synthsReloaded
-                              ? 'lucide:check'
-                              : 'lucide:refresh-cw'}
-                        width="1.0625rem"
-                        class={loading || reloadingSynths
-                            ? 'animate-spin'
-                            : synthsReloaded
-                              ? 'text-success'
-                              : ''} />
-                </button>
-            </div>
-        </header>
-        <div class="grid gap-1.75 p-1.75">
-            {#if loading}<p class="text-foreground-muted m-3 text-sm">Loading synths…</p>
-            {:else}{#each visibleSynths as entry (key(entry))}
-                    {@const entryReferences = instrumentReferences(entry)}
-                    {@const singleReference =
-                        entryReferences.length === 1 ? entryReferences[0] : undefined}
-                    <article
-                        class={`bg-surface-item grid w-full grid-cols-1 overflow-hidden rounded-[0.5625rem] border min-[37.5rem]:grid-cols-[minmax(0,1fr)_minmax(7.5rem,11rem)] ${key(entry) === selectedKey ? 'border-accent/40 shadow-[inset_0.1875rem_0_0_var(--accent)]' : 'border-transparent'}`}>
-                        <button
-                            class="grid min-w-0 cursor-pointer grid-cols-[3.375rem_minmax(0,1fr)_1.125rem] items-center gap-2.5 border-0 bg-transparent px-2.75 py-3 text-left min-[37.5rem]:grid-cols-[3.625rem_minmax(0,1fr)_minmax(7.5rem,.7fr)_1.125rem]"
-                            type="button"
-                            onclick={() => select(entry)}>
-                            <span
-                                class="grid h-10.75 place-items-center rounded-lg border text-xs font-bold uppercase"
-                                style:border-color={`color-mix(in srgb, ${colors[entry.kind]} 35%, transparent)`}
-                                style:background={`color-mix(in srgb, ${colors[entry.kind]} 10%, transparent)`}
-                                style:color={colors[entry.kind]}>
-                                {entry.kind}
-                            </span>
-                            <div class="min-w-0">
-                                <strong
-                                    class={`block overflow-hidden text-sm text-ellipsis whitespace-nowrap ${entry.synth.name.trim() ? '' : 'text-foreground-muted italic'}`}>
-                                    {displayName(entry)}
-                                </strong>
-                                <small
-                                    class="text-foreground-muted mt-1 block overflow-hidden text-xs text-ellipsis whitespace-nowrap">
-                                    {entry.kind === SynthKind.Dummy
-                                        ? details(entry)
-                                        : entry.synth.file_path}
-                                </small>
-                            </div>
-                            <div class="hidden min-w-0 min-[37.5rem]:block">
-                                <small class="text-foreground-meta mb-1 block text-xs uppercase">
-                                    {entry.kind === SynthKind.Fluid
-                                        ? 'Selected program'
-                                        : 'Details'}
-                                </small>
-                                <strong
-                                    class="text-foreground-strong block overflow-hidden text-xs text-ellipsis whitespace-nowrap">
-                                    {entry.kind === SynthKind.Fluid
-                                        ? presetName(entry)
-                                        : details(entry)}
-                                </strong>
-                            </div>
-                            <Icon
-                                class="justify-self-end"
-                                icon="lucide:chevron-right"
-                                width="1.0625rem" />
-                        </button>
-                        {#if singleReference}
-                            <a
-                                class="border-border text-foreground-muted hover:bg-surface-hover hover:text-accent hidden min-w-0 items-center gap-2 border-l px-3 text-xs transition-colors min-[37.5rem]:flex"
-                                href={`/instruments?instrument=${singleReference[0]}`}
-                                title={`Open ${instrumentName(singleReference[0], singleReference[1].name)}`}>
-                                <span class="min-w-0 flex-1 truncate">
-                                    {instrumentName(singleReference[0], singleReference[1].name)}
-                                </span>
-                                <Icon class="shrink-0" icon="lucide:arrow-up-right" width="1rem" />
-                            </a>
-                        {:else}
-                            <span
-                                class="border-border hidden items-center justify-end gap-1.5 border-l px-3 whitespace-nowrap min-[37.5rem]:flex">
-                                <strong class="font-mono text-sm">{entryReferences.length}</strong>
-                                <small class="text-foreground-muted text-xs">instruments</small>
-                            </span>
-                        {/if}
-                    </article>
-                {:else}<p class="text-foreground-muted m-3 text-sm">
-                        No matching synths.
-                    </p>{/each}{/if}
+    {#if project}
+        <div class="mb-3">
+            <EffectsEditor
+                title="Global effects"
+                effects={project.instrument_graph.global_effects}
+                onsave={setGlobalEffects} />
         </div>
-    </section>
+    {/if}
 
-    {#if selected}
-        <aside
-            class={`border-border-strong bg-surface-overlay min-[56.25rem]:bg-surface-card fixed right-0 bottom-0 left-0 z-60 max-h-[min(90vh,47.5rem)] overflow-hidden rounded-t-[1.125rem] border border-b-0 shadow-[0_-1.25rem_3.75rem_var(--overlay-shadow)] transition-transform min-[56.25rem]:sticky min-[56.25rem]:top-20.5 min-[56.25rem]:z-1 min-[56.25rem]:max-h-[calc(100vh-6rem)] min-[56.25rem]:rounded-xl min-[56.25rem]:border-b min-[56.25rem]:shadow-none ${inspectorOpen ? 'translate-y-0' : 'translate-y-[110%] min-[56.25rem]:translate-y-0'}`}>
-            <header class="border-border flex min-h-16 items-center justify-between border-b px-4">
-                <div>
-                    <small class="text-foreground-muted mb-0.5 block text-[0.6875rem] uppercase">
-                        {selected.kind} synth · Synth #{selected.id}
-                    </small>
-                    <h2
-                        class={`m-0 text-sm font-semibold ${selected.synth.name.trim() ? 'text-foreground' : 'text-foreground-muted italic'}`}>
-                        {displayName(selected)}
-                    </h2>
+    <div
+        class="-mx-3 mb-3 flex gap-1 overflow-x-auto px-3 pb-1 min-[37.5rem]:mx-0 min-[37.5rem]:px-0"
+        role="tablist">
+        {#each ['All', ...Object.values(SynthKind)] as graph}
+            <button
+                class={`hover:border-accent/40 hover:bg-accent/10 flex min-w-max cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm transition-colors ${filter === graph ? 'border-accent/40 bg-accent/8 text-accent' : 'border-border bg-surface-card text-foreground-muted'}`}
+                type="button"
+                onclick={() => (filter = graph as typeof filter)}>
+                {graph === 'All' ? 'All instruments' : graph}
+                <small class="bg-surface-count grid size-4.25 place-items-center rounded text-xs">
+                    {graph === 'All'
+                        ? allSynths.length
+                        : allSynths.filter((entry) => entry.kind === graph).length}
+                </small>
+            </button>
+        {/each}
+    </div>
+
+    <div
+        class="min-[56.25rem]:grid min-[56.25rem]:min-h-0 min-[56.25rem]:flex-1 min-[56.25rem]:grid-cols-[minmax(16rem,2fr)_minmax(20rem,3fr)] min-[56.25rem]:items-stretch min-[56.25rem]:gap-3.5">
+        <section
+            class="border-border bg-surface-card rounded-xl border min-[56.25rem]:flex min-[56.25rem]:min-h-0 min-[56.25rem]:flex-col min-[56.25rem]:overflow-hidden">
+            <header
+                class="border-border flex min-h-14.5 items-center justify-between border-b px-3.75">
+                <div class="flex items-baseline gap-2">
+                    <h2 class="m-0 text-sm font-semibold">Instruments</h2>
+                    <span class="text-foreground-muted text-xs">
+                        {visibleSynths.length} total
+                    </span>
                 </div>
-                <button
-                    class="bg-surface-button grid size-9 place-items-center rounded-lg border-0 min-[56.25rem]:hidden"
-                    type="button"
-                    aria-label="Close editor"
-                    onclick={() => (inspectorOpen = false)}>
-                    <Icon icon="lucide:x" width="1.1875rem" />
-                </button>
+                <div class="flex items-center gap-1.5">
+                    <Button
+                        variant="secondary"
+                        size="sm"
+                        square
+                        class="size-8.5"
+                        type="button"
+                        aria-label={addOpen ? 'Cancel adding instrument' : 'Add instrument'}
+                        title={addOpen ? 'Cancel' : 'Add instrument'}
+                        onclick={toggleAdd}>
+                        <Icon icon={addOpen ? 'lucide:x' : 'lucide:plus'} width="1.0625rem" />
+                    </Button>
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        square
+                        class="size-8.5"
+                        type="button"
+                        aria-label="Reload instruments"
+                        busy={reloadingSynths}
+                        disabled={reloadingSynths}
+                        onclick={() => void reloadSynths()}>
+                        <Icon
+                            icon={loading || reloadingSynths
+                                ? 'lucide:loader-circle'
+                                : synthsReloaded
+                                  ? 'lucide:check'
+                                  : 'lucide:refresh-cw'}
+                            width="1.0625rem"
+                            class={loading || reloadingSynths
+                                ? 'animate-spin'
+                                : synthsReloaded
+                                  ? 'text-success'
+                                  : ''} />
+                    </Button>
+                </div>
             </header>
             <div
-                class="max-h-[calc(min(90vh,47.5rem)-4rem)] overflow-y-auto pb-[max(1rem,env(safe-area-inset-bottom))] min-[56.25rem]:max-h-[calc(100vh-10rem)]">
-                <form
-                    class="border-border grid gap-2 border-b p-4"
-                    onsubmit={(event) => {
-                        event.preventDefault();
-                        void submitName();
-                    }}>
-                    <label
-                        for="synth-name"
-                        class="text-foreground-strong text-xs font-semibold uppercase">
-                        Name
-                    </label>
-                    <AutoSaveTextInput
-                        id="synth-name"
-                        bind:value={editName}
-                        pending={nameChanged}
-                        saving={nameSaving}
-                        required
-                        oncommit={submitName} />
-                </form>
-                <form
-                    class="border-border grid gap-3 border-b p-4"
-                    onsubmit={(event) => {
-                        event.preventDefault();
-                        void submitReplacement();
-                    }}>
-                    <span class="text-foreground-strong text-xs font-semibold uppercase">
-                        Replace synth
-                    </span>
-                    <label class="grid gap-1.5 text-sm">
-                        <span class="text-foreground-muted">Type</span>
-                        <SelectDropdown
-                            bind:value={replacementKind}
-                            options={[
-                                { value: SynthKind.Fluid, label: 'FluidSynth' },
-                                { value: SynthKind.Sfizz, label: 'Sfizz' },
-                                { value: SynthKind.Dummy, label: 'Dummy' }
-                            ]}
-                            onchange={() => {
-                                replacementPath = '';
-                                replacementMaxVoices = suggestedMaxVoices(replacementKind);
-                            }}
-                            ariaLabel="Replacement synth type" />
-                    </label>
-                    <label class="grid gap-1.5 text-sm" for="synth-asset">
-                        <span class="text-foreground-muted">Asset</span>
-                        <AssetPathInput
-                            id="synth-asset"
-                            assets={assetsForSynth(replacementKind)}
-                            placeholder={replacementKind === SynthKind.Dummy
-                                ? undefined
-                                : replacementKind === SynthKind.Fluid
-                                  ? 'soundfonts/piano.sf2'
-                                  : 'instruments/piano.sfz'}
-                            disabled={replacementKind === SynthKind.Dummy}
-                            compact
-                            onreload={refreshAssets}
-                            bind:value={replacementPath}
-                            required={replacementKind !== SynthKind.Dummy} />
-                    </label>
-                    <label class="grid gap-1.5 text-sm">
-                        <span class="text-foreground-muted">Max voices</span>
-                        <input
-                            class="border-border-strong bg-surface-card text-foreground h-10 w-full rounded-lg border px-2.5 text-right font-mono text-sm tabular-nums"
-                            type="number"
-                            min="1"
-                            max={replacementKind === SynthKind.Sfizz ? 256 : 65535}
-                            step="1"
-                            required
-                            bind:value={replacementMaxVoices} />
-                    </label>
-                    <button
-                        class="text-accent hover:bg-accent/10 inline-flex cursor-pointer items-center gap-2 justify-self-end rounded-lg border-0 bg-transparent px-2.5 py-2 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60"
-                        disabled={busy}>
-                        {#if busyAction === 'Replace synth'}<Icon
-                                icon="lucide:loader-circle"
-                                width="0.875rem"
-                                class="animate-spin" />{/if}
-                        {busyAction === 'Replace synth' ? 'Replacing…' : 'Replace'}
-                    </button>
-                </form>
-                {#if selected.kind === SynthKind.Fluid}<section
-                        class="border-border grid gap-2 border-b p-4">
-                        <div class="flex min-h-4 items-center justify-between gap-2">
-                            <label
-                                for="synth-program"
-                                class="text-foreground-strong text-xs font-semibold uppercase">
-                                SoundFont program
-                            </label>
-                            {#if programBusy}<Icon
-                                    icon="lucide:loader-circle"
-                                    width="1rem"
-                                    class="text-accent animate-spin"
-                                    aria-label="Setting program" />{/if}
-                        </div>
-                        <SelectDropdown
-                            id="synth-program"
-                            bind:value={selectedProgram}
-                            options={programSuggestions}
-                            placeholder="Select a program"
-                            disabled={busy || programBusy}
-                            searchable
-                            searchPlaceholder="Search programs"
-                            noMatchesText="No matching programs"
-                            onchange={() => void submitProgram()}
-                            ariaLabel="SoundFont program" />
-                        {#if !hasSelectedProgram(selected)}
-                            <small class="text-foreground-muted flex items-center gap-1.5 text-xs">
-                                <Icon icon="lucide:triangle-alert" width="0.875rem" />
-                                Using fallback because the requested program is unavailable
-                            </small>
-                        {/if}
-                        <small class="text-foreground-muted flex items-center gap-1.5 text-xs">
-                            <Icon icon="lucide:arrow-left" width="0.875rem" />
-                            <span>Previous</span>
-                            <span aria-hidden="true">·</span>
-                            <span>Next</span>
-                            <Icon icon="lucide:arrow-right" width="0.875rem" />
-                        </small>
-                    </section>
-                {/if}
-                {#key selected.id}
-                    <div class="border-border border-b p-4">
-                        <NumericControl
-                            compact
-                            label="Gain"
-                            value={linearGainToDecibels(selected.gain)}
-                            unit="dB"
-                            smallStep={0.5}
-                            largeStep={5}
-                            resetValue={0}
-                            min={-100}
-                            max={100}
-                            precision={1}
-                            onchange={async (value) => {
-                                await setSynthGain(selected.id, decibelsToLinearGain(value));
-                                return value;
-                            }} />
-                    </div>
-                    <div class="border-border border-b p-4">
-                        <EffectsEditor
-                            title="Synth effects"
-                            effects={selected.effects}
-                            onsave={(effects) => setSynthEffects(selected.id, effects)} />
-                    </div>
-                {/key}
-                <section class="border-border border-b p-4">
-                    <div
-                        class="text-foreground-strong mb-3 flex justify-between text-xs font-semibold uppercase">
-                        <span>Used by instruments</span>
-                        <small class="text-accent">{references.length}</small>
-                    </div>
-                    <div class="grid gap-1">
-                        {#each references as [id, slot]}<a
-                                class="bg-surface-raised grid grid-cols-[minmax(0,1fr)_1rem] items-center rounded-md p-2 text-sm"
-                                href={`/instruments?instrument=${id}`}>
+                class="grid gap-1.75 p-1.75 min-[56.25rem]:min-h-0 min-[56.25rem]:flex-1 min-[56.25rem]:content-start min-[56.25rem]:overflow-y-auto">
+                {#if loading}<p class="text-foreground-muted m-3 text-sm">Loading instruments…</p>
+                {:else}{#each visibleSynths as entry (key(entry))}
+                        {@const entryReferences = instrumentReferences(entry)}
+                        <article
+                            class={`bg-surface-item grid w-full grid-cols-[minmax(0,1fr)_auto] overflow-hidden rounded-[0.5625rem] border ${key(entry) === selectedKey ? 'border-accent/40 shadow-[inset_0.1875rem_0_0_var(--accent)]' : 'border-transparent'}`}>
+                            <button
+                                class="hover:bg-surface-hover grid min-w-0 cursor-pointer grid-cols-[3.375rem_minmax(0,1fr)] items-center gap-2.5 border-0 bg-transparent px-2.75 py-3 text-left transition-colors min-[37.5rem]:grid-cols-[3.625rem_minmax(0,1fr)]"
+                                type="button"
+                                onclick={() => select(entry)}>
                                 <span
-                                    class={slot.name.trim() ? '' : 'text-foreground-muted italic'}>
-                                    {slot.name.trim() || `Unnamed instrument #${Number(id) + 1}`}
+                                    class="grid h-10.75 place-items-center rounded-lg border text-xs font-bold uppercase"
+                                    style:border-color={`color-mix(in srgb, ${colors[entry.kind]} 35%, transparent)`}
+                                    style:background={`color-mix(in srgb, ${colors[entry.kind]} 10%, transparent)`}
+                                    style:color={colors[entry.kind]}>
+                                    {entry.kind}
                                 </span>
-                                <Icon icon="lucide:chevron-right" width="0.875rem" />
-                            </a>{:else}<p class="text-foreground-muted m-0 text-xs">
-                                Not assigned to any instrument
-                            </p>{/each}
-                    </div>
-                </section>
-                {#if removeConfirming}
-                    <section class="border-danger/30 bg-danger/8 m-4 rounded-lg border p-3">
-                        <strong class="text-danger block text-sm">
-                            Remove {displayName(selected)}?
-                        </strong>
-                        <p class="text-foreground-muted mt-1 mb-3 text-xs">
-                            This synth will be removed from the active project.
-                        </p>
-                        {#if error}
-                            <p class="text-danger mt-0 mb-3 text-xs">{error}</p>
-                        {/if}
-                        <div class="flex justify-end gap-2">
-                            <button
-                                class="border-border-strong bg-surface-card text-foreground hover:bg-surface-hover min-h-9 cursor-pointer rounded-lg border px-3 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60"
-                                type="button"
-                                disabled={removing}
-                                onclick={() => (removeConfirming = false)}>
-                                Cancel
+                                <div class="min-w-0">
+                                    <strong
+                                        class={`block overflow-hidden text-sm text-ellipsis whitespace-nowrap ${entry.synth.name.trim() ? '' : 'text-foreground-muted italic'}`}>
+                                        {displayName(entry)}
+                                    </strong>
+                                    <small
+                                        class="text-foreground-muted mt-1 block overflow-hidden text-xs text-ellipsis whitespace-nowrap">
+                                        {entry.kind === SynthKind.Dummy
+                                            ? details(entry)
+                                            : entry.synth.file_path}
+                                    </small>
+                                </div>
                             </button>
-                            <button
-                                class="bg-danger text-accent-foreground hover:bg-danger-foreground min-h-9 cursor-pointer rounded-lg border-0 px-3 text-sm font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-60"
-                                type="button"
-                                disabled={removing}
-                                onclick={() => void submitRemove()}>
-                                <span class="inline-flex items-center gap-2">
-                                    {#if removing}<Icon
-                                            icon="lucide:loader-circle"
-                                            width="0.875rem"
-                                            class="animate-spin" />{/if}
-                                    {removing ? 'Removing…' : 'Remove'}
+                            <a
+                                class="border-border text-foreground-muted hover:bg-surface-hover hover:text-accent flex cursor-pointer items-center gap-2 border-0 border-l bg-transparent px-3 text-xs transition-colors"
+                                href={`/controllers?synth=${entry.id}`}
+                                title="Manage controllers"
+                                aria-label={`Manage controllers for ${displayName(entry)}`}>
+                                <span class="hidden whitespace-nowrap min-[37.5rem]:inline">
+                                    {entryReferences.length}
+                                    {entryReferences.length === 1 ? 'controller' : 'controllers'}
                                 </span>
-                            </button>
-                        </div>
-                    </section>
-                {:else}
-                    <button
-                        class="text-danger hover:bg-danger/10 mx-auto my-4 block cursor-pointer rounded-lg border-0 bg-transparent px-3 py-2 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-60"
-                        type="button"
-                        disabled={busy}
-                        onclick={() => (removeConfirming = true)}>
-                        Remove synth
-                    </button>
-                {/if}
+                                <Icon
+                                    class="shrink-0"
+                                    icon="lucide:arrow-down-right"
+                                    width="1rem" />
+                            </a>
+                        </article>
+                    {:else}<p class="text-foreground-muted m-3 text-sm">
+                            No matching instruments.
+                        </p>{/each}{/if}
             </div>
-        </aside>
-    {/if}
+        </section>
+
+        {#if selected}
+            <aside
+                class={`border-border-strong bg-surface-overlay min-[56.25rem]:bg-surface-card fixed right-0 bottom-0 left-0 z-60 flex max-h-[min(90dvh,47.5rem)] min-h-0 flex-col overflow-hidden rounded-t-[1.125rem] border border-b-0 shadow-[0_-1.25rem_3.75rem_var(--overlay-shadow)] transition-transform min-[56.25rem]:static min-[56.25rem]:z-1 min-[56.25rem]:h-full min-[56.25rem]:max-h-full min-[56.25rem]:rounded-xl min-[56.25rem]:border-b min-[56.25rem]:shadow-none ${inspectorOpen ? 'translate-y-0' : 'translate-y-[110%] min-[56.25rem]:translate-y-0'}`}>
+                <header
+                    class="border-border flex min-h-16 shrink-0 items-center justify-between border-b px-4">
+                    <div>
+                        <small
+                            class="text-foreground-muted mb-0.5 block text-[0.6875rem] uppercase">
+                            Instrument #{selected.id + 1} · {instrumentType(selected.kind)}
+                        </small>
+                        <h2
+                            class={`m-0 text-sm font-semibold ${selected.synth.name.trim() ? 'text-foreground' : 'text-foreground-muted italic'}`}>
+                            {displayName(selected)}
+                        </h2>
+                    </div>
+                    <Button
+                        variant="ghost"
+                        size="md"
+                        square
+                        class="bg-surface-button min-[56.25rem]:hidden"
+                        type="button"
+                        aria-label="Close editor"
+                        onclick={() => (inspectorOpen = false)}>
+                        <Icon icon="lucide:x" width="1.1875rem" />
+                    </Button>
+                </header>
+                <div class="min-h-0 flex-1 overflow-y-auto">
+                    {#if selected.kind === SynthKind.Fluid}<section
+                            class="border-border grid gap-2 border-b p-4">
+                            <div class="flex min-h-4 items-center justify-between gap-2">
+                                <label
+                                    for="synth-program"
+                                    class="text-foreground-strong text-xs font-semibold uppercase">
+                                    SoundFont program
+                                </label>
+                                {#if programBusy}<Icon
+                                        icon="lucide:loader-circle"
+                                        width="1rem"
+                                        class="text-accent animate-spin"
+                                        aria-label="Setting program" />{/if}
+                            </div>
+                            <div class="flex min-w-0 items-center gap-2">
+                                <Button
+                                    variant="secondary"
+                                    size="lg"
+                                    square
+                                    class="text-foreground-muted enabled:hover:border-accent/40 enabled:hover:bg-accent/10 enabled:hover:text-accent"
+                                    type="button"
+                                    aria-label="Previous SoundFont program"
+                                    title="Previous program"
+                                    disabled={busy || programBusy}
+                                    onclick={() => void stepProgram(-1)}>
+                                    <Icon icon="lucide:arrow-left" width="1rem" />
+                                </Button>
+                                <SelectDropdown
+                                    id="synth-program"
+                                    class="flex-1"
+                                    bind:value={selectedProgram}
+                                    options={programSuggestions}
+                                    placeholder="Select a program"
+                                    disabled={busy || programBusy}
+                                    searchable
+                                    searchPlaceholder="Search programs"
+                                    noMatchesText="No matching programs"
+                                    onchange={() => void submitProgram()}
+                                    ariaLabel="SoundFont program" />
+                                <Button
+                                    variant="secondary"
+                                    size="lg"
+                                    square
+                                    class="text-foreground-muted enabled:hover:border-accent/40 enabled:hover:bg-accent/10 enabled:hover:text-accent"
+                                    type="button"
+                                    aria-label="Next SoundFont program"
+                                    title="Next program"
+                                    disabled={busy || programBusy}
+                                    onclick={() => void stepProgram(1)}>
+                                    <Icon icon="lucide:arrow-right" width="1rem" />
+                                </Button>
+                            </div>
+                            {#if !hasSelectedProgram(selected)}
+                                <small
+                                    class="text-foreground-muted flex items-center gap-1.5 text-xs">
+                                    <Icon icon="lucide:triangle-alert" width="0.875rem" />
+                                    Using fallback because the requested program is unavailable
+                                </small>
+                            {/if}
+                        </section>
+                    {/if}
+                    {#key selected.id}
+                        <div class="border-border border-b p-4">
+                            <NumericControl
+                                compact
+                                label="Gain"
+                                value={linearGainToDecibels(selected.gain)}
+                                unit="dB"
+                                smallStep={0.5}
+                                largeStep={5}
+                                resetValue={0}
+                                min={-100}
+                                max={100}
+                                precision={1}
+                                onchange={async (value) => {
+                                    await setSynthGain(selected.id, decibelsToLinearGain(value));
+                                    return value;
+                                }} />
+                        </div>
+                        <div class="border-border border-b p-4">
+                            <EffectsEditor
+                                title="Instrument effects"
+                                effects={selected.effects}
+                                onsave={(effects) => setSynthEffects(selected.id, effects)} />
+                        </div>
+                    {/key}
+                    <form
+                        class="border-border grid gap-2 border-b p-4"
+                        onsubmit={(event) => {
+                            event.preventDefault();
+                            void submitName();
+                        }}>
+                        <label
+                            for="synth-name"
+                            class="text-foreground-strong text-xs font-semibold uppercase">
+                            Name
+                        </label>
+                        <AutoSaveTextInput
+                            id="synth-name"
+                            bind:value={editName}
+                            pending={nameChanged}
+                            saving={nameSaving}
+                            showIndicator={false}
+                            required
+                            oncommit={submitName} />
+                    </form>
+                    <form
+                        class="border-border grid gap-3 border-b p-4"
+                        onsubmit={(event) => {
+                            event.preventDefault();
+                            void submitReplacement();
+                        }}>
+                        <span class="text-foreground-strong text-xs font-semibold uppercase">
+                            Replace instrument
+                        </span>
+                        <label class="grid gap-1.5 text-sm">
+                            <span class="text-foreground-muted">Type</span>
+                            <SelectDropdown
+                                bind:value={replacementKind}
+                                options={[
+                                    { value: SynthKind.Dummy, label: 'Dummy' },
+                                    { value: SynthKind.Fluid, label: 'FluidSynth' },
+                                    { value: SynthKind.Sfizz, label: 'Sfizz' },
+                                    { value: SynthKind.Clap, label: 'CLAP' }
+                                ]}
+                                onchange={() => {
+                                    replacementPath = '';
+                                    replacementPluginId = '';
+                                    replacementMaxVoices = suggestedMaxVoices(replacementKind);
+                                    replacementPreloadSize = suggestedPreloadSize();
+                                }}
+                                ariaLabel="Replacement instrument type" />
+                        </label>
+                        {#if replacementKind === SynthKind.Clap}
+                            <label class="grid min-w-0 gap-1.5 text-sm">
+                                <span class="text-foreground-muted">Plugin</span>
+                                <ClapPluginInput
+                                    id="replacement-clap-plugin"
+                                    plugins={clapPlugins()}
+                                    compact
+                                    required
+                                    onreload={refreshAssets}
+                                    bind:filePath={replacementPath}
+                                    bind:pluginId={replacementPluginId} />
+                            </label>
+                        {:else if replacementKind !== SynthKind.Dummy}
+                            <label class="grid gap-1.5 text-sm" for="synth-asset">
+                                <span class="text-foreground-muted">
+                                    {replacementKind === SynthKind.Fluid
+                                        ? 'SoundFont file'
+                                        : 'SFZ file'}
+                                </span>
+                                <AssetPathInput
+                                    id="synth-asset"
+                                    assets={assetsForSynth(replacementKind)}
+                                    placeholder={assetPlaceholder(replacementKind)}
+                                    compact
+                                    onreload={refreshAssets}
+                                    bind:value={replacementPath}
+                                    required />
+                            </label>
+                        {/if}
+                        {#if replacementKind === SynthKind.Fluid || replacementKind === SynthKind.Sfizz}<label
+                                class="grid gap-1.5 text-sm">
+                                <span class="text-foreground-muted">Max voices</span>
+                                <input
+                                    class="border-border-strong bg-surface-card text-foreground h-10 w-full rounded-lg border px-2.5 text-right font-mono text-sm tabular-nums"
+                                    type="number"
+                                    min="1"
+                                    max={replacementKind === SynthKind.Sfizz ? 256 : 65535}
+                                    step="1"
+                                    required
+                                    bind:value={replacementMaxVoices} />
+                            </label>{/if}
+                        {#if replacementKind === SynthKind.Sfizz}
+                            <label class="grid gap-1.5 text-sm">
+                                <span class="text-foreground-muted">Preload frames per sample</span>
+                                <input
+                                    class="border-border-strong bg-surface-card text-foreground h-10 w-full rounded-lg border px-2.5 text-right font-mono text-sm tabular-nums"
+                                    type="number"
+                                    min="1"
+                                    max="4294967295"
+                                    step="1"
+                                    required
+                                    bind:value={replacementPreloadSize} />
+                            </label>
+                        {/if}
+                        <Button
+                            variant="accent"
+                            size="sm"
+                            class="justify-self-end"
+                            type="submit"
+                            busy={busyAction === 'Replace instrument'}
+                            disabled={busy}>
+                            {#if busyAction === 'Replace instrument'}<Icon
+                                    icon="lucide:loader-circle"
+                                    width="0.875rem"
+                                    class="animate-spin" />{/if}
+                            {busyAction === 'Replace instrument' ? 'Replacing…' : 'Replace'}
+                        </Button>
+                    </form>
+                    {#if selected.kind === SynthKind.Clap}
+                        <section class="border-border border-b p-4">
+                            <div
+                                class="text-foreground-strong mb-3 text-xs font-semibold uppercase">
+                                Plugin
+                            </div>
+                            <dl class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-2 text-sm">
+                                <dt class="text-foreground-muted">Name</dt>
+                                <dd
+                                    class="m-0 min-w-0 truncate"
+                                    title={selected.synth.plugin_name || selected.synth.plugin_id}>
+                                    {selected.synth.plugin_name || selected.synth.plugin_id}
+                                </dd>
+                                <dt class="text-foreground-muted">Version</dt>
+                                <dd class="m-0">
+                                    {selected.synth.plugin_version || 'Not reported'}
+                                </dd>
+                                <dt class="text-foreground-muted">File</dt>
+                                <dd
+                                    class="m-0 min-w-0 truncate font-mono text-xs"
+                                    title={selected.synth.file_path}>
+                                    {selected.synth.file_path}
+                                </dd>
+                                <dt class="text-foreground-muted">Plugin ID</dt>
+                                <dd
+                                    class="m-0 min-w-0 truncate font-mono text-xs"
+                                    title={selected.synth.plugin_id}>
+                                    {selected.synth.plugin_id}
+                                </dd>
+                            </dl>
+                        </section>
+                    {/if}
+                    {#if selected.kind === SynthKind.Clap}
+                        <details class="border-border group border-b" open>
+                            <summary
+                                class="hover:bg-surface-raised flex min-h-12 cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 transition-colors [&::-webkit-details-marker]:hidden">
+                                <span
+                                    class="text-foreground-strong text-xs font-semibold uppercase">
+                                    Plugin parameters
+                                </span>
+                                <span class="flex items-center gap-2">
+                                    <small class="text-foreground-muted text-xs tabular-nums">
+                                        {visibleClapParameters.length}
+                                    </small>
+                                    <Icon
+                                        class="text-foreground-muted transition-transform group-open:rotate-180"
+                                        icon="lucide:chevron-down"
+                                        width="1rem" />
+                                </span>
+                            </summary>
+                            <div class="border-border border-t px-4 py-2">
+                                {#each visibleClapParameters as parameter, index (parameter.id)}
+                                    <article
+                                        class={`grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(5rem,auto)] items-center gap-x-3 gap-y-1 py-2.5 ${index === 0 ? '' : 'border-border/60 border-t'}`}>
+                                        <div class="min-w-0">
+                                            <div
+                                                class="text-foreground truncate text-sm font-medium">
+                                                {parameter.name || `Parameter ${parameter.id}`}
+                                            </div>
+                                            {#if parameter.module}
+                                                <div
+                                                    class="text-foreground-muted mt-0.5 truncate text-xs"
+                                                    title={parameter.module}>
+                                                    {parameter.module}
+                                                </div>
+                                            {/if}
+                                        </div>
+                                        <div class="flex min-w-0 items-center justify-end gap-1">
+                                            <output
+                                                class="bg-surface-inset text-foreground min-w-0 rounded-md px-2 py-1 text-right font-mono text-xs"
+                                                title={parameterValue(parameter)}>
+                                                <span class="block max-w-36 truncate">
+                                                    {parameterValue(parameter)}
+                                                </span>
+                                            </output>
+                                            {#if (parameter.flags & CLAP_PARAMETER_READ_ONLY) === 0}
+                                                <Button
+                                                    variant="ghost"
+                                                    size="xs"
+                                                    square
+                                                    busy={clapParameterBusy.has(parameter.id)}
+                                                    disabled={clapParameterBusy.has(parameter.id) ||
+                                                        parameter.value === parameter.default_value}
+                                                    aria-label={`Reset ${parameter.name || `parameter ${parameter.id}`}`}
+                                                    title="Reset to default"
+                                                    onclick={() =>
+                                                        void submitClapParameter(
+                                                            parameter.id,
+                                                            parameter.default_value
+                                                        )}>
+                                                    <Icon
+                                                        icon="lucide:rotate-ccw"
+                                                        width="0.875rem" />
+                                                </Button>
+                                            {/if}
+                                        </div>
+                                        {#if (parameter.flags & CLAP_PARAMETER_READ_ONLY) === 0}
+                                            <input
+                                                class="accent-accent col-span-2 h-7 w-full cursor-pointer disabled:cursor-wait disabled:opacity-60"
+                                                type="range"
+                                                min={parameter.min_value}
+                                                max={parameter.max_value}
+                                                step={(parameter.flags & 1) !== 0 ? 1 : 'any'}
+                                                value={parameter.value ?? parameter.default_value}
+                                                disabled={clapParameterBusy.has(parameter.id)}
+                                                aria-label={parameter.name ||
+                                                    `Parameter ${parameter.id}`}
+                                                onchange={(event) =>
+                                                    void submitClapParameter(
+                                                        parameter.id,
+                                                        event.currentTarget.valueAsNumber
+                                                    )} />
+                                        {/if}
+                                        <small
+                                            class="text-foreground-muted col-span-2 font-mono text-[0.6875rem] tabular-nums">
+                                            {formatParameterNumber(parameter.min_value)} –
+                                            {formatParameterNumber(parameter.max_value)} · default
+                                            {formatParameterNumber(parameter.default_value)}
+                                        </small>
+                                    </article>
+                                {:else}
+                                    <p class="text-foreground-muted my-2 text-sm">
+                                        This plugin exposes no visible parameters.
+                                    </p>
+                                {/each}
+                            </div>
+                        </details>
+                    {/if}
+                    <section class="p-4">
+                        <TimedConfirmButton
+                            class="w-full"
+                            label="Remove instrument"
+                            confirmLabel="Confirm remove instrument"
+                            busyLabel="Removing…"
+                            busy={removing}
+                            disabled={busy}
+                            onconfirm={submitRemove} />
+                    </section>
+                </div>
+            </aside>
+        {/if}
+    </div>
 </div>
 
 {#if inspectorOpen}<button
-        class="bg-scrim/60 fixed inset-0 z-50 border-0 backdrop-blur-[0.125rem] min-[56.25rem]:hidden"
+        class="bg-scrim/60 fixed inset-0 z-50 cursor-default border-0 backdrop-blur-[0.125rem] min-[56.25rem]:hidden"
         type="button"
         aria-label="Close editor"
         onclick={() => (inspectorOpen = false)}>

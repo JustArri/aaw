@@ -2,18 +2,22 @@ use crate::{
     MAX_BLOCK_SIZE,
     audio::{
         self,
+        metrics::AudioMetrics,
         params::{
             DeviceCfgSelection, DeviceSelection, HostSelection, LatencySelection,
             SampleRateSelection,
         },
     },
-    engine::{Engine, synth_graph::SynthGraphError},
+    engine::{Engine, instrument_graph::InstrumentGraphError},
 };
 use cpal::{
     BufferSize,
     traits::{DeviceTrait, HostTrait, StreamTrait},
 };
-use std::sync::{Arc, atomic::AtomicBool};
+use std::{
+    sync::{Arc, atomic::AtomicBool},
+    time::Instant,
+};
 use tokio::sync::Mutex;
 
 #[derive(Debug, thiserror::Error)]
@@ -46,7 +50,7 @@ pub enum Error {
     FailedToStartStream(#[source] cpal::Error),
 
     #[error("failed to init engine: {0}")]
-    EngineReconfiguration(#[source] SynthGraphError),
+    EngineReconfiguration(#[source] InstrumentGraphError),
 }
 
 type StdResult<T, E> = std::result::Result<T, E>;
@@ -79,6 +83,7 @@ impl ResolvedConfig {
         self,
         engine: Arc<Mutex<Engine>>,
         stream_error: Arc<AtomicBool>,
+        metrics: Arc<AudioMetrics>,
     ) -> Result<cpal::Stream> {
         use cpal::SampleFormat as Fmt;
 
@@ -87,23 +92,50 @@ impl ResolvedConfig {
         let stream_error2 = Arc::clone(&stream_error);
 
         let stream = match self.sample_format {
-            Fmt::I8 => build_stream::<i8>(device, config, engine, stream_error).await,
-            Fmt::F32 => build_stream::<f32>(device, config, engine, stream_error).await,
-            Fmt::I16 => build_stream::<i16>(device, config, engine, stream_error).await,
-            Fmt::I24 => build_stream::<cpal::I24>(device, config, engine, stream_error).await,
-            Fmt::I32 => build_stream::<i32>(device, config, engine, stream_error).await,
-            Fmt::I64 => build_stream::<i64>(device, config, engine, stream_error).await,
-            Fmt::U8 => build_stream::<u8>(device, config, engine, stream_error).await,
-            Fmt::U16 => build_stream::<u16>(device, config, engine, stream_error).await,
-            Fmt::U24 => build_stream::<cpal::U24>(device, config, engine, stream_error).await,
-            Fmt::U32 => build_stream::<u32>(device, config, engine, stream_error).await,
-            Fmt::U64 => build_stream::<u64>(device, config, engine, stream_error).await,
-            Fmt::F64 => build_stream::<f64>(device, config, engine, stream_error).await,
+            Fmt::I8 => {
+                build_stream::<i8>(device, config, engine, stream_error, metrics.clone()).await
+            }
+            Fmt::F32 => {
+                build_stream::<f32>(device, config, engine, stream_error, metrics.clone()).await
+            }
+            Fmt::I16 => {
+                build_stream::<i16>(device, config, engine, stream_error, metrics.clone()).await
+            }
+            Fmt::I24 => {
+                build_stream::<cpal::I24>(device, config, engine, stream_error, metrics.clone())
+                    .await
+            }
+            Fmt::I32 => {
+                build_stream::<i32>(device, config, engine, stream_error, metrics.clone()).await
+            }
+            Fmt::I64 => {
+                build_stream::<i64>(device, config, engine, stream_error, metrics.clone()).await
+            }
+            Fmt::U8 => {
+                build_stream::<u8>(device, config, engine, stream_error, metrics.clone()).await
+            }
+            Fmt::U16 => {
+                build_stream::<u16>(device, config, engine, stream_error, metrics.clone()).await
+            }
+            Fmt::U24 => {
+                build_stream::<cpal::U24>(device, config, engine, stream_error, metrics.clone())
+                    .await
+            }
+            Fmt::U32 => {
+                build_stream::<u32>(device, config, engine, stream_error, metrics.clone()).await
+            }
+            Fmt::U64 => {
+                build_stream::<u64>(device, config, engine, stream_error, metrics.clone()).await
+            }
+            Fmt::F64 => {
+                build_stream::<f64>(device, config, engine, stream_error, metrics.clone()).await
+            }
             sample_format => Err(Error::UnsupportedSampleFormat(sample_format)),
         }?;
 
         stream.play().map_err(Error::FailedToStartStream)?;
         stream_error2.store(false, std::sync::atomic::Ordering::Relaxed);
+        metrics.set_active(true);
 
         Ok(stream)
     }
@@ -114,43 +146,99 @@ async fn build_stream<T>(
     config: cpal::StreamConfig,
     engine: Arc<Mutex<Engine>>,
     stream_error: Arc<AtomicBool>,
+    metrics: Arc<AudioMetrics>,
 ) -> Result<cpal::Stream>
 where
     T: cpal::Sample + cpal::SizedSample + cpal::FromSample<f32>,
 {
     let channel_count = config.channels as usize;
+    let sample_rate = config.sample_rate;
     engine
         .lock()
         .await
         .reconfigure(channel_count, config.sample_rate, MAX_BLOCK_SIZE)
+        .await
         .map_err(Error::EngineReconfiguration)?;
 
     let mut scratch = vec![0.0_f32; channel_count * MAX_BLOCK_SIZE];
+    metrics.reset();
+    metrics.set_active(false);
+    let callback_metrics = Arc::clone(&metrics);
+    let error_metrics = Arc::clone(&metrics);
+    let mut scheduling_initialized = false;
 
     let stream = device
         .build_output_stream(
             config,
             move |output: &mut [T], _| {
+                if !scheduling_initialized {
+                    callback_metrics.record_realtime_scheduling(enable_current_thread_realtime());
+                    scheduling_initialized = true;
+                }
+                let started = Instant::now();
+                let frame_count = output.len() / channel_count;
                 if scratch.len() < output.len() {
                     output.fill(T::from_sample(0.0));
+                    callback_metrics.record_oversized_callback();
+                    callback_metrics.record_callback(
+                        frame_count,
+                        sample_rate,
+                        elapsed_nanos(started),
+                        Default::default(),
+                    );
                     return;
                 }
 
                 let scratch = &mut scratch[..output.len()];
-                engine.blocking_lock().run(scratch);
+                let lock_started = Instant::now();
+                let mut engine = engine.blocking_lock();
+                let lock_wait_ns = elapsed_nanos(lock_started);
+                callback_metrics.record_lock_wait(lock_wait_ns);
+                let mut details = engine.run(scratch, &callback_metrics);
+                details.lock_wait_ns = lock_wait_ns;
+                drop(engine);
 
+                let conversion_started = Instant::now();
                 for (dst, src) in output.iter_mut().zip(scratch.iter().copied()) {
                     *dst = T::from_sample(src);
                 }
+                details.output_conversion_ns =
+                    details.output_conversion_ns.saturating_add(elapsed_nanos(conversion_started));
+                callback_metrics.record_output_conversion(details.output_conversion_ns);
+                callback_metrics.record_callback(
+                    frame_count,
+                    sample_rate,
+                    elapsed_nanos(started),
+                    details,
+                );
             },
             move |_| {
                 stream_error.store(true, std::sync::atomic::Ordering::Relaxed);
+                error_metrics.record_stream_error();
             },
             None,
         )
         .map_err(Error::FailedToBuildStream)?;
 
     Ok(stream)
+}
+
+fn elapsed_nanos(started: Instant) -> u64 {
+    u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX)
+}
+
+#[cfg(target_os = "linux")]
+fn enable_current_thread_realtime() -> Option<bool> {
+    const AUDIO_THREAD_PRIORITY: libc::c_int = 70;
+    let parameters = libc::sched_param { sched_priority: AUDIO_THREAD_PRIORITY };
+    let result =
+        unsafe { libc::pthread_setschedparam(libc::pthread_self(), libc::SCHED_RR, &parameters) };
+    Some(result == 0)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn enable_current_thread_realtime() -> Option<bool> {
+    None
 }
 
 fn resolve_device_config(selection: DeviceCfgSelection) -> Result<ResolvedConfig> {

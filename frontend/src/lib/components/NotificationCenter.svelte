@@ -1,5 +1,6 @@
 <script lang="ts">
     import Icon from '@iconify/svelte';
+    import Button from '$lib/components/Button.svelte';
     import {
         dismissNotification,
         notifications,
@@ -51,13 +52,15 @@
                     {notification.message}
                 </p>
             </div>
-            <button
-                class="text-foreground-muted hover:bg-surface-hover hover:text-foreground grid size-7 cursor-pointer place-items-center rounded-md border-0 bg-transparent"
+            <Button
+                variant="ghost"
+                size="xs"
+                square
                 type="button"
                 aria-label="Dismiss notification"
                 onclick={() => dismissNotification(notification.id)}>
                 <Icon icon="lucide:x" width="1rem" />
-            </button>
+            </Button>
         </article>
     {/each}
 </aside>
