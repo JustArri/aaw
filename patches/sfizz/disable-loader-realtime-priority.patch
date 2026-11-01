@@ -1,0 +1,11 @@
+--- a/src/sfizz/FilePool.cpp
++++ b/src/sfizz/FilePool.cpp
+@@ -479,8 +479,6 @@ void sfz::FilePool::setPreloadSize(uint32_t preloadSize) noexcept
+ 
+ void sfz::FilePool::loadingJob(const QueuedFileData& data) noexcept
+ {
+-    raiseCurrentThreadPriority();
+-
+     std::shared_ptr<FileId> id = data.id.lock();
+     if (!id) {
+         // file ID was nulled, it means the region was deleted, ignore

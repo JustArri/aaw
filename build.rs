@@ -1,6 +1,7 @@
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 fn main() {
     assert_submodule("lib/fluidsynth/CMakeLists.txt");
@@ -14,6 +15,7 @@ fn main() {
     println!("cargo:rerun-if-changed=lib/fluidsynth/CMakeLists.txt");
     println!("cargo:rerun-if-changed=lib/sfizz/CMakeLists.txt");
     println!("cargo:rerun-if-changed=lib/sfizz/src/sfizz/FilePool.cpp");
+    println!("cargo:rerun-if-changed=patches/sfizz/disable-loader-realtime-priority.patch");
 
     load_version();
 
@@ -66,7 +68,7 @@ fn assert_submodule(file: &str) {
     }
 }
 
-fn common_config(source: &str, output_name: &str) -> cmake::Config {
+fn common_config(source: impl AsRef<Path>, output_name: &str) -> cmake::Config {
     let output = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR is set by Cargo"))
         .join("native")
         .join(output_name);
@@ -124,7 +126,8 @@ fn build_fluidsynth() -> PathBuf {
 }
 
 fn build_sfizz() -> PathBuf {
-    let mut config = common_config("lib/sfizz", "sfizz");
+    let source = prepare_sfizz_source();
+    let mut config = common_config(&source, "sfizz");
     config
         .build_target("sfizz_static")
         .define("BUILD_TESTING", "OFF")
@@ -144,6 +147,57 @@ fn build_sfizz() -> PathBuf {
     }
     // sfizz intentionally overrides CMake's output directory to build/library.
     config.build().join("build/library")
+}
+
+fn prepare_sfizz_source() -> PathBuf {
+    let output = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR is set by Cargo"))
+        .join("native")
+        .join("sfizz-source");
+    if output.exists() {
+        fs::remove_dir_all(&output)
+            .unwrap_or_else(|error| panic!("failed to clear {}: {error}", output.display()));
+    }
+    copy_directory(Path::new("lib/sfizz"), &output);
+
+    let patch = Path::new("patches/sfizz/disable-loader-realtime-priority.patch")
+        .canonicalize()
+        .expect("failed to resolve sfizz patch path");
+    let status = Command::new("patch")
+        .current_dir(&output)
+        .args(["-p1", "--forward", "--batch", "-i"])
+        .arg(&patch)
+        .status()
+        .unwrap_or_else(|error| panic!("failed to run patch for sfizz: {error}"));
+    assert!(status.success(), "failed to apply {}", patch.display());
+    output
+}
+
+fn copy_directory(source: &Path, destination: &Path) {
+    fs::create_dir_all(destination)
+        .unwrap_or_else(|error| panic!("failed to create {}: {error}", destination.display()));
+    for entry in fs::read_dir(source)
+        .unwrap_or_else(|error| panic!("failed to read {}: {error}", source.display()))
+    {
+        let entry = entry.unwrap_or_else(|error| {
+            panic!("failed to read an entry in {}: {error}", source.display())
+        });
+        if entry.file_name() == ".git" {
+            continue;
+        }
+        let source = entry.path();
+        let destination = destination.join(entry.file_name());
+        if entry
+            .file_type()
+            .unwrap_or_else(|error| panic!("failed to inspect {}: {error}", source.display()))
+            .is_dir()
+        {
+            copy_directory(&source, &destination);
+        } else {
+            fs::copy(&source, &destination).unwrap_or_else(|error| {
+                panic!("failed to copy {} to {}: {error}", source.display(), destination.display())
+            });
+        }
+    }
 }
 
 fn link_static_library(prefix: &Path, name: &str) {
