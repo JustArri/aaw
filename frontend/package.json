@@ -4,7 +4,7 @@
     "version": "0.0.1",
     "type": "module",
     "scripts": {
-        "dev": "bun run generate:api && vite dev --host 0.0.0.0",
+        "dev": "bun run generate:api-dev && vite dev --host 0.0.0.0",
         "build": "bun run generate:api && vite build",
         "preview": "vite preview",
         "prepare": "svelte-kit sync || echo ''",
@@ -12,9 +12,11 @@
         "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
         "format": "prettier --write .",
         "lint": "prettier --check . && eslint .",
-        "generate:specs": "cargo run --bin generate-api -- .",
+        "generate:specs": "mkdir -p build && cargo run --release --bin generate-api -- .",
+        "generate:specs-dev": "mkdir -p build && cargo run --bin generate-api -- .",
         "generate:openapi": "orval",
-        "generate:api": "bun run generate:specs && bun run generate:openapi"
+        "generate:api": "bun run generate:specs && bun run generate:openapi",
+        "generate:api-dev": "bun run generate:specs-dev && bun run generate:openapi"
     },
     "devDependencies": {
         "@eslint/compat": "^1.2.5",
