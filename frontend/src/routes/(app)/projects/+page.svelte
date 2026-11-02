@@ -2,6 +2,7 @@
     import Icon from '@iconify/svelte';
     import { onMount } from 'svelte';
     import AutoSaveTextInput from '$lib/components/AutoSaveTextInput.svelte';
+    import Button from '$lib/components/Button.svelte';
     import {
         deleteProject,
         exportActiveProject,
@@ -387,9 +388,12 @@
                 Import or export complete project JSON files.
             </p>
         </div>
-        <button
-            class="border-border-strong bg-surface-card text-foreground-strong hover:bg-surface-hover min-h-10 shrink-0 cursor-pointer rounded-lg border px-3 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50"
+        <Button
+            variant="secondary"
+            size="md"
+            class="bg-surface-card"
             type="button"
+            busy={exporting}
             disabled={exporting}
             onclick={() => void exportCurrent()}>
             <span class="flex items-center gap-2">
@@ -399,7 +403,7 @@
                     width="0.9375rem" />
                 {exporting ? 'Exporting…' : 'Export active'}
             </span>
-        </button>
+        </Button>
     </header>
 
     {#if fileErrorMessage}
@@ -464,27 +468,34 @@
         </label>
         <div class="flex flex-wrap items-center justify-end gap-2">
             {#if selectedFile}
-                <button
-                    class="text-foreground-muted hover:text-foreground mr-auto min-h-11 cursor-pointer border-0 bg-transparent px-2 text-sm font-semibold"
+                <Button
+                    variant="ghost"
+                    size="lg"
+                    class="mr-auto"
                     type="button"
                     disabled={importing}
                     onclick={clearSelectedFile}>
                     Remove file
-                </button>
+                </Button>
             {/if}
-            <button
-                class="border-border-strong bg-surface-card text-foreground-strong hover:bg-surface-hover min-h-11 cursor-pointer rounded-lg border px-4 text-sm font-bold disabled:cursor-not-allowed disabled:opacity-50"
+            <Button
+                variant="secondary"
+                size="lg"
+                class="bg-surface-card"
                 type="button"
+                busy={importing}
                 disabled={!selectedFile || importing}
                 onclick={() => void importProject(true)}>
                 {importing ? 'Importing…' : 'Set active'}
-            </button>
-            <button
-                class="bg-accent text-accent-foreground min-h-11 cursor-pointer rounded-lg border-0 px-4 text-sm font-bold disabled:cursor-not-allowed disabled:opacity-50"
+            </Button>
+            <Button
+                variant="primary"
+                size="lg"
                 type="submit"
+                busy={importing}
                 disabled={!selectedFile || importing}>
                 {importing ? 'Importing…' : 'Add to library'}
-            </button>
+            </Button>
         </div>
     </form>
 </section>
@@ -502,11 +513,15 @@
             </p>
         </div>
         <div class="flex items-center gap-2">
-            <button
-                class="border-border-strong bg-surface-card text-foreground-muted hover:bg-surface-hover hover:text-foreground grid size-10 shrink-0 cursor-pointer place-items-center rounded-lg border disabled:cursor-not-allowed disabled:opacity-50"
+            <Button
+                variant="secondary"
+                size="lg"
+                square
+                class="bg-surface-card text-foreground-muted"
                 type="button"
                 aria-label="Refresh projects from disk"
                 title="Refresh projects from disk"
+                busy={refreshing}
                 disabled={refreshing}
                 onclick={() => void refresh()}>
                 <Icon
@@ -517,12 +532,16 @@
                           ? 'lucide:check'
                           : 'lucide:refresh-cw'}
                     width="1rem" />
-            </button>
-            <button
-                class="border-border-strong bg-surface-card text-foreground-strong hover:bg-surface-hover grid size-10 shrink-0 cursor-pointer place-items-center rounded-lg border disabled:cursor-not-allowed disabled:opacity-50 min-[37.5rem]:flex min-[37.5rem]:w-auto min-[37.5rem]:gap-2 min-[37.5rem]:px-3"
+            </Button>
+            <Button
+                variant="secondary"
+                size="lg"
+                square
+                class="bg-surface-card min-[37.5rem]:w-auto min-[37.5rem]:px-3"
                 type="button"
                 aria-label="Create new project"
                 title="Create new project"
+                busy={creating}
                 disabled={creating || importing || loadingId !== null}
                 onclick={() => void createProject()}>
                 <Icon
@@ -532,14 +551,16 @@
                 <span class="hidden text-sm font-semibold min-[37.5rem]:inline">
                     {creating ? 'Creating…' : 'New'}
                 </span>
-            </button>
-            <button
-                class="bg-accent text-accent-foreground min-h-10 shrink-0 cursor-pointer rounded-lg border-0 px-3.5 text-sm font-bold disabled:cursor-not-allowed disabled:opacity-50 min-[56.25rem]:px-4 min-[56.25rem]:text-sm"
+            </Button>
+            <Button
+                variant="primary"
+                size="md"
                 type="button"
+                busy={saving}
                 disabled={saving}
                 onclick={() => void saveCurrent()}>
                 {saving ? 'Saving…' : 'Save active'}
-            </button>
+            </Button>
         </div>
     </header>
 
@@ -624,18 +645,24 @@
 
                     <div
                         class="col-span-2 flex shrink-0 items-center justify-end gap-1.5 min-[37.5rem]:col-auto">
-                        <button
-                            class="border-border-strong bg-surface-card text-foreground-strong hover:bg-surface-raised min-h-9 cursor-pointer rounded-lg border px-3 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50"
+                        <Button
+                            variant="secondary"
+                            size="sm"
+                            class="bg-surface-card enabled:hover:bg-surface-raised"
                             type="button"
                             disabled={currentProjectId === project.id || loadingId !== null}
                             onclick={() => void load(project.id)}>
                             {loadingId === project.id ? 'Loading…' : 'Load'}
-                        </button>
-                        <button
-                            class="border-border-strong bg-surface-card text-foreground-muted hover:bg-surface-raised hover:text-foreground grid size-9 cursor-pointer place-items-center rounded-lg border disabled:cursor-not-allowed disabled:opacity-40"
+                        </Button>
+                        <Button
+                            variant="secondary"
+                            size="md"
+                            square
+                            class="bg-surface-card text-foreground-muted enabled:hover:bg-surface-raised"
                             type="button"
                             aria-label={`Export ${displayProjectName(project.name)}`}
                             title={`Export ${displayProjectName(project.name)}`}
+                            busy={exportingId === project.id}
                             disabled={exportingId !== null || loadingId !== null}
                             onclick={() => void exportSaved(project.id)}>
                             <Icon
@@ -644,14 +671,18 @@
                                     : 'lucide:download'}
                                 class={exportingId === project.id ? 'animate-spin' : ''}
                                 width="1rem" />
-                        </button>
-                        <button
-                            class="border-border-strong bg-surface-card text-foreground-muted hover:border-danger/40 hover:bg-danger/8 hover:text-danger grid size-9 cursor-pointer place-items-center rounded-lg border disabled:cursor-not-allowed disabled:opacity-40"
+                        </Button>
+                        <Button
+                            variant="danger-outline"
+                            size="md"
+                            square
+                            class="bg-surface-card text-foreground-muted enabled:hover:bg-danger/8"
                             type="button"
                             aria-label={`Delete ${displayProjectName(project.name)}`}
                             title={currentProjectId === project.id
                                 ? 'Delete saved file; keep the project open'
                                 : `Delete ${displayProjectName(project.name)}`}
+                            busy={deletingId === project.id}
                             disabled={deletingId !== null}
                             onclick={() =>
                                 void remove(project.id, displayProjectName(project.name))}>
@@ -661,7 +692,7 @@
                                     : 'lucide:trash-2'}
                                 class={deletingId === project.id ? 'animate-spin' : ''}
                                 width="1rem" />
-                        </button>
+                        </Button>
                     </div>
                 </article>
             {/each}

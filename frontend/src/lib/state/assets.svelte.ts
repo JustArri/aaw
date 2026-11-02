@@ -4,7 +4,7 @@ import type { Assets } from '$lib/generated/models';
 import { SynthKind, type SynthKind as SynthKindType } from './synths.svelte';
 import { reportGatewayError, reportGatewayOffline } from './gateway.svelte';
 
-let assetsState = $state<Assets>({ fluid: [], sfizz: [] });
+let assetsState = $state<Assets>({ fluid: [], sfizz: [], clap_instruments: [] });
 let fetching = false;
 let refreshing = false;
 
@@ -14,17 +14,23 @@ export function assets() {
 
 export function assetsForSynth(kind: SynthKindType) {
     switch (kind) {
+        case SynthKind.Dummy:
+            return [];
         case SynthKind.Fluid:
             return assetsState.fluid;
         case SynthKind.Sfizz:
             return assetsState.sfizz;
-        case SynthKind.Dummy:
+        case SynthKind.Clap:
             return [];
     }
 }
 
+export function clapPlugins() {
+    return assetsState.clap_instruments;
+}
+
 export function resetAssets() {
-    assetsState = { fluid: [], sfizz: [] };
+    assetsState = { fluid: [], sfizz: [], clap_instruments: [] };
 }
 
 export async function fetchAssets() {

@@ -113,7 +113,7 @@
 
     <div class="grid grid-cols-5 gap-1.5">
         <button
-            class={`border-border-strong bg-surface-hover text-foreground-strong active:border-accent/45 active:bg-accent/12 active:text-accent min-w-0 cursor-pointer rounded-lg border px-1 font-mono disabled:cursor-wait disabled:opacity-50 ${compact ? 'min-h-9 text-xs' : 'min-h-11 text-sm min-[56.25rem]:text-sm'}`}
+            class={`border-border-strong bg-surface-hover text-foreground-strong hover:border-accent/40 hover:bg-accent/10 hover:text-accent active:border-accent/45 active:bg-accent/12 active:text-accent min-w-0 cursor-pointer rounded-lg border px-1 font-mono transition-colors disabled:cursor-wait disabled:opacity-50 ${compact ? 'min-h-9 text-xs' : 'min-h-11 text-sm min-[56.25rem]:text-sm'}`}
             type="button"
             {disabled}
             aria-label={actionLabel(-largeStep)}
@@ -121,7 +121,7 @@
             −{format(largeStep)}
         </button>
         <button
-            class={`border-border-strong bg-surface-hover text-foreground-strong active:border-accent/45 active:bg-accent/12 active:text-accent min-w-0 cursor-pointer rounded-lg border px-1 font-mono disabled:cursor-wait disabled:opacity-50 ${compact ? 'min-h-9 text-xs' : 'min-h-11 text-sm min-[56.25rem]:text-sm'}`}
+            class={`border-border-strong bg-surface-hover text-foreground-strong hover:border-accent/40 hover:bg-accent/10 hover:text-accent active:border-accent/45 active:bg-accent/12 active:text-accent min-w-0 cursor-pointer rounded-lg border px-1 font-mono transition-colors disabled:cursor-wait disabled:opacity-50 ${compact ? 'min-h-9 text-xs' : 'min-h-11 text-sm min-[56.25rem]:text-sm'}`}
             type="button"
             {disabled}
             aria-label={actionLabel(-smallStep)}
@@ -129,7 +129,7 @@
             −{format(smallStep)}
         </button>
         <button
-            class={`border-border-strong bg-surface-hover text-accent active:border-accent/45 active:bg-accent/12 min-w-0 cursor-pointer rounded-lg border px-1 font-bold uppercase disabled:cursor-wait disabled:opacity-50 ${compact ? 'min-h-9 text-[0.625rem]' : 'min-h-11 text-xs min-[56.25rem]:text-sm'}`}
+            class={`border-border-strong bg-surface-hover text-accent hover:border-accent/40 hover:bg-accent/10 active:border-accent/45 active:bg-accent/12 min-w-0 cursor-pointer rounded-lg border px-1 font-bold uppercase transition-colors disabled:cursor-wait disabled:opacity-50 ${compact ? 'min-h-9 text-[0.625rem]' : 'min-h-11 text-xs min-[56.25rem]:text-sm'}`}
             type="button"
             {disabled}
             aria-label={`Reset ${label} to ${format(resetValue)} ${unit}`}
@@ -137,7 +137,7 @@
             Reset
         </button>
         <button
-            class={`border-border-strong bg-surface-hover text-foreground-strong active:border-accent/45 active:bg-accent/12 active:text-accent min-w-0 cursor-pointer rounded-lg border px-1 font-mono disabled:cursor-wait disabled:opacity-50 ${compact ? 'min-h-9 text-xs' : 'min-h-11 text-sm min-[56.25rem]:text-sm'}`}
+            class={`border-border-strong bg-surface-hover text-foreground-strong hover:border-accent/40 hover:bg-accent/10 hover:text-accent active:border-accent/45 active:bg-accent/12 active:text-accent min-w-0 cursor-pointer rounded-lg border px-1 font-mono transition-colors disabled:cursor-wait disabled:opacity-50 ${compact ? 'min-h-9 text-xs' : 'min-h-11 text-sm min-[56.25rem]:text-sm'}`}
             type="button"
             {disabled}
             aria-label={actionLabel(smallStep)}
@@ -145,7 +145,7 @@
             +{format(smallStep)}
         </button>
         <button
-            class={`border-border-strong bg-surface-hover text-foreground-strong active:border-accent/45 active:bg-accent/12 active:text-accent min-w-0 cursor-pointer rounded-lg border px-1 font-mono disabled:cursor-wait disabled:opacity-50 ${compact ? 'min-h-9 text-xs' : 'min-h-11 text-sm min-[56.25rem]:text-sm'}`}
+            class={`border-border-strong bg-surface-hover text-foreground-strong hover:border-accent/40 hover:bg-accent/10 hover:text-accent active:border-accent/45 active:bg-accent/12 active:text-accent min-w-0 cursor-pointer rounded-lg border px-1 font-mono transition-colors disabled:cursor-wait disabled:opacity-50 ${compact ? 'min-h-9 text-xs' : 'min-h-11 text-sm min-[56.25rem]:text-sm'}`}
             type="button"
             {disabled}
             aria-label={actionLabel(largeStep)}

@@ -1,4 +1,4 @@
-import type { Effects, Project } from '$lib/generated/models';
+import type { Effects, MusicalTransport, Project } from '$lib/generated/models';
 import * as api from '$lib/generated/api';
 import { gatewayErrorByStatus, gatewayNotResponding } from '$lib/error';
 import { untrack } from 'svelte';
@@ -127,13 +127,19 @@ export function updateActiveProjectName(name: string) {
 
 export function updateActiveProjectGlobalEffects(effects: Effects) {
     if (projectState) {
-        projectState.synth_graph.global_effects = effects;
+        projectState.instrument_graph.global_effects = effects;
     }
 }
 
 export function updateActiveProjectGlobalGain(gain: number) {
     if (projectState) {
-        projectState.synth_graph.global_gain = gain;
+        projectState.instrument_graph.global_gain = gain;
+    }
+}
+
+export function updateActiveProjectTransport(transport: MusicalTransport) {
+    if (projectState) {
+        projectState.transport = transport;
     }
 }
 

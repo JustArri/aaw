@@ -13,7 +13,7 @@ use utoipa::ToSchema;
 
 pub const DEFAULT_VOICE_COUNT: usize = 64;
 pub const MAX_VOICE_COUNT: usize = 256;
-const PRELOAD_SIZE: u32 = 65_536;
+pub const DEFAULT_PRELOAD_SIZE: u32 = 65_536;
 const LIVE_SAMPLE_QUALITY: i32 = 2;
 const RENDER_BLOCK_SIZE: usize = 512;
 
@@ -119,11 +119,12 @@ impl Synth {
         sample_rate: f32,
         max_block_size: usize,
         voice_count: usize,
+        preload_size: u32,
         path: impl AsRef<Path>,
     ) -> Result<Self> {
         let asset = SfzAsset::load(path).await?;
         tokio::task::spawn_blocking(move || {
-            Self::from_asset(sample_rate, max_block_size, voice_count, &asset)
+            Self::from_asset(sample_rate, max_block_size, voice_count, preload_size, &asset)
         })
         .await
         .map_err(Error::AssetTask)?
@@ -133,9 +134,10 @@ impl Synth {
         sample_rate: f32,
         max_block_size: usize,
         voice_count: usize,
+        preload_size: u32,
         asset: &SfzAsset,
     ) -> Result<Self> {
-        let mut synth = Self::new(sample_rate, max_block_size, voice_count)?;
+        let mut synth = Self::new(sample_rate, max_block_size, voice_count, preload_size)?;
         synth.load_asset(asset)?;
         Ok(synth)
     }
@@ -364,9 +366,17 @@ impl Synth {
             Some(self.latest_event_delay.map_or(delay, |current| current.max(delay)));
     }
 
-    fn new(sample_rate: f32, max_block_size: usize, voice_count: usize) -> Result<Self> {
+    fn new(
+        sample_rate: f32,
+        max_block_size: usize,
+        voice_count: usize,
+        preload_size: u32,
+    ) -> Result<Self> {
         if !sample_rate.is_finite() || sample_rate <= 0.0 {
             return Err(Error::InvalidArgument("sample rate must be finite and greater than zero"));
+        }
+        if preload_size == 0 {
+            return Err(Error::InvalidArgument("sfizz preload size must be greater than zero"));
         }
         let block_size = max_block_size.min(RENDER_BLOCK_SIZE);
         let native_block_size = i32::try_from(block_size)
@@ -381,7 +391,7 @@ impl Synth {
         let synth = NonNull::new(unsafe { sys::sfizz_create_synth() })
             .ok_or(Error::Native("sfizz could not create a synthesizer"))?;
         unsafe {
-            sys::sfizz_set_preload_size(synth.as_ptr(), PRELOAD_SIZE);
+            sys::sfizz_set_preload_size(synth.as_ptr(), preload_size);
             sys::sfizz_set_sample_rate(synth.as_ptr(), sample_rate);
             sys::sfizz_set_samples_per_block(synth.as_ptr(), native_block_size);
             sys::sfizz_set_sample_quality(
@@ -456,7 +466,8 @@ unsafe extern "C" fn receive_metadata(
 #[cfg(test)]
 mod tests {
     use super::{
-        DEFAULT_VOICE_COUNT, RENDER_BLOCK_SIZE, SfzAsset, SfzKeyRange, Synth, key_ranges_from_mask,
+        DEFAULT_PRELOAD_SIZE, DEFAULT_VOICE_COUNT, RENDER_BLOCK_SIZE, SfzAsset, SfzKeyRange, Synth,
+        key_ranges_from_mask,
     };
     use crate::audio::AudioBlock;
 
@@ -470,7 +481,9 @@ mod tests {
                 "<region> sample=*sine key=40\n",
             ),
         );
-        let mut synth = Synth::from_asset(48_000.0, 64, DEFAULT_VOICE_COUNT, &asset).unwrap();
+        let mut synth =
+            Synth::from_asset(48_000.0, 64, DEFAULT_VOICE_COUNT, DEFAULT_PRELOAD_SIZE, &asset)
+                .unwrap();
 
         assert_eq!(
             synth.sfz_info().unwrap().key_ranges,
@@ -498,7 +511,9 @@ mod tests {
     #[test]
     fn engine_blocks_are_rendered_in_bounded_chunks() {
         let asset = SfzAsset::from_text("sine.sfz", "<region> sample=*sine key=60\n");
-        let mut synth = Synth::from_asset(48_000.0, 8192, DEFAULT_VOICE_COUNT, &asset).unwrap();
+        let mut synth =
+            Synth::from_asset(48_000.0, 8192, DEFAULT_VOICE_COUNT, DEFAULT_PRELOAD_SIZE, &asset)
+                .unwrap();
         let mut output = AudioBlock::new(2, RENDER_BLOCK_SIZE * 2);
         assert!(output.resize(RENDER_BLOCK_SIZE * 2));
 

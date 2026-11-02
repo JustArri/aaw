@@ -1,8 +1,8 @@
 use crate::{
     app_state::AppState,
     engine::{
+        instrument_graph::InstrumentGraphError,
         project::{self, CtrProjectStorage, ProjectAsset, ProjectContext, StoredProject},
-        synth_graph::SynthGraphError,
     },
     projects::Projects,
 };
@@ -149,18 +149,18 @@ async fn load_active_project(
     let revision = project.revision;
     let id = path.project_id;
 
-    let (ctr_project, rt_project) = project::prepare(
+    let (ctr_project, rt_project, controller_graph) = project::prepare(
         ProjectAsset { project, storage: Some(CtrProjectStorage { id, revision }) },
         ProjectContext {
             assets_dir: &app_state.assets.read().await.dir,
             min_instruments: app_state.min_instruments,
-            min_synths: app_state.min_synths,
+            min_controllers: app_state.min_controllers,
             stream_config: &stream_config,
         },
     )
     .await?;
 
-    app_state.engine_handle.replace_project(ctr_project, rt_project).await?;
+    app_state.engine_handle.replace_project(ctr_project, rt_project, controller_graph).await?;
     app_state.save_last_project(Some(id)).await;
 
     Ok(StatusCode::NO_CONTENT)
@@ -280,8 +280,8 @@ async fn read_project(
 
 //--------------------------------------------------------------------------------------------------
 
-impl From<SynthGraphError> for (StatusCode, String) {
-    fn from(value: SynthGraphError) -> Self {
+impl From<InstrumentGraphError> for (StatusCode, String) {
+    fn from(value: InstrumentGraphError) -> Self {
         (StatusCode::INTERNAL_SERVER_ERROR, value.to_string())
     }
 }

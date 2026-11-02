@@ -113,7 +113,7 @@
             </div>
             <div class="mt-4 flex max-w-70 justify-between" aria-label="Accent color presets">
                 {#each accentPresets as preset}<button
-                        class="border-contrast/15 size-8 cursor-pointer rounded-full border-2"
+                        class="border-contrast/15 hover:border-contrast/40 size-8 cursor-pointer rounded-full border-2 transition-transform hover:scale-110"
                         type="button"
                         style:background={preset.color}
                         aria-label={`Use ${preset.label} accent`}

@@ -2,6 +2,7 @@
     import Icon from '@iconify/svelte';
     import { flip } from 'svelte/animate';
     import { onMount } from 'svelte';
+    import Button from '$lib/components/Button.svelte';
     import EqualizerEditor from '$lib/components/EqualizerEditor.svelte';
     import NumericControl from '$lib/components/NumericControl.svelte';
     import type { Effect, Effects } from '$lib/generated/models';
@@ -368,8 +369,9 @@
             </div>
         </div>
         <div class="flex shrink-0 items-center gap-1">
-            <button
-                class="text-foreground-muted hover:bg-surface-hover flex h-9 cursor-pointer items-center gap-2 rounded-lg border-0 bg-transparent px-2.5 text-sm font-semibold disabled:cursor-default disabled:opacity-35"
+            <Button
+                variant="ghost"
+                size="sm"
                 type="button"
                 aria-label="Discard effect changes"
                 title="Discard changes"
@@ -377,12 +379,14 @@
                 onclick={discard}>
                 <Icon icon="lucide:undo-2" width="1rem" />
                 <span class="hidden min-[37.5rem]:inline">Discard</span>
-            </button>
-            <button
-                class="bg-accent text-accent-foreground flex h-9 cursor-pointer items-center gap-2 rounded-lg border-0 px-2.5 text-sm font-bold disabled:cursor-default disabled:opacity-35"
+            </Button>
+            <Button
+                variant="primary"
+                size="sm"
                 type="button"
                 aria-label="Apply effects"
                 title="Apply effects"
+                busy={saving}
                 disabled={!dirty || saving}
                 onclick={() => void save()}>
                 <Icon
@@ -390,14 +394,16 @@
                     width="1.125rem"
                     class={saving ? 'animate-spin' : ''} />
                 <span class="hidden min-[37.5rem]:inline">Apply</span>
-            </button>
-            <button
-                class="text-foreground-muted hover:bg-surface-hover grid size-9 shrink-0 cursor-pointer place-items-center rounded-lg border-0 bg-transparent"
+            </Button>
+            <Button
+                variant="ghost"
+                size="md"
+                square
                 type="button"
                 aria-label="Close effects editor"
                 onclick={closeEditor}>
                 <Icon icon="lucide:x" width="1.125rem" />
-            </button>
+            </Button>
         </div>
     </header>
 
@@ -792,8 +798,10 @@
                     <div
                         class="grid grid-cols-2 gap-2 min-[37.5rem]:grid-cols-3 min-[56.25rem]:grid-cols-5">
                         {#each addableEffects as addable}
-                            <button
-                                class="border-border-strong bg-surface-button hover:bg-surface-hover flex min-h-11 min-w-0 cursor-pointer items-center justify-center gap-1.5 rounded-lg border px-2 text-sm font-semibold disabled:cursor-default disabled:opacity-40"
+                            <Button
+                                variant="secondary"
+                                size="lg"
+                                class="min-w-0 px-2"
                                 type="button"
                                 title={atEffectCapacity
                                     ? 'Effect queue is full'
@@ -802,7 +810,7 @@
                                 onclick={() => addEffect(addable.kind)}>
                                 <Icon icon="lucide:plus" width="1rem" />
                                 <span class="truncate">{addable.label}</span>
-                            </button>
+                            </Button>
                         {/each}
                     </div>
                 </section>

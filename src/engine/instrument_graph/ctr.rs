@@ -1,89 +1,93 @@
 use crate::{
-    engine::graph::{InstrumentId, SynthId},
+    engine::{
+        controller_graph::CtrController,
+        effects::Effects,
+        graph::{ControllerId, InstrumentId},
+    },
     memory::Siv,
-    midi::{MidiFilter, MidiKeyTransform, MidiVelocityTransform},
+    synths::{ClapParameterInfo, SfzInfo, SoundFontInfo, SoundFontProgram},
 };
 use serde::{Deserialize, Serialize};
+use serde_with::serde_as;
+use std::path::PathBuf;
 use utoipa::ToSchema;
 
+#[serde_as]
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[schema(as = Instrument)]
 pub struct CtrInstrument {
-    #[schema(required)]
-    pub synth_id: Option<SynthId>,
-
-    pub enabled: bool,
-    pub ignore_key_transform: bool,
-    pub key_transform: MidiKeyTransform,
-    pub ignore_velocity_transform: bool,
-    pub velocity_transform: MidiVelocityTransform,
-    pub channel_filter: MidiFilter,
-    pub cc_filter: MidiFilter,
-    pub ignore_pitch_bend: bool,
-    pub ignore_program_change: bool,
-    pub ignore_channel_aftertouch: bool,
-    pub ignore_polyphonic_aftertouch: bool,
-    pub use_global_transposition: bool,
     pub name: String,
+    pub kind: CtrInstrumentKind,
+
+    #[schema(value_type = std::collections::HashMap<ControllerId, CtrController>)]
+    pub controllers: Siv<CtrController, ControllerId>,
+    pub effects: Effects,
+    pub gain: f32,
+
+    #[serde_as(as = "Box<[_; 128]>")]
+    #[schema(value_type = [Option<u8>; 128])]
+    pub last_controller_values: Box<[Option<u8>; 128]>,
 }
 
-impl Default for CtrInstrument {
-    fn default() -> Self {
-        Self {
-            synth_id: None,
-            enabled: true,
-            ignore_key_transform: false,
-            key_transform: Default::default(),
-            ignore_velocity_transform: false,
-            velocity_transform: Default::default(),
-            channel_filter: Default::default(),
-            cc_filter: Default::default(),
-            ignore_pitch_bend: false,
-            ignore_program_change: false,
-            ignore_channel_aftertouch: false,
-            ignore_polyphonic_aftertouch: false,
-            use_global_transposition: true,
-            name: String::new(),
+pub enum CtrInstrumentProgramChange {
+    SoundFont(SoundFontProgram),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub enum CtrInstrumentKind {
+    Dummy {
+        max_voices: usize,
+    },
+    Fluid {
+        #[schema(value_type = String)]
+        file_path: PathBuf,
+
+        info: SoundFontInfo,
+        program: SoundFontProgram,
+        max_voices: usize,
+    },
+    Sfizz {
+        #[schema(value_type = String)]
+        file_path: PathBuf,
+
+        info: SfzInfo,
+        max_voices: usize,
+        preload_size: u32,
+    },
+    Clap {
+        #[schema(value_type = String)]
+        file_path: PathBuf,
+
+        plugin_id: String,
+
+        #[schema(required)]
+        plugin_name: Option<String>,
+
+        #[schema(required)]
+        plugin_version: Option<String>,
+
+        plugin_parameters: Vec<ClapParameterInfo>,
+    },
+}
+
+impl CtrInstrumentKind {
+    fn change_program(&mut self, preset_id: u8) -> Option<CtrInstrumentProgramChange> {
+        match self {
+            Self::Fluid { program, .. } => {
+                *program = SoundFontProgram { bank: program.bank, preset_id };
+                Some(CtrInstrumentProgramChange::SoundFont(*program))
+            }
+            _ => None,
         }
     }
-}
 
-pub struct CtrInstrumentSynthIter<'a, F>
-where
-    F: Fn(&CtrInstrument) -> bool,
-{
-    instruments: std::slice::Iter<'a, CtrInstrument>,
-    filter_fn: F,
-}
-
-impl<'a, F> CtrInstrumentSynthIter<'a, F>
-where
-    F: Fn(&CtrInstrument) -> bool,
-{
-    fn new(graph: &'a CtrInstrumentGraph, filter_fn: F) -> Self {
-        Self { instruments: graph.instruments.iter_values(), filter_fn }
-    }
-}
-
-impl<'a, F> Iterator for CtrInstrumentSynthIter<'a, F>
-where
-    F: Fn(&CtrInstrument) -> bool,
-{
-    type Item = SynthId;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        loop {
-            let instrument = self.instruments.next()?;
-
-            let Some(synth_id) = instrument.synth_id else {
-                continue;
-            };
-
-            if !(self.filter_fn)(instrument) {
-                continue;
+    fn change_bank_lsb(&mut self, bank: u8) -> Option<CtrInstrumentProgramChange> {
+        match self {
+            Self::Fluid { program, .. } => {
+                *program = SoundFontProgram { bank: bank.into(), preset_id: program.preset_id };
+                Some(CtrInstrumentProgramChange::SoundFont(*program))
             }
-
-            return Some(synth_id);
+            _ => None,
         }
     }
 }
@@ -91,123 +95,162 @@ where
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[schema(as = InstrumentGraph)]
 pub struct CtrInstrumentGraph {
+    #[schema(value_type = std::collections::HashMap<InstrumentId, CtrInstrument>)]
     pub instruments: Siv<CtrInstrument, InstrumentId>,
+    pub global_effects: Effects,
+    pub global_gain: f32,
     pub global_transposition: i8,
 }
 
 impl CtrInstrumentGraph {
-    pub fn synth_iter<F: Fn(&CtrInstrument) -> bool>(
-        &'_ self,
-        filter_fn: F,
-    ) -> CtrInstrumentSynthIter<'_, F> {
-        CtrInstrumentSynthIter::new(self, filter_fn)
+    pub fn new(
+        instruments: Siv<CtrInstrument, InstrumentId>,
+        global_effects: Effects,
+        global_gain: f32,
+        global_transposition: i8,
+    ) -> Self {
+        Self { instruments, global_effects, global_gain, global_transposition }
     }
 
-    pub fn remove_synth_references(&mut self, synth_id: SynthId) {
-        for instrument in self.instruments.iter_values_mut() {
-            if instrument.synth_id == Some(synth_id) {
-                instrument.synth_id = None;
-            }
+    pub fn save_controller_value(&mut self, id: InstrumentId, controller: u8, value: u8) {
+        if let Some(instrument) = self.instruments.get_mut(id)
+            && let Some(slot) = instrument.last_controller_values.get_mut(controller as usize)
+        {
+            *slot = Some(value);
         }
     }
 
-    pub fn set_global_transposition(&mut self, transposition: i8) {
-        self.global_transposition = transposition;
-    }
-
-    pub fn append_new(&mut self) -> InstrumentId {
-        self.instruments.push(CtrInstrument::default())
-    }
-
-    pub fn remove(&mut self, instrument_id: InstrumentId) {
-        let _ = self.instruments.try_remove(instrument_id);
-    }
-
-    pub fn set_synth(&mut self, instrument_id: InstrumentId, synth_id: Option<SynthId>) {
-        if let Some(instrument) = self.instruments.get_mut(instrument_id) {
-            instrument.synth_id = synth_id;
-        }
-    }
-
-    pub fn set_enabled(&mut self, instrument_id: InstrumentId, flag: bool) {
-        if let Some(instrument) = self.instruments.get_mut(instrument_id) {
-            instrument.enabled = flag;
-        }
-    }
-
-    pub fn set_ignore_key_transform(&mut self, instrument_id: InstrumentId, flag: bool) {
-        if let Some(instrument) = self.instruments.get_mut(instrument_id) {
-            instrument.ignore_key_transform = flag;
-        }
-    }
-
-    pub fn set_key_transform(&mut self, instrument_id: InstrumentId, transform: MidiKeyTransform) {
-        if let Some(instrument) = self.instruments.get_mut(instrument_id) {
-            instrument.key_transform = transform;
-        }
-    }
-
-    pub fn set_velocity_transform(
+    pub fn change_program(
         &mut self,
-        instrument_id: InstrumentId,
-        transform: MidiVelocityTransform,
-    ) {
-        if let Some(instrument) = self.instruments.get_mut(instrument_id) {
-            instrument.velocity_transform = transform;
+        id: InstrumentId,
+        program: u8,
+    ) -> Option<CtrInstrumentProgramChange> {
+        self.instruments.get_mut(id)?.kind.change_program(program)
+    }
+
+    pub fn change_bank_lsb(
+        &mut self,
+        id: InstrumentId,
+        bank: u8,
+    ) -> Option<CtrInstrumentProgramChange> {
+        self.instruments.get_mut(id)?.kind.change_bank_lsb(bank)
+    }
+
+    pub fn push(&mut self, instrument: CtrInstrument) -> InstrumentId {
+        self.instruments.push(instrument)
+    }
+
+    pub fn remove(&mut self, id: InstrumentId) {
+        let _ = self.instruments.try_remove(id);
+    }
+
+    pub fn replace_kind(&mut self, id: InstrumentId, kind: CtrInstrumentKind) {
+        if let Some(instrument) = self.instruments.get_mut(id) {
+            instrument.kind = kind;
         }
     }
 
-    pub fn set_ignore_velocity_transform(&mut self, instrument_id: InstrumentId, flag: bool) {
-        if let Some(instrument) = self.instruments.get_mut(instrument_id) {
-            instrument.ignore_velocity_transform = flag;
+    pub fn controller(
+        &self,
+        instrument: InstrumentId,
+        controller: ControllerId,
+    ) -> Option<&CtrController> {
+        self.instruments.get(instrument)?.controllers.get(controller)
+    }
+
+    pub fn controller_mut(
+        &mut self,
+        instrument: InstrumentId,
+        controller: ControllerId,
+    ) -> Option<&mut CtrController> {
+        self.instruments.get_mut(instrument)?.controllers.get_mut(controller)
+    }
+
+    pub fn append_controller(&mut self, instrument: InstrumentId) -> Option<ControllerId> {
+        Some(self.instruments.get_mut(instrument)?.controllers.push(CtrController::default()))
+    }
+
+    pub fn remove_controller(
+        &mut self,
+        instrument: InstrumentId,
+        controller: ControllerId,
+    ) -> bool {
+        self.instruments
+            .get_mut(instrument)
+            .and_then(|instrument| instrument.controllers.try_remove(controller))
+            .is_some()
+    }
+
+    pub fn select_soundfont_program(&mut self, id: InstrumentId, program: SoundFontProgram) {
+        if let Some(instrument) = self.instruments.get_mut(id)
+            && let CtrInstrumentKind::Fluid { program: current, .. } = &mut instrument.kind
+        {
+            *current = program;
         }
     }
 
-    pub fn set_channel_filter(&mut self, instrument_id: InstrumentId, filter: MidiFilter) {
-        if let Some(instrument) = self.instruments.get_mut(instrument_id) {
-            instrument.channel_filter = filter;
-        }
+    pub fn set_clap_parameter(
+        &mut self,
+        id: InstrumentId,
+        parameter_id: u32,
+        value: f64,
+    ) -> crate::synths::Result<()> {
+        let parameter = self.clap_parameter_mut(id, parameter_id)?;
+        parameter.set_value(value)
     }
 
-    pub fn set_cc_filter(&mut self, instrument_id: InstrumentId, filter: MidiFilter) {
-        if let Some(instrument) = self.instruments.get_mut(instrument_id) {
-            instrument.cc_filter = filter;
-        }
+    pub fn validate_clap_parameter(
+        &self,
+        id: InstrumentId,
+        parameter_id: u32,
+        value: f64,
+    ) -> crate::synths::Result<()> {
+        let Some(instrument) = self.instruments.get(id) else {
+            return Err(invalid_parameter(parameter_id, "instrument does not exist"));
+        };
+        let CtrInstrumentKind::Clap { plugin_parameters, .. } = &instrument.kind else {
+            return Err(invalid_parameter(parameter_id, "instrument is not a CLAP plugin"));
+        };
+        let Some(mut parameter) =
+            plugin_parameters.iter().find(|parameter| parameter.id == parameter_id).cloned()
+        else {
+            return Err(invalid_parameter(parameter_id, "parameter does not exist"));
+        };
+        parameter.set_value(value)
     }
 
-    pub fn set_ignore_pitch_bend(&mut self, instrument_id: InstrumentId, flag: bool) {
-        if let Some(instrument) = self.instruments.get_mut(instrument_id) {
-            instrument.ignore_pitch_bend = flag;
-        }
+    pub fn update_clap_parameter(
+        &mut self,
+        id: InstrumentId,
+        parameter_id: u32,
+        value: f64,
+    ) -> bool {
+        let Ok(parameter) = self.clap_parameter_mut(id, parameter_id) else {
+            return false;
+        };
+        parameter.value = Some(value);
+        parameter.value_text = None;
+        true
     }
 
-    pub fn set_ignore_program_change(&mut self, instrument_id: InstrumentId, flag: bool) {
-        if let Some(instrument) = self.instruments.get_mut(instrument_id) {
-            instrument.ignore_program_change = flag;
-        }
+    fn clap_parameter_mut(
+        &mut self,
+        id: InstrumentId,
+        parameter_id: u32,
+    ) -> crate::synths::Result<&mut ClapParameterInfo> {
+        let Some(instrument) = self.instruments.get_mut(id) else {
+            return Err(invalid_parameter(parameter_id, "instrument does not exist"));
+        };
+        let CtrInstrumentKind::Clap { plugin_parameters, .. } = &mut instrument.kind else {
+            return Err(invalid_parameter(parameter_id, "instrument is not a CLAP plugin"));
+        };
+        plugin_parameters
+            .iter_mut()
+            .find(|parameter| parameter.id == parameter_id)
+            .ok_or_else(|| invalid_parameter(parameter_id, "parameter does not exist"))
     }
+}
 
-    pub fn set_ignore_channel_aftertouch(&mut self, instrument_id: InstrumentId, flag: bool) {
-        if let Some(instrument) = self.instruments.get_mut(instrument_id) {
-            instrument.ignore_channel_aftertouch = flag;
-        }
-    }
-
-    pub fn set_ignore_polyphonic_aftertouch(&mut self, instrument_id: InstrumentId, flag: bool) {
-        if let Some(instrument) = self.instruments.get_mut(instrument_id) {
-            instrument.ignore_polyphonic_aftertouch = flag;
-        }
-    }
-
-    pub fn set_use_global_transposition(&mut self, instrument_id: InstrumentId, flag: bool) {
-        if let Some(instrument) = self.instruments.get_mut(instrument_id) {
-            instrument.use_global_transposition = flag;
-        }
-    }
-
-    pub fn set_name(&mut self, instrument_id: InstrumentId, name: String) {
-        if let Some(instrument) = self.instruments.get_mut(instrument_id) {
-            instrument.name = name;
-        }
-    }
+fn invalid_parameter(parameter_id: u32, reason: &'static str) -> crate::synths::Error {
+    crate::synths::Error::InvalidClapParameter { parameter_id, reason }
 }

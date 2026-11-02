@@ -1,5 +1,6 @@
 use crate::engine::{
-    instrument_graph::CtrInstrumentGraph, synth_graph::CtrSynthGraph, user_presets::CtrUserPresets,
+    drum_machine::MusicalTransport, instrument_graph::CtrInstrumentGraph,
+    user_presets::CtrUserPresets,
 };
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -19,8 +20,8 @@ pub struct CtrProject {
     pub revision: u32,
     pub name: String,
     pub instrument_graph: CtrInstrumentGraph,
-    pub synth_graph: CtrSynthGraph,
     pub user_presets: CtrUserPresets,
+    pub transport: MusicalTransport,
 }
 
 impl CtrProject {

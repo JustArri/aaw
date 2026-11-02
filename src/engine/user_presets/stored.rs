@@ -1,5 +1,5 @@
 use crate::engine::{
-    graph::InstrumentId,
+    graph::ControllerAddress,
     user_presets::{CtrUserPreset, CtrUserPresets},
 };
 use migrations_derive::Migrations;
@@ -9,18 +9,18 @@ use utoipa::ToSchema;
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct StoredUserPreset {
     pub name: String,
-    pub instruments: Vec<InstrumentId>,
+    pub controllers: Vec<ControllerAddress>,
 }
 
 impl From<&CtrUserPreset> for StoredUserPreset {
     fn from(value: &CtrUserPreset) -> Self {
-        Self { name: value.name.clone(), instruments: value.instruments.clone() }
+        Self { name: value.name.clone(), controllers: value.controllers.clone() }
     }
 }
 
 impl From<CtrUserPreset> for StoredUserPreset {
     fn from(value: CtrUserPreset) -> Self {
-        Self { name: value.name, instruments: value.instruments }
+        Self { name: value.name, controllers: value.controllers }
     }
 }
 

@@ -50,6 +50,11 @@ rust-embed = { version = "8", features = ["debug-embed"] }
 chrono = "0.4.45"
 serde_with = "3.24.0"
 hound = "3.5.1"
+clack-host = "0.2"
+clack-extensions = { version = "0.2", features = ["clack-host", "params"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
 
 
 [build-dependencies]

@@ -21,20 +21,20 @@ def normalize_asset_path(path: str) -> str:
 
 def current_project_assets(project: dict[str, Any]) -> set[str]:
     assets: set[str] = set()
-    synths = project.get("synth_graph", {}).get("synths", {})
+    instruments = project.get("instrument_graph", {}).get("instruments", {})
 
-    if not isinstance(synths, dict):
+    if not isinstance(instruments, dict):
         return assets
 
-    for synth in synths.values():
-        if not isinstance(synth, dict):
+    for instrument in instruments.values():
+        if not isinstance(instrument, dict):
             continue
 
-        parameters = synth.get("parameters")
-        if not isinstance(parameters, dict) or parameters.get("type") not in {"Fluid", "Sfizz"}:
+        kind = instrument.get("kind")
+        if not isinstance(kind, dict) or kind.get("type") not in {"Fluid", "Sfizz", "Clap"}:
             continue
 
-        data = parameters.get("data")
+        data = kind.get("data")
         if isinstance(data, dict) and isinstance(data.get("file_path"), str):
             assets.add(normalize_asset_path(data["file_path"]))
 

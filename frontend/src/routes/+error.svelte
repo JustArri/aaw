@@ -1,5 +1,6 @@
 <script lang="ts">
     import { page } from '$app/state';
+    import Button from '$lib/components/Button.svelte';
     import '../app.css';
 </script>
 
@@ -34,12 +35,13 @@
         </div>
 
         <footer class="border-border grid gap-2 border-t p-4 sm:grid-cols-2 sm:px-7">
-            <button
+            <Button
+                variant="primary"
+                size="lg"
                 type="button"
-                class="text-accent-foreground bg-accent min-h-11 cursor-pointer rounded-lg border-0 px-4 text-sm font-semibold"
                 onclick={() => window.location.reload()}>
                 Try again
-            </button>
+            </Button>
             <a
                 href="/"
                 class="border-border-strong bg-surface-hover text-foreground-strong grid min-h-11 place-items-center rounded-lg border px-4 text-sm font-semibold no-underline">

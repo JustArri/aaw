@@ -1,6 +1,6 @@
 use crate::{
     engine::EngineHandle,
-    midi::{ControlChange, MidiEvent, MidiEventKind, MidiRuntime},
+    midi::{MidiEvent, MidiRuntime},
     rt_channels::NotifiedRtConsumer,
 };
 use serde::Serialize;
@@ -94,6 +94,7 @@ pub fn spawn_midi_runtime_task(
 
 pub fn spawn_midi_relay_task(
     stop: CancellationToken,
+    engine_handle: EngineHandle,
     mut midi_rx: NotifiedRtConsumer<MidiEvent>,
     midi_tx: broadcast::Sender<Arc<MidiEvent>>,
 ) -> JoinHandle<()> {
@@ -104,45 +105,8 @@ pub fn spawn_midi_relay_task(
 
                 event = midi_rx.recv() => {
                     info!(target: "midi-event", "{event:?}");
+                    engine_handle.process_midi_event(event).await;
                     let _ = midi_tx.send(Arc::new(event));
-                }
-            }
-        }
-    })
-}
-
-pub fn spawn_midi_watcher_task(
-    stop: CancellationToken,
-    engine_handle: EngineHandle,
-    mut midi_rx: broadcast::Receiver<Arc<MidiEvent>>,
-) -> JoinHandle<()> {
-    tokio::spawn(async move {
-        loop {
-            tokio::select! {
-                _ = stop.cancelled() => break,
-
-                event = midi_rx.recv() => match event {
-                    Ok(event) => {
-                        let channel = event.channel;
-
-                        match event.kind {
-                            MidiEventKind::ControlChange { controller, value } => {
-                                engine_handle
-                                    .handle_control_change(channel, controller, value)
-                                    .await;
-
-                                if controller == ControlChange::BankSelectLsb as u8 {
-                                    engine_handle.handle_bank_lsb_change(channel, value).await
-                                }
-                            }
-                            MidiEventKind::ProgramChange { program } => {
-                                engine_handle.handle_program_change(channel, program).await
-                            }
-                            _ => {}
-                        }
-                    }
-                    Err(broadcast::error::RecvError::Lagged(_)) => {}
-                    Err(broadcast::error::RecvError::Closed) => break,
                 }
             }
         }

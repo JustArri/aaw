@@ -1,8 +1,7 @@
 use crate::{
     engine::{
         effects::EffectsContext,
-        instrument_graph::{self, InstrumentGraphContext},
-        synth_graph::{self, SynthGraphContext, SynthGraphError},
+        instrument_graph::{self, InstrumentGraphContext, InstrumentGraphError},
         user_presets,
     },
     server::api::audio::AudioOutputStreamConfig,
@@ -25,25 +24,16 @@ pub struct ProjectAsset {
 pub struct ProjectContext<'a> {
     pub assets_dir: &'a Path,
     pub min_instruments: usize,
-    pub min_synths: usize,
+    pub min_controllers: usize,
     pub stream_config: &'a AudioOutputStreamConfig,
 }
 
-impl<'a> From<&ProjectContext<'a>> for InstrumentGraphContext {
-    fn from(value: &ProjectContext<'a>) -> Self {
-        Self {
-            num_instruments: value.min_instruments,
-            channel_count: value.stream_config.channel_count,
-            sample_rate: value.stream_config.sample_rate,
-        }
-    }
-}
-
-impl<'a> From<&ProjectContext<'a>> for SynthGraphContext<'a> {
+impl<'a> From<&ProjectContext<'a>> for InstrumentGraphContext<'a> {
     fn from(value: &ProjectContext<'a>) -> Self {
         Self {
             assets_dir: value.assets_dir,
-            num_synths: value.min_synths,
+            num_instruments: value.min_instruments,
+            num_controllers: value.min_controllers,
             channel_count: value.stream_config.channel_count,
             sample_rate: value.stream_config.sample_rate,
             max_block_size: value.stream_config.max_block_size,
@@ -52,17 +42,18 @@ impl<'a> From<&ProjectContext<'a>> for SynthGraphContext<'a> {
 }
 
 pub async fn prepare<'a>(
-    asset: ProjectAsset,
+    mut asset: ProjectAsset,
     ctx: ProjectContext<'a>,
-) -> Result<(CtrProject, RtProject), SynthGraphError> {
-    let (ctr_instrument_graph, rt_instrument_graph) =
-        instrument_graph::prepare(asset.project.instrument_graph, (&ctx).into());
-
-    let sg_res = synth_graph::prepare(asset.project.synth_graph, (&ctx).into()).await;
-    let (ctr_synth_graph, rt_synth_graph) = match sg_res {
+) -> Result<
+    (CtrProject, RtProject, crate::engine::controller_graph::RtControllerGraph),
+    InstrumentGraphError,
+> {
+    asset.project.instrument_graph.resize_drum_machines_to_bar(asset.project.transport);
+    let result = instrument_graph::prepare(asset.project.instrument_graph, (&ctx).into()).await;
+    let (ctr_instrument_graph, rt_instrument_graph, rt_controller_graph) = match result {
         Ok(res) => res,
-        Err(_) => synth_graph::default(
-            ctx.min_synths,
+        Err(_) => instrument_graph::default(
+            ctx.min_instruments,
             EffectsContext {
                 channel_count: ctx.stream_config.channel_count,
                 sample_rate: ctx.stream_config.sample_rate,
@@ -75,12 +66,19 @@ pub async fn prepare<'a>(
         revision: asset.project.revision,
         name: asset.project.name,
         instrument_graph: ctr_instrument_graph,
-        synth_graph: ctr_synth_graph,
         user_presets: user_presets::prepare(asset.project.user_presets),
+        transport: asset.project.transport,
     };
 
-    let rt_project =
-        RtProject { instrument_graph: rt_instrument_graph, synth_graph: rt_synth_graph };
+    let rt_project = RtProject {
+        instrument_graph: rt_instrument_graph,
+        transport: RtTransport {
+            config: asset.project.transport,
+            sample_position: 0,
+            segment_start_frame: 0,
+            segment_start_tick: 0.0,
+        },
+    };
 
-    Ok((ctr_project, rt_project))
+    Ok((ctr_project, rt_project, rt_controller_graph))
 }

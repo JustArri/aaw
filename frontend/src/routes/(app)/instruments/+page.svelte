@@ -1,23 +1,22 @@
 <script lang="ts">
     import Icon from '@iconify/svelte';
-    import { onMount, tick } from 'svelte';
-    import ApplyIconButton from '$lib/components/ApplyIconButton.svelte';
+    import { onMount } from 'svelte';
+    import ApplyButton from '$lib/components/ApplyButton.svelte';
     import AutoSaveTextInput from '$lib/components/AutoSaveTextInput.svelte';
     import BypassToggle from '$lib/components/BypassToggle.svelte';
+    import Button from '$lib/components/Button.svelte';
     import DotToggle from '$lib/components/DotToggle.svelte';
     import NumericControl from '$lib/components/NumericControl.svelte';
-    import SaveIndicator from '$lib/components/SaveIndicator.svelte';
     import SegmentedControl from '$lib/components/SegmentedControl.svelte';
     import SelectDropdown from '$lib/components/SelectDropdown.svelte';
+    import TimedConfirmButton from '$lib/components/TimedConfirmButton.svelte';
     import {
         MidiFilterKind,
-        type Instrument,
         type MidiFilter,
         type MidiKeyMapping,
         type MidiKeySelection,
         type MidiKeyTransform,
-        type MidiVelocityTransform,
-        type SynthId
+        type MidiVelocityTransform
     } from '$lib/generated/models';
     import { notify } from '$lib/push-notifications.svelte';
     import { subscribeMidiEvents } from '$lib/state/midi-events.svelte';
@@ -42,7 +41,19 @@
         setInstrumentUsesGlobalTransposition,
         setInstrumentVelocityTransform
     } from '$lib/state/instruments.svelte';
-    import { fetchSynths, synths, SynthKind, type SynthEntry } from '$lib/state/synths.svelte';
+    import {
+        fetchSynths,
+        synths,
+        SynthKind,
+        type ControllerSlot,
+        type SynthEntry
+    } from '$lib/state/synths.svelte';
+    import { errorToUserMessage } from '$lib/error';
+
+    let { instrumentId = null, embedded = false } = $props<{
+        instrumentId?: number | null;
+        embedded?: boolean;
+    }>();
 
     const midiChannels = Array.from({ length: 16 }, (_, channel) => channel);
     const midiControllerNames: Record<number, string> = {
@@ -134,9 +145,6 @@
     let togglingId = $state(null as number | null);
     let reloading = $state(false);
     let reloadDone = $state(false);
-    let removeConfirming = $state(false);
-    let removeConfirmationElement = $state<HTMLDivElement>();
-    let error = $state('');
 
     let editName = $state('');
     let selectedSynth = $state('');
@@ -175,6 +183,10 @@
     let entries = $derived(
         Object.entries(instrumentSlots())
             .map(([id, slot]) => ({ id: Number(id), slot }))
+            .filter(
+                (entry) =>
+                    !embedded || instrumentId === null || entry.slot.instrument_id === instrumentId
+            )
             .sort((left, right) => left.id - right.id)
     );
     let selectedSlot = $derived(
@@ -298,19 +310,23 @@
     onMount(async () => {
         try {
             await Promise.all([fetchInstruments(), fetchSynths()]);
-            const requestedInstrument = new URL(window.location.href).searchParams.get(
-                'instrument'
-            );
+            const requestedInstrument =
+                instrumentId === null
+                    ? new URL(window.location.href).searchParams.get('instrument')
+                    : String(instrumentId);
             const initial =
                 (requestedInstrument === null
                     ? undefined
-                    : entries.find((entry) => entry.id === Number(requestedInstrument))) ??
-                entries[0];
+                    : entries.find((entry) =>
+                          embedded
+                              ? entry.slot.instrument_id === Number(requestedInstrument)
+                              : entry.id === Number(requestedInstrument)
+                      )) ?? entries[0];
             if (initial) {
-                selectInstrument(initial.id, requestedInstrument !== null);
+                selectInstrument(initial.id, embedded || requestedInstrument !== null);
             }
         } catch (cause) {
-            showError(cause);
+            notify.error(errorToUserMessage(cause));
         } finally {
             loading = false;
         }
@@ -329,19 +345,16 @@
         })
     );
 
-    function showError(cause: unknown) {
-        error = cause instanceof Error ? cause.message : String(cause);
+    function displayName(slot: ControllerSlot) {
+        const name = slot.name.trim();
+        return name ? `MIDI Input: ${name}` : 'MIDI Input';
     }
 
-    function displayName(id: number, slot: Instrument) {
-        return slot.name.trim() || `Unnamed instrument #${id + 1}`;
-    }
-
-    function synthKey(id: SynthId | null) {
+    function synthKey(id: number | null) {
         return id === null ? '' : String(id);
     }
 
-    function synthEntry(id: SynthId | null) {
+    function synthEntry(id: number | null) {
         if (id === null) {
             return undefined;
         }
@@ -351,11 +364,11 @@
     function synthName(entry: SynthEntry | undefined) {
         return (
             entry?.synth.name.trim() ||
-            (entry ? `Unnamed ${entry.kind.toLowerCase()} synth #${entry.id}` : 'Unassigned')
+            (entry ? `${entry.kind} instrument #${entry.id + 1}` : 'Instrument')
         );
     }
 
-    function synthColor(id: SynthId | null) {
+    function synthColor(id: number | null) {
         switch (synthEntry(id)?.kind) {
             case SynthKind.Fluid:
                 return 'var(--color-synth-fluid)';
@@ -427,8 +440,6 @@
         ignoreChannelAftertouch = slot.ignore_channel_aftertouch;
         ignorePolyphonicAftertouch = slot.ignore_polyphonic_aftertouch;
         controllerQuery = '';
-        removeConfirming = false;
-        error = '';
         inspectorOpen = open;
     }
 
@@ -479,13 +490,11 @@
             savingSections = new Set(savingSections).add(section);
         }
         const execute = async () => {
-            error = '';
             try {
                 await operation();
                 return true;
             } catch (cause) {
-                showError(cause);
-                notify.error(error, { title });
+                notify.error(errorToUserMessage(cause), { title });
                 return false;
             }
         };
@@ -514,8 +523,8 @@
         addingInstrument = true;
         let id: number | undefined;
         try {
-            const succeeded = await run('Add instrument', async () => {
-                id = await addInstrument();
+            const succeeded = await run('Add controller', async () => {
+                id = await addInstrument(instrumentId ?? undefined);
             });
             if (succeeded && id !== undefined) {
                 selectInstrument(id);
@@ -531,7 +540,6 @@
         }
         reloading = true;
         reloadDone = false;
-        error = '';
         try {
             await Promise.all([fetchInstrumentSlots(), fetchSynths()]);
             reloadDone = true;
@@ -547,8 +555,7 @@
                 }
             }
         } catch (cause) {
-            showError(cause);
-            notify.error(error, { title: 'Reload instruments' });
+            notify.error(errorToUserMessage(cause), { title: 'Reload controllers' });
         } finally {
             reloading = false;
         }
@@ -562,8 +569,9 @@
         try {
             await setInstrumentEnabled(id, enabled);
         } catch (cause) {
-            showError(cause);
-            notify.error(error, { title: enabled ? 'Enable instrument' : 'Disable instrument' });
+            notify.error(errorToUserMessage(cause), {
+                title: enabled ? 'Enable controller' : 'Disable controller'
+            });
         } finally {
             togglingId = null;
         }
@@ -574,7 +582,7 @@
             return;
         }
         const id = selectedId;
-        const synthId: SynthId | null = selectedSynth ? Number(selectedSynth) : null;
+        const synthId: number | null = selectedSynth ? Number(selectedSynth) : null;
         await run('Assign synth', () => setInstrumentSynth(id, synthId), 'synth');
     }
 
@@ -584,7 +592,7 @@
         }
         const id = selectedId;
         const name = editName.trim();
-        const succeeded = await run('Rename instrument', () => setInstrumentName(id, name), 'name');
+        const succeeded = await run('Rename controller', () => setInstrumentName(id, name), 'name');
         if (succeeded && selectedId === id) {
             editName = name;
         }
@@ -639,8 +647,7 @@
                 keyMapping = formatMapping(mapping);
             }
         } catch (cause) {
-            showError(cause);
-            notify.error(error, { title: 'Update key transform' });
+            notify.error(errorToUserMessage(cause), { title: 'Update key transform' });
         }
     }
 
@@ -666,8 +673,8 @@
         }
         const id = selectedId;
         if (velocityType === 'Linear' && velocityMin > velocityMax) {
-            error = 'Minimum velocity must not exceed maximum velocity';
-            notify.error(error, { title: 'Update velocity transform' });
+            const msg = 'Minimum velocity must not exceed maximum velocity';
+            notify.error(msg, { title: 'Update velocity transform' });
             return;
         }
         const transform: MidiVelocityTransform =
@@ -716,8 +723,7 @@
                 channels = [...filter.list];
             }
         } catch (cause) {
-            showError(cause);
-            notify.error(error, { title: 'Update channel filter' });
+            notify.error(errorToUserMessage(cause), { title: 'Update channel filter' });
         }
     }
 
@@ -748,8 +754,7 @@
                 controllers = [...filter.list];
             }
         } catch (cause) {
-            showError(cause);
-            notify.error(error, { title: 'Update controller filter' });
+            notify.error(errorToUserMessage(cause), { title: 'Update controller filter' });
         }
     }
 
@@ -916,7 +921,7 @@
         const id = selectedId;
         removingInstrument = true;
         try {
-            const succeeded = await run('Remove instrument', () => removeInstrument(id));
+            const succeeded = await run('Remove controller', () => removeInstrument(id));
             if (succeeded) {
                 selectedId = null;
                 inspectorOpen = false;
@@ -929,170 +934,243 @@
             removingInstrument = false;
         }
     }
-
-    async function showRemoveConfirmation() {
-        removeConfirming = true;
-        await tick();
-        removeConfirmationElement?.scrollIntoView({
-            behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches
-                ? 'auto'
-                : 'smooth',
-            block: 'nearest'
-        });
-    }
 </script>
 
-{#if error}
-    <div
-        class="border-danger/30 bg-danger/8 text-danger mb-3 rounded-lg border px-3 py-2 text-sm"
-        role="alert">
-        {error}
-    </div>
-{/if}
-
 <div
-    class="grid min-w-0 gap-3 min-[56.25rem]:grid-cols-[minmax(18rem,0.8fr)_minmax(24rem,1.2fr)] min-[56.25rem]:items-start">
-    <section class="border-border bg-surface-card min-w-0 overflow-hidden rounded-xl border">
-        <header class="border-border flex min-h-14.5 items-center justify-between border-b px-3.75">
-            <div class="flex items-baseline gap-2">
-                <h2 class="m-0 text-sm font-semibold">Instruments</h2>
-                <span class="text-foreground-muted text-xs">
-                    {entries.filter(({ slot }) => slot.enabled).length} enabled · {entries.length} total
-                </span>
-            </div>
-            <div class="flex items-center gap-1.5">
-                <button
-                    class="border-border-strong bg-surface-button text-foreground hover:bg-surface-hover grid size-8.5 cursor-pointer place-items-center rounded-lg border transition-colors disabled:cursor-wait disabled:opacity-60"
-                    type="button"
-                    aria-label="Add instrument"
-                    disabled={busy}
-                    onclick={() => void appendInstrument()}>
-                    <Icon
-                        icon={addingInstrument ? 'lucide:loader-circle' : 'lucide:plus'}
-                        width="1.125rem"
-                        class={addingInstrument ? 'animate-spin' : ''} />
-                </button>
-                <button
-                    class="text-foreground-muted hover:bg-surface-hover grid size-8.5 cursor-pointer place-items-center rounded-lg border-0 bg-transparent disabled:cursor-wait disabled:opacity-60"
-                    type="button"
-                    aria-label="Reload instruments"
-                    disabled={reloading}
-                    onclick={() => void reloadInstruments()}>
-                    <Icon
-                        icon={loading || reloading
-                            ? 'lucide:loader-circle'
-                            : reloadDone
-                              ? 'lucide:check'
-                              : 'lucide:refresh-cw'}
-                        width="1.0625rem"
-                        class={loading || reloading
-                            ? 'animate-spin'
-                            : reloadDone
-                              ? 'text-success'
-                              : ''} />
-                </button>
-            </div>
-        </header>
-
-        {#if loading}
-            <div class="text-foreground-muted grid min-h-52 place-items-center text-sm">
-                Loading instruments…
-            </div>
-        {:else if entries.length === 0}
-            <div class="text-foreground-muted grid min-h-52 place-items-center p-6 text-center">
-                <div>
-                    <Icon icon="lucide:sliders-horizontal" width="1.5rem" class="mx-auto mb-2" />
-                    <p class="m-0 text-sm">No instruments are configured.</p>
+    class={embedded
+        ? 'min-w-0'
+        : 'grid min-w-0 gap-3 min-[56.25rem]:grid-cols-[minmax(18rem,0.8fr)_minmax(24rem,1.2fr)] min-[56.25rem]:items-start'}>
+    {#if !embedded}<section
+            class="border-border bg-surface-card min-w-0 overflow-hidden rounded-xl border">
+            <header
+                class="border-border flex min-h-14.5 items-center justify-between border-b px-3.75">
+                <div class="flex items-baseline gap-2">
+                    <h2 class="m-0 text-sm font-semibold">Controllers</h2>
+                    <span class="text-foreground-muted text-xs">
+                        {entries.filter(({ slot }) => slot.enabled).length} enabled · {entries.length}
+                        total
+                    </span>
                 </div>
-            </div>
-        {:else}
-            <div class="grid gap-1.5 p-1.5">
-                {#each entries as entry (entry.id)}
-                    {@const assignedSynth = synthEntry(entry.slot.synth_id)}
-                    <article
-                        class={`bg-surface-item grid overflow-hidden rounded-lg border transition-colors ${entry.slot.synth_id === null ? 'grid-cols-[minmax(0,1fr)_auto]' : 'grid-cols-[minmax(0,1fr)_auto_auto] min-[37.5rem]:grid-cols-[minmax(0,1fr)_minmax(7.5rem,11rem)_auto]'} ${entry.id === selectedId ? 'border-accent/45' : 'border-transparent'}`}>
-                        <button
-                            class="grid min-w-0 cursor-pointer grid-cols-[auto_minmax(0,1fr)] items-center gap-3 border-0 bg-transparent px-3 py-3 text-left"
+                <div class="flex items-center gap-1.5">
+                    {#if embedded}<Button
+                            variant="secondary"
+                            size="sm"
+                            square
+                            class="size-8.5"
                             type="button"
-                            onclick={() => selectInstrument(entry.id)}>
-                            <span
-                                class="text-foreground-muted grid size-8 place-items-center rounded-lg font-mono text-sm"
-                                style:background={`${synthColor(entry.slot.synth_id)}18`}>
-                                {entry.id + 1}
-                            </span>
-                            <span class="min-w-0">
-                                <strong
-                                    class={`block truncate text-sm font-semibold ${entry.slot.name.trim() ? 'text-foreground' : 'text-foreground-muted italic'}`}>
-                                    {displayName(entry.id, entry.slot)}
-                                </strong>
-                                <small
-                                    class={`text-foreground-muted mt-0.5 block truncate text-sm ${entry.slot.synth_id === null ? '' : 'min-[37.5rem]:hidden'}`}>
-                                    {synthName(assignedSynth)}
-                                </small>
-                            </span>
-                        </button>
-                        {#if entry.slot.synth_id !== null}
-                            <a
-                                class="text-foreground-muted hover:border-accent/35 hover:bg-surface-hover hover:text-accent min-[37.5rem]:border-border my-auto grid size-9 place-items-center rounded-lg border border-transparent transition-colors min-[37.5rem]:my-0 min-[37.5rem]:flex min-[37.5rem]:size-auto min-[37.5rem]:min-w-0 min-[37.5rem]:items-center min-[37.5rem]:gap-2 min-[37.5rem]:rounded-none min-[37.5rem]:border-0 min-[37.5rem]:border-l min-[37.5rem]:px-3"
-                                href={`/synths?synth=${entry.slot.synth_id}`}
-                                aria-label={`Open ${synthName(assignedSynth)}`}
-                                title="Open assigned synth">
-                                <span
-                                    class="hidden min-w-0 flex-1 truncate text-xs min-[37.5rem]:block">
-                                    {synthName(assignedSynth)}
-                                </span>
-                                <Icon class="shrink-0" icon="lucide:arrow-up-right" width="1rem" />
-                            </a>
-                        {/if}
-                        <button
-                            class={`mr-2 grid size-9 cursor-pointer place-items-center self-center rounded-lg border transition-colors ${entry.slot.enabled ? 'border-accent/60 bg-accent/20 text-accent' : 'border-border-strong bg-surface-button text-foreground-muted hover:border-accent/35 hover:text-foreground'}`}
-                            type="button"
-                            aria-label={`${entry.slot.enabled ? 'Disable' : 'Enable'} ${displayName(entry.id, entry.slot)}`}
-                            disabled={togglingId !== null}
-                            onclick={() => void toggleEnabled(entry.id, !entry.slot.enabled)}>
+                            aria-label="Add MIDI input controller"
+                            busy={addingInstrument}
+                            disabled={busy}
+                            onclick={() => void appendInstrument()}>
                             <Icon
-                                icon={togglingId === entry.id
-                                    ? 'lucide:loader-circle'
-                                    : 'lucide:power'}
-                                width="1rem"
-                                class={togglingId === entry.id ? 'animate-spin' : ''} />
-                        </button>
-                    </article>
-                {/each}
-            </div>
-        {/if}
-    </section>
+                                icon={addingInstrument ? 'lucide:loader-circle' : 'lucide:plus'}
+                                width="1.125rem"
+                                class={addingInstrument ? 'animate-spin' : ''} />
+                        </Button>{/if}
+                    <Button
+                        variant="ghost"
+                        size="sm"
+                        square
+                        class="size-8.5"
+                        type="button"
+                        aria-label="Reload controllers"
+                        busy={reloading}
+                        disabled={reloading}
+                        onclick={() => void reloadInstruments()}>
+                        <Icon
+                            icon={loading || reloading
+                                ? 'lucide:loader-circle'
+                                : reloadDone
+                                  ? 'lucide:check'
+                                  : 'lucide:refresh-cw'}
+                            width="1.0625rem"
+                            class={loading || reloading
+                                ? 'animate-spin'
+                                : reloadDone
+                                  ? 'text-success'
+                                  : ''} />
+                    </Button>
+                </div>
+            </header>
 
-    {#if inspectorOpen}<button
+            {#if loading}
+                <div class="text-foreground-muted grid min-h-52 place-items-center text-sm">
+                    Loading controllers…
+                </div>
+            {:else if entries.length === 0}
+                <div class="text-foreground-muted grid min-h-52 place-items-center p-6 text-center">
+                    <div>
+                        <Icon
+                            icon="lucide:sliders-horizontal"
+                            width="1.5rem"
+                            class="mx-auto mb-2" />
+                        <p class="m-0 text-sm">No controllers are configured.</p>
+                    </div>
+                </div>
+            {:else}
+                <div class="grid gap-1.5 p-1.5">
+                    {#each entries as entry (entry.id)}
+                        {@const assignedSynth = synthEntry(entry.slot.synth_id)}
+                        <article
+                            class={`bg-surface-item grid overflow-hidden rounded-lg border transition-colors ${entry.slot.synth_id === null ? 'grid-cols-[minmax(0,1fr)_auto]' : 'grid-cols-[minmax(0,1fr)_auto_auto] min-[37.5rem]:grid-cols-[minmax(0,1fr)_minmax(7.5rem,11rem)_auto]'} ${entry.id === selectedId ? 'border-accent/45' : 'border-transparent'}`}>
+                            <button
+                                class="hover:bg-surface-hover grid min-w-0 cursor-pointer grid-cols-[auto_minmax(0,1fr)] items-center gap-3 border-0 bg-transparent px-3 py-3 text-left transition-colors"
+                                type="button"
+                                onclick={() => selectInstrument(entry.id)}>
+                                <span
+                                    class="text-foreground-muted grid size-8 place-items-center rounded-lg font-mono text-sm"
+                                    style:background={`${synthColor(entry.slot.synth_id)}18`}>
+                                    {entry.slot.instrument_id + 1}.{entry.slot.controller_id + 1}
+                                </span>
+                                <span class="min-w-0">
+                                    <strong
+                                        class="text-foreground block truncate text-sm font-semibold">
+                                        {displayName(entry.slot)}
+                                    </strong>
+                                    <small
+                                        class={`text-foreground-muted mt-0.5 block truncate text-sm ${entry.slot.synth_id === null ? '' : 'min-[37.5rem]:hidden'}`}>
+                                        {synthName(assignedSynth)}
+                                    </small>
+                                </span>
+                            </button>
+                            {#if entry.slot.synth_id !== null}
+                                <a
+                                    class="text-foreground-muted hover:border-accent/35 hover:bg-surface-hover hover:text-accent min-[37.5rem]:border-border my-auto grid size-9 place-items-center rounded-lg border border-transparent transition-colors min-[37.5rem]:my-0 min-[37.5rem]:flex min-[37.5rem]:size-auto min-[37.5rem]:min-w-0 min-[37.5rem]:items-center min-[37.5rem]:gap-2 min-[37.5rem]:rounded-none min-[37.5rem]:border-0 min-[37.5rem]:border-l min-[37.5rem]:px-3"
+                                    href={`/synths?synth=${entry.slot.synth_id}`}
+                                    aria-label={`Open ${synthName(assignedSynth)}`}
+                                    title="Open assigned synth">
+                                    <span
+                                        class="hidden min-w-0 flex-1 truncate text-xs min-[37.5rem]:block">
+                                        {synthName(assignedSynth)}
+                                    </span>
+                                    <Icon
+                                        class="shrink-0"
+                                        icon="lucide:arrow-up-right"
+                                        width="1rem" />
+                                </a>
+                            {/if}
+                            <button
+                                class={`mr-2 grid size-9 cursor-pointer place-items-center self-center rounded-lg border transition-colors ${entry.slot.enabled ? 'border-accent/60 bg-accent/20 text-accent' : 'border-border-strong bg-surface-button text-foreground-muted hover:border-accent/35 hover:text-foreground'}`}
+                                type="button"
+                                aria-label={`${entry.slot.enabled ? 'Disable' : 'Enable'} ${displayName(entry.slot)}`}
+                                disabled={togglingId !== null}
+                                onclick={() => void toggleEnabled(entry.id, !entry.slot.enabled)}>
+                                <Icon
+                                    icon={togglingId === entry.id
+                                        ? 'lucide:loader-circle'
+                                        : 'lucide:power'}
+                                    width="1rem"
+                                    class={togglingId === entry.id ? 'animate-spin' : ''} />
+                            </button>
+                        </article>
+                    {/each}
+                </div>
+            {/if}
+        </section>{/if}
+
+    {#if !embedded && inspectorOpen}<button
             class="bg-scrim/60 fixed inset-0 z-30 cursor-default border-0 min-[56.25rem]:hidden"
             type="button"
-            aria-label="Close instrument editor"
+            aria-label="Close controller editor"
             onclick={() => (inspectorOpen = false)}>
         </button>{/if}
 
+    {#if embedded && !loading && entries.length === 0}
+        <section
+            class="border-border bg-surface-card grid justify-items-center gap-3 rounded-xl border p-6 text-center">
+            <div>
+                <h3 class="text-foreground m-0 text-sm font-semibold">No controllers</h3>
+                <p class="text-foreground-muted mt-1 mb-0 text-sm">
+                    Add a MIDI input controller to route MIDI events into this instrument.
+                </p>
+            </div>
+            <Button
+                variant="primary"
+                size="sm"
+                type="button"
+                busy={addingInstrument}
+                disabled={busy}
+                onclick={() => void appendInstrument()}>
+                <Icon icon="lucide:plus" width="1rem" />
+                Add MIDI input
+            </Button>
+        </section>
+    {/if}
+
     {#if selectedSlot && selectedId !== null}
         <aside
-            class={`border-border bg-surface-card fixed right-0 bottom-0 left-0 z-40 max-h-[calc(100dvh-4rem)] overflow-clip rounded-t-2xl border transition-transform min-[56.25rem]:sticky min-[56.25rem]:top-20.5 min-[56.25rem]:z-0 min-[56.25rem]:max-h-[calc(100dvh-8.5rem)] min-[56.25rem]:translate-y-0 min-[56.25rem]:rounded-xl ${inspectorOpen ? 'translate-y-0' : 'translate-y-full'}`}>
+            class={embedded
+                ? 'border-border bg-surface-card overflow-clip rounded-xl border'
+                : `border-border bg-surface-card fixed right-0 bottom-0 left-0 z-40 max-h-[calc(100dvh-4rem)] overflow-clip rounded-t-2xl border transition-transform min-[56.25rem]:sticky min-[56.25rem]:top-20.5 min-[56.25rem]:z-0 min-[56.25rem]:max-h-[calc(100dvh-8.5rem)] min-[56.25rem]:translate-y-0 min-[56.25rem]:rounded-xl ${inspectorOpen ? 'translate-y-0' : 'translate-y-full'}`}>
             <header
                 class="border-border flex min-h-15 items-center justify-between gap-3 border-b px-4 py-2.5">
                 <div class="min-w-0">
-                    <small class="text-foreground-muted block text-xs">Slot {selectedId + 1}</small>
-                    <strong
-                        class={`block truncate text-base ${selectedSlot.name.trim() ? 'text-foreground' : 'text-foreground-muted italic'}`}>
-                        {displayName(selectedId, selectedSlot)}
+                    <strong class="text-foreground block truncate text-base">
+                        Controller #{selectedSlot.controller_id + 1}
                     </strong>
+                    <small class="text-foreground-muted block truncate text-xs">
+                        {displayName(selectedSlot)}
+                    </small>
                 </div>
-                <button
-                    class="bg-surface-button grid size-9 place-items-center rounded-lg border-0 min-[56.25rem]:hidden"
-                    type="button"
-                    aria-label="Close instrument editor"
-                    onclick={() => (inspectorOpen = false)}>
-                    <Icon icon="lucide:x" width="1.125rem" />
-                </button>
+                {#if embedded}<div class="flex flex-wrap items-center justify-end gap-1.5">
+                        {#if entries.length > 1}<SelectDropdown
+                                compact
+                                value={String(selectedId)}
+                                options={entries.map((entry) => ({
+                                    value: String(entry.id),
+                                    label: displayName(entry.slot),
+                                    description: `Controller #${entry.slot.controller_id + 1}`
+                                }))}
+                                onchange={(value) => selectInstrument(Number(value), true)}
+                                ariaLabel="Selected MIDI input controller" />{/if}
+                        <Button
+                            variant={selectedSlot.enabled ? 'accent-outline' : 'secondary'}
+                            size="sm"
+                            type="button"
+                            aria-label={`${selectedSlot.enabled ? 'Disable' : 'Enable'} ${displayName(selectedSlot)}`}
+                            aria-pressed={selectedSlot.enabled}
+                            busy={togglingId === selectedId}
+                            disabled={togglingId !== null}
+                            onclick={() => void toggleEnabled(selectedId!, !selectedSlot.enabled)}>
+                            <Icon
+                                icon={togglingId === selectedId
+                                    ? 'lucide:loader-circle'
+                                    : 'lucide:power'}
+                                width="0.875rem"
+                                class={togglingId === selectedId ? 'animate-spin' : ''} />
+                            {selectedSlot.enabled ? 'Enabled' : 'Disabled'}
+                        </Button>
+                        <Button
+                            variant="secondary"
+                            size="sm"
+                            square
+                            class="size-8.5"
+                            type="button"
+                            aria-label="Add MIDI input controller"
+                            busy={addingInstrument}
+                            disabled={busy}
+                            onclick={() => void appendInstrument()}>
+                            <Icon
+                                icon={addingInstrument ? 'lucide:loader-circle' : 'lucide:plus'}
+                                width="1.125rem"
+                                class={addingInstrument ? 'animate-spin' : ''} />
+                        </Button>
+                    </div>{:else}<Button
+                        variant="ghost"
+                        size="md"
+                        square
+                        class="bg-surface-button min-[56.25rem]:hidden"
+                        type="button"
+                        aria-label="Close instrument editor"
+                        onclick={() => (inspectorOpen = false)}>
+                        <Icon icon="lucide:x" width="1.125rem" />
+                    </Button>{/if}
             </header>
 
             <div
-                class="max-h-[calc(100dvh-7.75rem)] overflow-y-auto pb-[max(1rem,env(safe-area-inset-bottom))] min-[56.25rem]:max-h-[calc(100dvh-12.25rem)] min-[56.25rem]:pb-0">
+                class={embedded
+                    ? ''
+                    : 'max-h-[calc(100dvh-7.75rem)] overflow-y-auto pb-[max(1rem,env(safe-area-inset-bottom))] min-[56.25rem]:max-h-[calc(100dvh-12.25rem)] min-[56.25rem]:pb-0'}>
                 <form
                     class="border-border grid gap-2 border-b p-4"
                     onsubmit={(event) => {
@@ -1109,58 +1187,21 @@
                         bind:value={editName}
                         pending={nameChanged}
                         saving={savingSections.has('name')}
+                        showIndicator={false}
                         required
                         oncommit={saveName} />
-                </form>
-
-                <form
-                    class="border-border grid gap-2 border-b p-4"
-                    onsubmit={(event) => {
-                        event.preventDefault();
-                        void saveAssignment();
-                    }}>
-                    <label
-                        class="text-foreground-strong text-xs font-semibold uppercase"
-                        for="instrument-synth">
-                        Synth
-                    </label>
-                    <div class="flex items-center gap-2">
-                        <SelectDropdown
-                            id="instrument-synth"
-                            class="flex-1"
-                            compact
-                            bind:value={selectedSynth}
-                            options={[
-                                { value: '', label: 'Unassigned' },
-                                ...availableSynths.map((synth) => ({
-                                    value: String(synth.id),
-                                    label: synthName(synth),
-                                    description: `${synth.kind} · Synth #${synth.id}`
-                                }))
-                            ]}
-                            onchange={() => void saveAssignment()}
-                            ariaLabel="Assigned synth" />
-                        <SaveIndicator
-                            saving={savingSections.has('synth')}
-                            pending={synthChanged} />
-                    </div>
                 </form>
 
                 <section class="border-border grid gap-3 border-b p-4">
                     <h3 class="text-foreground-strong m-0 text-xs font-semibold uppercase">
                         Behavior
                     </h3>
-                    <div class="flex items-center gap-2">
-                        <DotToggle
-                            class="min-w-0 flex-1 justify-between px-3"
-                            label="Use global transposition"
-                            indicatorEnd
-                            bind:checked={useGlobalTransposition}
-                            onchange={() => void saveTranspositionMode()} />
-                        <SaveIndicator
-                            saving={savingSections.has('behavior')}
-                            pending={behaviorChanged} />
-                    </div>
+                    <DotToggle
+                        class="min-w-0 justify-between px-3"
+                        label="Use global transposition"
+                        indicatorEnd
+                        bind:checked={useGlobalTransposition}
+                        onchange={() => void saveTranspositionMode()} />
                 </section>
 
                 <form
@@ -1170,7 +1211,7 @@
                         event.preventDefault();
                         void saveKeyTransform();
                     }}>
-                    <div class="grid grid-cols-[minmax(0,1fr)_2.25rem] gap-2">
+                    <div>
                         <div class="flex items-center justify-between gap-3">
                             <h3 class="text-foreground-strong m-0 text-xs font-semibold uppercase">
                                 Keys
@@ -1181,7 +1222,7 @@
                                 onchange={() => void saveIgnoreKeyTransform()} />
                         </div>
                     </div>
-                    <div class="grid grid-cols-[minmax(0,1fr)_2.25rem] items-end gap-2">
+                    <div class="grid gap-2">
                         <div class="grid min-w-0 gap-4">
                             <div class="grid grid-cols-2 gap-2">
                                 <div class="grid gap-1 text-sm">
@@ -1340,7 +1381,7 @@
                                     localTransposition = value;
                                 }} />
                         </div>
-                        <ApplyIconButton
+                        <ApplyButton
                             saving={savingSections.has('keys')}
                             pending={keyTransformChanged} />
                     </div>
@@ -1353,7 +1394,7 @@
                         event.preventDefault();
                         void saveVelocityTransform();
                     }}>
-                    <div class="grid grid-cols-[minmax(0,1fr)_2.25rem] gap-2">
+                    <div>
                         <div class="flex items-center justify-between gap-3">
                             <h3 class="text-foreground-strong m-0 text-xs font-semibold uppercase">
                                 Velocity
@@ -1364,7 +1405,7 @@
                                 onchange={() => void saveIgnoreVelocityTransform()} />
                         </div>
                     </div>
-                    <div class="grid grid-cols-[minmax(0,1fr)_2.25rem] items-end gap-2">
+                    <div class="grid gap-2">
                         <div class="grid min-w-0 gap-4">
                             <SegmentedControl
                                 name="velocity-transform"
@@ -1433,7 +1474,7 @@
                                         bind:value={velocityMax} />
                                 </div>{/if}
                         </div>
-                        <ApplyIconButton
+                        <ApplyButton
                             saving={savingSections.has('velocity')}
                             pending={velocityChanged} />
                     </div>
@@ -1449,7 +1490,7 @@
                     <h3 class="text-foreground-strong m-0 text-xs font-semibold uppercase">
                         MIDI channels
                     </h3>
-                    <div class="grid grid-cols-[minmax(0,1fr)_2.25rem] items-end gap-2">
+                    <div class="grid gap-2">
                         <div class="grid min-w-0 gap-4">
                             <SegmentedControl
                                 name="midi-channel-filter-mode"
@@ -1480,28 +1521,32 @@
                                         </label>{/each}
                                 </div>
                                 <div class="flex justify-end gap-1.5">
-                                    <button
-                                        class="border-border-strong bg-surface-button text-foreground-muted hover:bg-surface-hover hover:text-foreground min-h-7 cursor-pointer rounded-md border px-2.5 text-xs font-semibold disabled:cursor-default disabled:opacity-40"
+                                    <Button
+                                        variant="secondary"
+                                        size="xs"
+                                        class="text-foreground-muted"
                                         type="button"
                                         disabled={channels.length === midiChannels.length}
                                         onclick={() => {
                                             channels = [...midiChannels];
                                         }}>
                                         All
-                                    </button>
-                                    <button
-                                        class="border-border-strong bg-surface-button text-foreground-muted hover:bg-surface-hover hover:text-foreground min-h-7 cursor-pointer rounded-md border px-2.5 text-xs font-semibold disabled:cursor-default disabled:opacity-40"
+                                    </Button>
+                                    <Button
+                                        variant="secondary"
+                                        size="xs"
+                                        class="text-foreground-muted"
                                         type="button"
                                         disabled={channels.length === 0}
                                         onclick={() => {
                                             channels = [];
                                         }}>
                                         None
-                                    </button>
+                                    </Button>
                                 </div>
                             </div>
                         </div>
-                        <ApplyIconButton
+                        <ApplyButton
                             saving={savingSections.has('channels')}
                             pending={channelsChanged} />
                     </div>
@@ -1522,7 +1567,7 @@
                     <h3 class="text-foreground-strong m-0 text-xs font-semibold uppercase">
                         MIDI controllers
                     </h3>
-                    <div class="grid grid-cols-[minmax(0,1fr)_2.25rem] items-end gap-2">
+                    <div class="grid gap-2">
                         <div class="grid min-w-0 gap-4">
                             <SegmentedControl
                                 name="midi-controller-filter-mode"
@@ -1554,21 +1599,12 @@
                                             placeholder="Select controller"
                                             disabled={availableControllers.length === 0}
                                             compact
+                                            clearable
                                             searchable
                                             searchPlaceholder="Search controllers"
                                             noMatchesText="No matching controllers"
                                             ariaLabel="MIDI controller to add"
                                             onchange={addController} />
-                                        {#if controllerQuery}
-                                            <button
-                                                class="text-foreground-muted hover:bg-surface-hover hover:text-foreground absolute top-1/2 right-7 z-10 grid size-7 -translate-y-1/2 cursor-pointer place-items-center rounded-md border-0 bg-transparent transition-colors"
-                                                type="button"
-                                                aria-label="Clear MIDI controller"
-                                                title="Clear"
-                                                onclick={() => (controllerQuery = '')}>
-                                                <Icon icon="lucide:x" width="1rem" />
-                                            </button>
-                                        {/if}
                                     </div>
                                     <button
                                         class={`grid size-9 shrink-0 cursor-pointer place-items-center rounded-lg border-0 transition-colors ${learningController ? 'bg-danger/15 text-danger animate-pulse' : 'bg-surface-button text-foreground enabled:hover:bg-surface-hover'}`}
@@ -1609,42 +1645,48 @@
                                                     controller
                                                 ] ?? 'Undefined'}
                                             </span>
-                                            <button
-                                                class="text-foreground-muted hover:bg-danger/10 hover:text-danger grid size-7 shrink-0 cursor-pointer place-items-center rounded-md border-0 bg-transparent"
+                                            <Button
+                                                variant="danger-ghost"
+                                                size="xs"
+                                                square
                                                 type="button"
                                                 aria-label={`Remove CC ${controller}`}
                                                 title={`Remove CC ${controller}`}
                                                 onclick={() => removeController(controller)}>
                                                 <Icon icon="lucide:x" width="0.875rem" />
-                                            </button>
+                                            </Button>
                                         </span>{:else}<span
                                             class="text-foreground-muted self-center px-1 text-xs">
                                             No controllers selected
                                         </span>{/each}
                                 </div>
                                 <div class="flex justify-end gap-1.5">
-                                    <button
-                                        class="border-border-strong bg-surface-button text-foreground-muted hover:bg-surface-hover hover:text-foreground min-h-7 cursor-pointer rounded-md border px-2.5 text-xs font-semibold disabled:cursor-default disabled:opacity-40"
+                                    <Button
+                                        variant="secondary"
+                                        size="xs"
+                                        class="text-foreground-muted"
                                         type="button"
                                         disabled={controllers.length === midiControllers.length}
                                         onclick={() => {
                                             controllers = midiControllers.map(({ id }) => id);
                                         }}>
                                         All
-                                    </button>
-                                    <button
-                                        class="border-border-strong bg-surface-button text-foreground-muted hover:bg-surface-hover hover:text-foreground min-h-7 cursor-pointer rounded-md border px-2.5 text-xs font-semibold disabled:cursor-default disabled:opacity-40"
+                                    </Button>
+                                    <Button
+                                        variant="secondary"
+                                        size="xs"
+                                        class="text-foreground-muted"
                                         type="button"
                                         disabled={controllers.length === 0}
                                         onclick={() => {
                                             controllers = [];
                                         }}>
                                         None
-                                    </button>
+                                    </Button>
                                 </div>
                             </div>
                         </div>
-                        <ApplyIconButton
+                        <ApplyButton
                             saving={savingSections.has('controllers')}
                             pending={controllersChanged} />
                     </div>
@@ -1655,72 +1697,39 @@
                     </small>
                 </form>
 
-                <form
-                    class="border-border grid gap-5 border-b p-4"
-                    use:submitControlGroupOnEnter
-                    onsubmit={(event) => {
-                        event.preventDefault();
-                        void saveIgnoredMessages();
-                    }}>
+                <section class="border-border grid gap-5 border-b p-4">
                     <h3 class="text-foreground-strong m-0 text-xs font-semibold uppercase">
                         Ignored MIDI messages
                     </h3>
-                    <div class="grid grid-cols-[minmax(0,1fr)_2.25rem] items-end gap-2">
-                        <div class="grid min-w-0 grid-cols-2 gap-1.5">
-                            <DotToggle label="Pitch bend" bind:checked={ignorePitchBend} />
-                            <DotToggle label="Program change" bind:checked={ignoreProgramChange} />
-                            <DotToggle
-                                label="Channel aftertouch"
-                                bind:checked={ignoreChannelAftertouch} />
-                            <DotToggle
-                                label="Poly aftertouch"
-                                bind:checked={ignorePolyphonicAftertouch} />
-                        </div>
-                        <ApplyIconButton
-                            saving={savingSections.has('ignored')}
-                            pending={ignoredMessagesChanged} />
+                    <div class="grid min-w-0 grid-cols-2 gap-1.5">
+                        <DotToggle
+                            label="Pitch bend"
+                            bind:checked={ignorePitchBend}
+                            onchange={() => void saveIgnoredMessages()} />
+                        <DotToggle
+                            label="Program change"
+                            bind:checked={ignoreProgramChange}
+                            onchange={() => void saveIgnoredMessages()} />
+                        <DotToggle
+                            label="Channel aftertouch"
+                            bind:checked={ignoreChannelAftertouch}
+                            onchange={() => void saveIgnoredMessages()} />
+                        <DotToggle
+                            label="Poly aftertouch"
+                            bind:checked={ignorePolyphonicAftertouch}
+                            onchange={() => void saveIgnoredMessages()} />
                     </div>
-                </form>
+                </section>
 
                 <section class="p-4">
-                    {#if removeConfirming}
-                        <div
-                            bind:this={removeConfirmationElement}
-                            class="border-danger/35 bg-danger/8 grid gap-3 rounded-lg border p-3">
-                            <p class="text-danger m-0 text-sm">
-                                Remove this instrument slot? This cannot be undone.
-                            </p>
-                            <div class="flex justify-end gap-2">
-                                <button
-                                    class="border-border-strong bg-surface-card hover:bg-surface-hover cursor-pointer rounded-lg border px-3 py-2 text-sm font-semibold transition-colors disabled:cursor-wait disabled:opacity-60"
-                                    type="button"
-                                    disabled={busy}
-                                    onclick={() => (removeConfirming = false)}>
-                                    Cancel
-                                </button>
-                                <button
-                                    class="bg-danger hover:bg-danger/85 cursor-pointer rounded-lg border-0 px-3 py-2 text-sm font-bold text-white transition-colors disabled:cursor-wait disabled:opacity-60"
-                                    type="button"
-                                    disabled={busy}
-                                    onclick={() => void deleteSelected()}>
-                                    <span class="inline-flex items-center gap-2">
-                                        {#if removingInstrument}<Icon
-                                                icon="lucide:loader-circle"
-                                                width="0.875rem"
-                                                class="animate-spin" />{/if}
-                                        {removingInstrument ? 'Removing…' : 'Remove instrument'}
-                                    </span>
-                                </button>
-                            </div>
-                        </div>
-                    {:else}
-                        <button
-                            class="text-danger hover:bg-danger/10 w-full cursor-pointer rounded-lg border-0 bg-transparent px-3 py-2 text-sm font-semibold"
-                            type="button"
-                            onclick={() => void showRemoveConfirmation()}>
-                            Remove instrument
-                        </button>
-                    {/if}
+                    <TimedConfirmButton
+                        class="w-full"
+                        label="Remove instrument"
+                        confirmLabel="Confirm remove instrument"
+                        busyLabel="Removing…"
+                        busy={removingInstrument}
+                        disabled={busy}
+                        onconfirm={deleteSelected} />
                 </section>
             </div>
         </aside>

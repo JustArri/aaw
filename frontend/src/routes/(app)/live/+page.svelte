@@ -108,7 +108,7 @@
         },
         {
             id: 3,
-            name: 'Unassigned instrument',
+            name: 'Instrument',
             enabled: false,
             synthId: null,
             channelFilter: 'All channels',
@@ -213,7 +213,7 @@
             <div class="grid grid-cols-2 gap-1.75 p-2.25 min-[56.25rem]:grid-cols-4">
                 {#each livePresets as preset, index}
                     <button
-                        class={`bg-surface-item relative grid min-h-18.75 cursor-pointer grid-cols-[1.375rem_minmax(0,1fr)] content-center items-start gap-1.75 overflow-hidden rounded-lg border px-2.25 py-2.75 text-left ${activePreset === preset.name ? 'border-accent/50 bg-accent/9 shadow-[inset_0.1875rem_0_0_var(--accent)]' : 'border-border-strong'}`}
+                        class={`bg-surface-item relative grid min-h-18.75 cursor-pointer grid-cols-[1.375rem_minmax(0,1fr)] content-center items-start gap-1.75 overflow-hidden rounded-lg border px-2.25 py-2.75 text-left transition-[filter] hover:brightness-110 ${activePreset === preset.name ? 'border-accent/50 bg-accent/9 shadow-[inset_0.1875rem_0_0_var(--accent)]' : 'border-border-strong'}`}
                         type="button"
                         onclick={() => applyPreset(preset.name, preset.enabled)}>
                         <small
@@ -259,7 +259,7 @@
                 {#each instruments as instrument}
                     {@const assignedSynth = synthById(instrument.synthId)}
                     <button
-                        class={`grid min-h-14.5 cursor-pointer grid-cols-[0.1875rem_minmax(0,1fr)_2.125rem] items-center gap-2.5 border-0 px-2.5 py-1.75 text-left min-[56.25rem]:min-h-15.5 min-[56.25rem]:px-3.25 ${instrument.enabled ? 'bg-surface-item-active' : 'bg-surface-disabled'}`}
+                        class={`grid min-h-14.5 cursor-pointer grid-cols-[0.1875rem_minmax(0,1fr)_2.125rem] items-center gap-2.5 border-0 px-2.5 py-1.75 text-left transition-[filter] hover:brightness-110 min-[56.25rem]:min-h-15.5 min-[56.25rem]:px-3.25 ${instrument.enabled ? 'bg-surface-item-active' : 'bg-surface-disabled'}`}
                         type="button"
                         aria-pressed={instrument.enabled}
                         onclick={() => toggleInstrument(instrument.id)}>
@@ -274,7 +274,7 @@
                             </strong>
                             <small
                                 class="text-foreground-caption mt-1 block overflow-hidden text-xs text-ellipsis whitespace-nowrap min-[56.25rem]:text-sm">
-                                {assignedSynth?.name ?? 'No synth assigned'}
+                                {assignedSynth?.name ?? 'Instrument'}
                             </small>
                         </span>
                         <b

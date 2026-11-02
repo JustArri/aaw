@@ -1,4 +1,4 @@
-import type { Notification, ProjectChange } from '$lib/generated/models';
+import type { ControllerAddress, Notification, ProjectChange } from '$lib/generated/models';
 import * as api from '$lib/generated/api';
 import { notificationStream } from '$lib/notification-stream';
 import { clearActiveMidiNotes, recordMidiEvent } from '$lib/state/midi-events.svelte';
@@ -11,6 +11,7 @@ import {
     fetchSynthInstrumentSlots,
     fetchSynths,
     removeSynthFromState,
+    updateClapParameter,
     updateFluidSynthProgram,
     updateSynthEffects,
     updateSynthGain,
@@ -27,10 +28,15 @@ import {
     updateActiveProjectGlobalGain,
     updateActiveProjectName,
     updateActiveProjectStorage,
+    updateActiveProjectTransport,
     updateActiveProjectRevision
 } from './active-project.svelte';
 
 let abortCtr = null as AbortController | null;
+
+function controllerStateId(address: ControllerAddress) {
+    return address.instrument_id * 65_536 + address.controller_id;
+}
 
 export function autoSubscribeServerNotifications() {
     $effect(() => {
@@ -100,89 +106,113 @@ async function handleProjectChange(change: ProjectChange) {
         case 'GlobalGain':
             updateActiveProjectGlobalGain(change.data.gain);
             break;
-        case 'Synth':
+        case 'Instrument':
             if (change.data.removed) {
                 removeSynthFromState(change.data.id);
             } else {
                 await fetchSynths();
             }
             break;
-        case 'SynthSoundfontProgram':
+        case 'InstrumentSoundfontProgram':
             updateFluidSynthProgram(change.data.id, change.data.program);
             break;
-        case 'SynthKind':
-            updateSynthParameters(change.data.id, change.data.parameters);
+        case 'InstrumentKind':
+            updateSynthParameters(change.data.id, change.data.kind);
             break;
-        case 'SynthName':
+        case 'InstrumentName':
             updateSynthName(change.data.id, change.data.name);
             break;
-        case 'SynthEffects':
+        case 'InstrumentEffects':
             updateSynthEffects(change.data.id, change.data.effects);
             break;
-        case 'SynthGain':
+        case 'InstrumentGain':
             updateSynthGain(change.data.id, change.data.gain);
+            break;
+        case 'InstrumentClapParameter':
+            updateClapParameter(change.data.id, change.data.parameter_id, change.data.value);
             break;
         case 'GlobalTransposition':
             updateInstrumentGlobalTransposition(change.data.transposition);
             break;
-        case 'Instrument':
+        case 'Controller':
             await Promise.all([fetchInstrumentSlots(), fetchSynthInstrumentSlots()]);
             break;
-        case 'InstrumentSynth':
-            updateInstrumentSlot(change.data.id, { synth_id: change.data.synth_id ?? null });
-            updateSynthInstrumentSlot(change.data.id, {
-                synth_id: change.data.synth_id ?? null
+        case 'ControllerEnabled':
+            updateInstrumentSlot(controllerStateId(change.data.address), {
+                enabled: change.data.flag
+            });
+            updateSynthInstrumentSlot(controllerStateId(change.data.address), {
+                enabled: change.data.flag
             });
             break;
-        case 'InstrumentEnabled':
-            updateInstrumentSlot(change.data.id, { enabled: change.data.flag });
-            updateSynthInstrumentSlot(change.data.id, { enabled: change.data.flag });
+        case 'ControllerIgnoreKeyTransform':
+            updateInstrumentSlot(controllerStateId(change.data.address), {
+                ignore_key_transform: change.data.flag
+            });
             break;
-        case 'InstrumentIgnoreKeyTransform':
-            updateInstrumentSlot(change.data.id, { ignore_key_transform: change.data.flag });
+        case 'ControllerKeyTransform':
+            updateInstrumentSlot(controllerStateId(change.data.address), {
+                key_transform: change.data.transform
+            });
             break;
-        case 'InstrumentKeyTransform':
-            updateInstrumentSlot(change.data.id, { key_transform: change.data.transform });
+        case 'ControllerIgnoreVelocityTransform':
+            updateInstrumentSlot(controllerStateId(change.data.address), {
+                ignore_velocity_transform: change.data.flag
+            });
             break;
-        case 'InstrumentIgnoreVelocityTransform':
-            updateInstrumentSlot(change.data.id, { ignore_velocity_transform: change.data.flag });
+        case 'ControllerVelocityTransform':
+            updateInstrumentSlot(controllerStateId(change.data.address), {
+                velocity_transform: change.data.transform
+            });
             break;
-        case 'InstrumentVelocityTransform':
-            updateInstrumentSlot(change.data.id, { velocity_transform: change.data.transform });
+        case 'ControllerChannelFilter':
+            updateInstrumentSlot(controllerStateId(change.data.address), {
+                channel_filter: change.data.filter
+            });
             break;
-        case 'InstrumentChannelFilter':
-            updateInstrumentSlot(change.data.id, { channel_filter: change.data.filter });
+        case 'ControllerCcFilter':
+            updateInstrumentSlot(controllerStateId(change.data.address), {
+                cc_filter: change.data.filter
+            });
             break;
-        case 'InstrumentCcFilter':
-            updateInstrumentSlot(change.data.id, { cc_filter: change.data.filter });
+        case 'ControllerIgnorePitchBend':
+            updateInstrumentSlot(controllerStateId(change.data.address), {
+                ignore_pitch_bend: change.data.flag
+            });
             break;
-        case 'InstrumentIgnorePitchBend':
-            updateInstrumentSlot(change.data.id, { ignore_pitch_bend: change.data.flag });
+        case 'ControllerIgnoreProgramChange':
+            updateInstrumentSlot(controllerStateId(change.data.address), {
+                ignore_program_change: change.data.flag
+            });
             break;
-        case 'InstrumentIgnoreProgramChange':
-            updateInstrumentSlot(change.data.id, { ignore_program_change: change.data.flag });
-            break;
-        case 'InstrumentIgnoreChannelAftertouch':
-            updateInstrumentSlot(change.data.id, {
+        case 'ControllerIgnoreChannelAftertouch':
+            updateInstrumentSlot(controllerStateId(change.data.address), {
                 ignore_channel_aftertouch: change.data.flag
             });
             break;
-        case 'InstrumentIgnorePolyphonicAftertouch':
-            updateInstrumentSlot(change.data.id, {
+        case 'ControllerIgnorePolyphonicAftertouch':
+            updateInstrumentSlot(controllerStateId(change.data.address), {
                 ignore_polyphonic_aftertouch: change.data.flag
             });
             break;
-        case 'InstrumentUseGlobalTransposition':
-            updateInstrumentSlot(change.data.id, {
+        case 'ControllerUseGlobalTransposition':
+            updateInstrumentSlot(controllerStateId(change.data.address), {
                 use_global_transposition: change.data.flag
             });
             break;
-        case 'InstrumentName':
-            updateInstrumentSlot(change.data.id, { name: change.data.name });
-            updateSynthInstrumentSlot(change.data.id, { name: change.data.name });
+        case 'ControllerName':
+            updateInstrumentSlot(controllerStateId(change.data.address), {
+                name: change.data.name
+            });
+            updateSynthInstrumentSlot(controllerStateId(change.data.address), {
+                name: change.data.name
+            });
             break;
         case 'UserPresets':
             await fetchUserPresets();
+            break;
+        case 'Transport':
+            updateActiveProjectTransport(change.data.transport);
             break;
         default:
             unreachable(type);

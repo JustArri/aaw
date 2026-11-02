@@ -8,6 +8,7 @@
 
 <script lang="ts">
     import Icon from '@iconify/svelte';
+    import Button from '$lib/components/Button.svelte';
 
     let {
         id,
@@ -120,6 +121,7 @@
         aria-autocomplete="list"
         aria-controls={`${id}-suggestions`}
         aria-expanded={open}
+        title={value || undefined}
         {placeholder}
         {disabled}
         autocomplete="off"
@@ -132,8 +134,11 @@
         onkeydown={handleKeydown} />
 
     {#if clearable && value && !disabled}
-        <button
-            class="text-foreground-muted hover:bg-surface-hover hover:text-foreground absolute top-1/2 right-1 grid size-7 -translate-y-1/2 cursor-pointer place-items-center rounded-md border-0 bg-transparent transition-colors"
+        <Button
+            variant="ghost"
+            size="xs"
+            square
+            class="absolute top-1/2 right-1 -translate-y-1/2"
             type="button"
             aria-label="Clear input"
             title="Clear"
@@ -143,7 +148,7 @@
                 input.focus();
             }}>
             <Icon icon="lucide:x" width="1rem" />
-        </button>
+        </Button>
     {/if}
 
     {#if open && !disabled}
@@ -157,10 +162,11 @@
             onpointermove={handlePointerMove}>
             {#each matches as suggestion, index (suggestion.value)}
                 <button
-                    class={`text-foreground hover:bg-surface-hover block w-full rounded-md border-0 px-2.5 py-2 text-left transition-colors ${index === activeIndex ? 'bg-surface-hover' : 'bg-transparent'}`}
+                    class={`text-foreground hover:bg-surface-hover block w-full cursor-pointer rounded-md border-0 px-2.5 py-2 text-left transition-colors ${index === activeIndex ? 'bg-surface-hover' : 'bg-transparent'}`}
                     type="button"
                     role="option"
                     aria-selected={suggestion.value === value}
+                    title={[suggestion.label, suggestion.description].filter(Boolean).join(' · ')}
                     onpointerenter={(event) => {
                         if (event.pointerType === 'mouse') {
                             activeIndex = index;
@@ -172,9 +178,12 @@
                             select(suggestion);
                         }
                     }}>
-                    <span class="block truncate text-sm font-semibold">{suggestion.label}</span>
+                    <span class="block text-sm font-semibold break-all min-[37.5rem]:truncate">
+                        {suggestion.label}
+                    </span>
                     {#if suggestion.description}
-                        <span class="text-foreground-muted mt-0.5 block truncate text-xs">
+                        <span
+                            class="text-foreground-muted mt-0.5 block text-xs break-all min-[37.5rem]:truncate">
                             {suggestion.description}
                         </span>
                     {/if}

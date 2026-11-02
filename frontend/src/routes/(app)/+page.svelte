@@ -2,20 +2,20 @@
     import Icon from '@iconify/svelte';
     import { onMount } from 'svelte';
     import NumericControl from '$lib/components/NumericControl.svelte';
+    import ProjectTransport from '$lib/components/ProjectTransport.svelte';
     import { decibelsToLinearGain, linearGainToDecibels } from '$lib/gain';
-    import type { SynthId } from '$lib/generated/models';
     import { icons } from '$lib/icons';
     import { notify } from '$lib/push-notifications.svelte';
     import { activeProject } from '$lib/state/active-project.svelte';
     import {
         fetchInstruments,
         instrumentGlobalTransposition,
-        instrumentSlots,
-        setInstrumentEnabled,
         setInstrumentGlobalTransposition
     } from '$lib/state/instruments.svelte';
     import {
+        controllerEntries,
         fetchSynths,
+        setControllerEnabled,
         setGlobalGain,
         synths,
         SynthKind,
@@ -34,16 +34,12 @@
     let activatingPreset = $state<number | null>(null);
     let creatingPreset = $state(false);
 
-    let instruments = $derived(
-        Object.entries(instrumentSlots())
-            .map(([id, slot]) => ({ id: Number(id), slot }))
-            .sort((left, right) => left.id - right.id)
-    );
+    let instruments = $derived(controllerEntries().sort((left, right) => left.id - right.id));
     let project = $derived(activeProject());
-    let globalGainDb = $derived(linearGainToDecibels(project?.synth_graph.global_gain ?? 1));
+    let globalGainDb = $derived(linearGainToDecibels(project?.instrument_graph.global_gain ?? 1));
     let availableSynths = $derived(synths());
     let enabledInstrumentIds = $derived(
-        instruments.filter(({ slot }) => slot.enabled).map(({ id }) => id)
+        instruments.filter(({ controller }) => controller.data.enabled).map(({ id }) => id)
     );
     let activePresetIndex = $derived(
         userPresets().entries.findIndex((preset) => {
@@ -67,7 +63,7 @@
         }
     });
 
-    function synthEntry(id: SynthId | null) {
+    function synthEntry(id: number | null) {
         if (id === null) {
             return undefined;
         }
@@ -77,15 +73,21 @@
     function synthName(entry: SynthEntry | undefined) {
         return (
             entry?.synth.name.trim() ||
-            (entry ? `Unnamed ${entry.kind.toLowerCase()} synth #${entry.id}` : 'No synth assigned')
+            (entry ? `${entry.kind} instrument #${entry.id + 1}` : 'Instrument')
         );
+    }
+
+    function controllerName(entry: (typeof instruments)[number]) {
+        const type = entry.controller.type === 'MidiInput' ? 'MIDI input' : 'Drum machine';
+        const name = entry.controller.data.name.trim();
+        return name ? `${type}: ${name}` : type;
     }
 
     function presetName(index: number, name: string) {
         return name.trim() || `Unnamed preset #${index + 1}`;
     }
 
-    function synthColor(id: SynthId | null) {
+    function synthColor(id: number | null) {
         switch (synthEntry(id)?.kind) {
             case SynthKind.Fluid:
                 return 'var(--color-synth-fluid)';
@@ -104,7 +106,7 @@
         }
         togglingInstrument = id;
         try {
-            await setInstrumentEnabled(id, enabled);
+            await setControllerEnabled(id, enabled);
         } catch (error) {
             notify.error(error instanceof Error ? error.message : String(error), {
                 title: enabled ? 'Enable instrument' : 'Disable instrument'
@@ -165,8 +167,8 @@
 
 <div class="grid gap-3 min-[37.5rem]:grid-cols-2 min-[37.5rem]:items-start min-[56.25rem]:gap-3.5">
     <div
-        class="contents min-[37.5rem]:order-0 min-[37.5rem]:col-start-2 min-[37.5rem]:row-start-2 min-[37.5rem]:grid min-[37.5rem]:content-start min-[37.5rem]:gap-3 min-[56.25rem]:gap-3.5">
-        <section class="order-1 min-w-0 min-[56.25rem]:order-0" aria-label="Global transposition">
+        class="contents min-[37.5rem]:order-0 min-[37.5rem]:col-start-2 min-[37.5rem]:row-start-3 min-[37.5rem]:grid min-[37.5rem]:content-start min-[37.5rem]:gap-3 min-[56.25rem]:gap-3.5">
+        <section class="order-3 min-w-0 min-[37.5rem]:order-0" aria-label="Global transposition">
             <NumericControl
                 label="Global transposition"
                 value={instrumentGlobalTransposition()}
@@ -180,7 +182,7 @@
                 disabled={loading}
                 onchange={setInstrumentGlobalTransposition} />
         </section>
-        <section class="order-4 min-w-0 min-[56.25rem]:order-0" aria-label="Global gain">
+        <section class="order-5 min-w-0 min-[37.5rem]:order-0" aria-label="Global gain">
             <NumericControl
                 label="Global gain"
                 value={globalGainDb}
@@ -198,7 +200,7 @@
 
     <div class="contents">
         <section
-            class="border-border bg-surface-card order-2 overflow-hidden rounded-xl border min-[37.5rem]:order-0 min-[37.5rem]:col-span-2 min-[37.5rem]:row-start-1">
+            class="border-border bg-surface-card order-1 overflow-hidden rounded-xl border min-[37.5rem]:order-0 min-[37.5rem]:col-span-2 min-[37.5rem]:row-start-1">
             <header
                 class="border-border flex min-h-13.5 items-center justify-between border-b px-3.25 min-[56.25rem]:min-h-14.75 min-[56.25rem]:px-3.75">
                 <div>
@@ -278,8 +280,11 @@
             {/if}
         </section>
 
+        <ProjectTransport
+            class="order-2 min-[37.5rem]:order-0 min-[37.5rem]:col-span-2 min-[37.5rem]:row-start-2" />
+
         <section
-            class="border-border bg-surface-card order-3 overflow-hidden rounded-xl border min-[37.5rem]:order-0 min-[37.5rem]:col-start-1 min-[37.5rem]:row-start-2">
+            class="border-border bg-surface-card order-4 overflow-hidden rounded-xl border min-[37.5rem]:order-0 min-[37.5rem]:col-start-1 min-[37.5rem]:row-start-3">
             <header
                 class="border-border flex min-h-13.5 items-center justify-between border-b px-3.25 min-[56.25rem]:min-h-14.75 min-[56.25rem]:px-3.75">
                 <div>
@@ -301,23 +306,25 @@
             {:else}
                 <div class="bg-border grid gap-px">
                     {#each instruments as instrument (instrument.id)}
-                        {@const assignedSynth = synthEntry(instrument.slot.synth_id)}
+                        {@const assignedSynth = synthEntry(instrument.instrument_id)}
                         <button
-                            class={`grid min-h-14.5 cursor-pointer grid-cols-[0.1875rem_minmax(0,1fr)_2.125rem] items-center gap-2.5 border-0 px-2.5 py-1.75 text-left disabled:cursor-wait min-[56.25rem]:min-h-15.5 min-[56.25rem]:px-3.25 ${instrument.slot.enabled ? 'bg-surface-item-active' : 'bg-surface-disabled'}`}
+                            class={`grid min-h-14.5 cursor-pointer grid-cols-[0.1875rem_minmax(0,1fr)_2.125rem] items-center gap-2.5 border-0 px-2.5 py-1.75 text-left transition-[filter] enabled:hover:brightness-110 disabled:cursor-wait min-[56.25rem]:min-h-15.5 min-[56.25rem]:px-3.25 ${instrument.controller.data.enabled ? 'bg-surface-item-active' : 'bg-surface-disabled'}`}
                             type="button"
-                            aria-pressed={instrument.slot.enabled}
+                            aria-pressed={instrument.controller.data.enabled}
                             disabled={togglingInstrument === instrument.id}
                             onclick={() =>
-                                void toggleInstrument(instrument.id, !instrument.slot.enabled)}>
+                                void toggleInstrument(
+                                    instrument.id,
+                                    !instrument.controller.data.enabled
+                                )}>
                             <i
-                                class={`h-7.25 rounded ${instrument.slot.enabled ? '' : 'opacity-35 grayscale'}`}
-                                style:background={synthColor(instrument.slot.synth_id)}>
+                                class={`h-7.25 rounded ${instrument.controller.data.enabled ? '' : 'opacity-35 grayscale'}`}
+                                style:background={synthColor(instrument.instrument_id)}>
                             </i>
                             <span class="min-w-0">
                                 <strong
-                                    class={`block overflow-hidden text-sm font-semibold text-ellipsis whitespace-nowrap min-[56.25rem]:text-sm ${instrument.slot.name.trim() ? (instrument.slot.enabled ? 'text-foreground' : 'text-foreground-disabled') : 'text-foreground-muted italic'}`}>
-                                    {instrument.slot.name.trim() ||
-                                        `Unnamed instrument #${instrument.id + 1}`}
+                                    class={`block overflow-hidden text-sm font-semibold text-ellipsis whitespace-nowrap min-[56.25rem]:text-sm ${instrument.controller.data.enabled ? 'text-foreground' : 'text-foreground-disabled'}`}>
+                                    {controllerName(instrument)}
                                 </strong>
                                 <small
                                     class="text-foreground-caption mt-1 block overflow-hidden text-xs text-ellipsis whitespace-nowrap min-[56.25rem]:text-sm">
@@ -325,7 +332,7 @@
                                 </small>
                             </span>
                             <b
-                                class={`grid h-8 place-items-center rounded-lg border ${instrument.slot.enabled ? 'border-accent/30 bg-accent/10 text-accent' : 'border-border-strong text-foreground-off'}`}>
+                                class={`grid h-8 place-items-center rounded-lg border ${instrument.controller.data.enabled ? 'border-accent/30 bg-accent/10 text-accent' : 'border-border-strong text-foreground-off'}`}>
                                 <Icon
                                     icon={togglingInstrument === instrument.id
                                         ? 'lucide:loader-circle'

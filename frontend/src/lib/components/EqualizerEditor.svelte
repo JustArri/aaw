@@ -1,5 +1,6 @@
 <script lang="ts">
     import Icon from '@iconify/svelte';
+    import Button from '$lib/components/Button.svelte';
     import SelectDropdown from '$lib/components/SelectDropdown.svelte';
     import { equalizerPresets } from '$lib/content/equalizer-presets';
     import type { EqualizerBand } from '$lib/generated/models';
@@ -207,13 +208,16 @@
                         </label>
                     {/each}
                 </div>
-                <button
-                    class="text-foreground-muted hover:bg-danger/10 hover:text-danger grid size-9 cursor-pointer place-items-center self-end rounded-md border-0 bg-transparent"
+                <Button
+                    variant="danger-ghost"
+                    size="md"
+                    square
+                    class="self-end"
                     type="button"
                     aria-label="Remove equalizer band"
                     onclick={() => bands.splice(index, 1)}>
                     <Icon icon="lucide:x" width="0.875rem" />
-                </button>
+                </Button>
             </div>
         {:else}
             <p class="text-foreground-muted m-0 px-1 py-2 text-center text-xs">
@@ -221,11 +225,13 @@
             </p>
         {/each}
     </div>
-    <button
-        class="border-border-strong bg-surface-button text-foreground-muted hover:bg-surface-hover hover:text-foreground min-h-10 cursor-pointer rounded-lg border text-sm font-semibold disabled:cursor-default disabled:opacity-40"
+    <Button
+        variant="secondary"
+        size="md"
+        class="text-foreground-muted"
         type="button"
         disabled={bands.length >= maxBands}
         onclick={addBand}>
         Add band
-    </button>
+    </Button>
 </div>

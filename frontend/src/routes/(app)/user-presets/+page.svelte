@@ -2,7 +2,7 @@
     import Icon from '@iconify/svelte';
     import { onMount } from 'svelte';
     import { flip } from 'svelte/animate';
-    import type { StoredUserPreset } from '$lib/generated/models';
+    import Button from '$lib/components/Button.svelte';
     import { notify } from '$lib/push-notifications.svelte';
     import { fetchInstrumentSlots, instrumentSlots } from '$lib/state/instruments.svelte';
     import {
@@ -13,13 +13,14 @@
         resetUserPresetsDraft,
         saveUserPresets,
         userPresets,
-        userPresetsDraft as draft
+        userPresetsDraft as draft,
+        type EditableUserPreset
     } from '$lib/state/user-presets.svelte';
 
     let loading = $state(true);
     let busy = $state(false);
     let activating = $state<number | null>(null);
-    let draggedPreset = $state<StoredUserPreset | null>(null);
+    let draggedPreset = $state<EditableUserPreset | null>(null);
     let dragX = $state(0);
     let dragY = $state(0);
     let dropInsertionIndex = $state<number | null>(null);
@@ -64,7 +65,7 @@
         draft.entries.splice(destination, 0, preset);
     }
 
-    function startPresetDrag(event: PointerEvent, preset: StoredUserPreset) {
+    function startPresetDrag(event: PointerEvent, preset: EditableUserPreset) {
         if (event.button !== 0) {
             return;
         }
@@ -194,36 +195,46 @@
             <span class="text-foreground-muted text-xs">{draft.entries.length} total</span>
         </div>
         <div class="flex items-center gap-1.5">
-            <button
-                class="border-border-strong bg-surface-button text-foreground hover:bg-surface-hover grid size-8.5 cursor-pointer place-items-center rounded-lg border transition-colors disabled:cursor-wait disabled:opacity-60"
+            <Button
+                variant="secondary"
+                size="sm"
+                square
+                class="size-8.5"
                 type="button"
                 aria-label="Add user preset"
                 title="Add user preset"
                 disabled={busy}
                 onclick={addPreset}>
                 <Icon icon="lucide:plus" width="1.125rem" />
-            </button>
-            <button
-                class="text-foreground-muted enabled:hover:bg-surface-hover grid size-8.5 cursor-pointer place-items-center rounded-lg border-0 bg-transparent disabled:cursor-default disabled:opacity-40"
+            </Button>
+            <Button
+                variant="ghost"
+                size="sm"
+                square
+                class="size-8.5"
                 type="button"
                 aria-label="Discard preset changes"
                 title="Discard changes"
                 disabled={!changed || busy}
                 onclick={discardChanges}>
                 <Icon icon="lucide:undo-2" width="1rem" />
-            </button>
-            <button
-                class="text-accent enabled:hover:bg-accent/10 disabled:text-foreground-icon grid size-8.5 cursor-pointer place-items-center rounded-lg border-0 bg-transparent disabled:cursor-default disabled:opacity-50"
+            </Button>
+            <Button
+                variant="accent"
+                size="sm"
+                square
+                class="size-8.5"
                 type="button"
                 aria-label="Save user presets"
                 title="Save user presets"
+                {busy}
                 disabled={!changed || busy}
                 onclick={() => void save()}>
                 <Icon
                     icon={busy ? 'lucide:loader-circle' : 'lucide:check'}
                     width="1.125rem"
                     class={busy ? 'animate-spin' : ''} />
-            </button>
+            </Button>
         </div>
     </header>
 
@@ -236,12 +247,9 @@
             <div>
                 <Icon icon="lucide:list-music" width="1.5rem" class="mx-auto mb-2" />
                 <p class="m-0 text-sm">No user presets yet.</p>
-                <button
-                    class="text-accent hover:bg-accent/10 mt-3 cursor-pointer rounded-lg border-0 bg-transparent px-3 py-2 text-sm font-semibold"
-                    type="button"
-                    onclick={addPreset}>
+                <Button variant="accent" size="sm" class="mt-3" type="button" onclick={addPreset}>
                     Add first preset
-                </button>
+                </Button>
             </div>
         </div>
     {:else}
@@ -317,8 +325,7 @@
                                         </span>
                                         <span
                                             class={`truncate ${instrument.slot.name.trim() ? '' : 'text-foreground-muted italic'}`}>
-                                            {instrument.slot.name.trim() ||
-                                                `Unnamed instrument #${instrument.id + 1}`}
+                                            {instrument.slot.name.trim() || 'MIDI input controller'}
                                         </span>
                                     </button>
                                 {:else}<p class="text-foreground-muted col-span-2 m-0 text-sm">
@@ -326,52 +333,62 @@
                                     </p>{/each}
                             </div>
                             {#if instruments.length > 0}<div class="flex justify-end gap-1.5">
-                                    <button
-                                        class="bg-surface-button text-foreground-muted hover:bg-surface-hover hover:text-foreground min-h-7 cursor-pointer rounded-md border-0 px-2.5 text-xs font-semibold disabled:cursor-default disabled:opacity-40"
+                                    <Button
+                                        variant="ghost"
+                                        size="xs"
+                                        class="bg-surface-button"
                                         type="button"
                                         disabled={instruments.every(({ id }) =>
                                             preset.instruments.includes(id)
                                         )}
                                         onclick={() => selectAllInstruments(index)}>
                                         All
-                                    </button>
-                                    <button
-                                        class="bg-surface-button text-foreground-muted hover:bg-surface-hover hover:text-foreground min-h-7 cursor-pointer rounded-md border-0 px-2.5 text-xs font-semibold disabled:cursor-default disabled:opacity-40"
+                                    </Button>
+                                    <Button
+                                        variant="ghost"
+                                        size="xs"
+                                        class="bg-surface-button"
                                         type="button"
                                         disabled={preset.instruments.length === 0}
                                         onclick={() => clearInstruments(index)}>
                                         None
-                                    </button>
+                                    </Button>
                                 </div>{/if}
                         </div>
 
                         <div class="mt-3 flex justify-end gap-1">
-                            <button
-                                class="text-foreground-muted enabled:hover:bg-surface-hover grid size-8 cursor-pointer place-items-center rounded-lg border-0 bg-transparent disabled:cursor-default disabled:opacity-30"
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                square
                                 type="button"
                                 aria-label="Move preset up"
                                 title="Move up"
                                 disabled={index === 0}
                                 onclick={() => movePreset(index, -1)}>
                                 <Icon icon="lucide:arrow-up" width="0.9375rem" />
-                            </button>
-                            <button
-                                class="text-foreground-muted enabled:hover:bg-surface-hover grid size-8 cursor-pointer place-items-center rounded-lg border-0 bg-transparent disabled:cursor-default disabled:opacity-30"
+                            </Button>
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                square
                                 type="button"
                                 aria-label="Move preset down"
                                 title="Move down"
                                 disabled={index === draft.entries.length - 1}
                                 onclick={() => movePreset(index, 1)}>
                                 <Icon icon="lucide:arrow-down" width="0.9375rem" />
-                            </button>
-                            <button
-                                class="text-danger hover:bg-danger/10 grid size-8 cursor-pointer place-items-center rounded-lg border-0 bg-transparent"
+                            </Button>
+                            <Button
+                                variant="danger-ghost"
+                                size="sm"
+                                square
                                 type="button"
                                 aria-label={`Remove ${preset.name}`}
                                 title="Remove preset"
                                 onclick={() => removePreset(index)}>
                                 <Icon icon="lucide:trash-2" width="0.9375rem" />
-                            </button>
+                            </Button>
                         </div>
                     </article>
                 </div>

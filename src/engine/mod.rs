@@ -1,8 +1,8 @@
 use crate::{
     DEFAULT_CHANNEL_COUNT, DEFAULT_SAMPLE_RATE, MAX_BLOCK_SIZE,
     engine::{
+        instrument_graph::InstrumentGraphError,
         project::{ProjectAsset, ProjectContext},
-        synth_graph::SynthGraphError,
     },
     rt_channels,
     server::api::{audio::AudioOutputStreamConfig, notifications::ProjectChange},
@@ -19,13 +19,14 @@ use std::{
 };
 use tokio::sync::{Mutex, RwLock, broadcast};
 
+pub mod controller_graph;
 mod ctr;
+pub mod drum_machine;
 pub mod effects;
 pub mod graph;
 pub mod instrument_graph;
 pub mod project;
 mod rt;
-pub mod synth_graph;
 pub mod user_presets;
 
 pub const RETIREMENT_QUEUE_CAPACITY: usize = 16;
@@ -38,7 +39,7 @@ pub struct EngineContext<'a> {
     pub midi_capacity: usize,
     pub recording_queue_capacity: usize,
     pub min_instruments: usize,
-    pub min_synths: usize,
+    pub min_controllers: usize,
     pub project_change_tx: broadcast::Sender<Arc<ProjectChange>>,
 }
 
@@ -47,7 +48,7 @@ impl<'a> From<&EngineContext<'a>> for ProjectContext<'a> {
         Self {
             assets_dir: value.assets_dir,
             min_instruments: value.min_instruments,
-            min_synths: value.min_synths,
+            min_controllers: value.min_controllers,
             stream_config: &AudioOutputStreamConfig {
                 channel_count: DEFAULT_CHANNEL_COUNT,
                 sample_rate: DEFAULT_SAMPLE_RATE,
@@ -60,11 +61,12 @@ impl<'a> From<&EngineContext<'a>> for ProjectContext<'a> {
 pub async fn create_engine<'a>(
     project: ProjectAsset,
     ctx: EngineContext<'a>,
-) -> Result<(Arc<Mutex<Engine>>, EngineHandle, Runtime), SynthGraphError> {
+) -> Result<(Arc<Mutex<Engine>>, EngineHandle, Runtime), InstrumentGraphError> {
     let (cmd_tx, cmd_rx) = rt_channels::create_notified_mpsc(ctx.cmd_capacity);
     let (reply_tx, reply_rx) = rt_channels::create_spsc(ctx.cmd_capacity);
     let (midi_tx, midi_rx) = rt_channels::create_notified_mpsc(ctx.midi_capacity);
     let (recording_tx, recording_rx) = rt_channels::create_spsc(ctx.recording_queue_capacity);
+    let (clap_parameter_tx, clap_parameter_rx) = rt_channels::create_spsc(ctx.cmd_capacity);
     let pending_replies = Arc::new(Mutex::new(HashMap::new()));
     let audio_rec_capture_enabled = Arc::new(AtomicBool::new(false));
     let audio_rec_state = Arc::new(RwLock::new(AudioRecordingState::default()));
@@ -73,7 +75,9 @@ pub async fn create_engine<'a>(
         file_path: PathBuf::new(),
     }));
 
-    let (ctr_project, rt_project) = project::prepare(project, (&ctx).into()).await?;
+    let (ctr_project, rt_project, controller_graph) =
+        project::prepare(project, (&ctx).into()).await?;
+    let controller_graph = Arc::new(RwLock::new(controller_graph));
 
     let handle = EngineHandle {
         cmd_tx,
@@ -84,6 +88,7 @@ pub async fn create_engine<'a>(
         project_change_tx: ctx.project_change_tx,
         audio_rec_state: Arc::clone(&audio_rec_state),
         audio_rec_params: Arc::clone(&audio_rec_params),
+        controller_graph: Arc::clone(&controller_graph),
     };
 
     let (cmd_rx, cmd_notify) = cmd_rx.unwrap();
@@ -95,6 +100,7 @@ pub async fn create_engine<'a>(
         cmd_rx,
         reply_tx,
         recording_tx,
+        clap_parameter_tx,
         sample_rate: DEFAULT_SAMPLE_RATE as f32,
         audio_rec_capture_enabled: Arc::clone(&audio_rec_capture_enabled),
     };
@@ -104,12 +110,15 @@ pub async fn create_engine<'a>(
         pending_replies,
         reply_rx,
         recording_rx,
+        clap_parameter_rx,
         cmd_notify,
         midi_notify,
         stream_error: ctx.stream_error,
         engine: Arc::clone(&engine),
         audio_rec_state,
         audio_rec_params,
+        project: Arc::clone(&handle.project),
+        project_change_tx: handle.project_change_tx.clone(),
         audio_rec_capture_enabled,
         audio_rec_active_sample_rate: DEFAULT_SAMPLE_RATE,
         audio_rec_file: None,
