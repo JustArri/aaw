@@ -139,6 +139,14 @@
         color: var(--foreground);
     }
 
+    @media (min-width: 56.25rem) {
+        html,
+        body {
+            height: 100%;
+            overflow: hidden;
+        }
+    }
+
     body,
     button,
     input,

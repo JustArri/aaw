@@ -1023,7 +1023,8 @@
                                     {entry.slot.instrument_id + 1}.{entry.slot.controller_id + 1}
                                 </span>
                                 <span class="min-w-0">
-                                    <strong class="text-foreground block truncate text-sm font-semibold">
+                                    <strong
+                                        class="text-foreground block truncate text-sm font-semibold">
                                         {displayName(entry.slot)}
                                     </strong>
                                     <small
@@ -1111,7 +1112,7 @@
                         {displayName(selectedSlot)}
                     </small>
                 </div>
-                {#if embedded}<div class="flex items-center gap-1.5">
+                {#if embedded}<div class="flex flex-wrap items-center justify-end gap-1.5">
                         {#if entries.length > 1}<SelectDropdown
                                 compact
                                 value={String(selectedId)}
@@ -1122,6 +1123,23 @@
                                 }))}
                                 onchange={(value) => selectInstrument(Number(value), true)}
                                 ariaLabel="Selected MIDI input controller" />{/if}
+                        <Button
+                            variant={selectedSlot.enabled ? 'accent-outline' : 'secondary'}
+                            size="sm"
+                            type="button"
+                            aria-label={`${selectedSlot.enabled ? 'Disable' : 'Enable'} ${displayName(selectedSlot)}`}
+                            aria-pressed={selectedSlot.enabled}
+                            busy={togglingId === selectedId}
+                            disabled={togglingId !== null}
+                            onclick={() => void toggleEnabled(selectedId!, !selectedSlot.enabled)}>
+                            <Icon
+                                icon={togglingId === selectedId
+                                    ? 'lucide:loader-circle'
+                                    : 'lucide:power'}
+                                width="0.875rem"
+                                class={togglingId === selectedId ? 'animate-spin' : ''} />
+                            {selectedSlot.enabled ? 'Enabled' : 'Disabled'}
+                        </Button>
                         <Button
                             variant="secondary"
                             size="sm"

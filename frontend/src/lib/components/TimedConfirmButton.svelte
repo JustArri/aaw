@@ -10,6 +10,7 @@
         timeout = 4000,
         busy = false,
         disabled = false,
+        size = 'sm',
         class: className = '',
         onconfirm
     }: {
@@ -19,6 +20,7 @@
         timeout?: number;
         busy?: boolean;
         disabled?: boolean;
+        size?: 'xs' | 'sm' | 'md' | 'lg';
         class?: string;
         onconfirm: () => unknown | Promise<unknown>;
     } = $props();
@@ -50,7 +52,7 @@
 
 <Button
     variant={armed ? 'danger' : 'danger-ghost'}
-    size="sm"
+    {size}
     class={className}
     {busy}
     disabled={disabled || busy}

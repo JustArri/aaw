@@ -28,6 +28,7 @@ import {
     updateActiveProjectGlobalGain,
     updateActiveProjectName,
     updateActiveProjectStorage,
+    updateActiveProjectTransport,
     updateActiveProjectRevision
 } from './active-project.svelte';
 
@@ -209,6 +210,9 @@ async function handleProjectChange(change: ProjectChange) {
             break;
         case 'UserPresets':
             await fetchUserPresets();
+            break;
+        case 'Transport':
+            updateActiveProjectTransport(change.data.transport);
             break;
         default:
             unreachable(type);

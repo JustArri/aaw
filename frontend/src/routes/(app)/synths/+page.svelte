@@ -303,10 +303,6 @@
         return formatParameterNumber(parameter.value);
     }
 
-    function instrumentReferences(entry: SynthEntry) {
-        return Object.entries(instrumentSlots()).filter(([, slot]) => slot.synth_id === entry.id);
-    }
-
     async function submitAdd() {
         let createdId: number | undefined;
         await run(async () => {
@@ -691,7 +687,6 @@
                 class="grid gap-1.75 p-1.75 min-[56.25rem]:min-h-0 min-[56.25rem]:flex-1 min-[56.25rem]:content-start min-[56.25rem]:overflow-y-auto">
                 {#if loading}<p class="text-foreground-muted m-3 text-sm">Loading instruments…</p>
                 {:else}{#each visibleSynths as entry (key(entry))}
-                        {@const entryReferences = instrumentReferences(entry)}
                         <article
                             class={`bg-surface-item grid w-full grid-cols-[minmax(0,1fr)_auto] overflow-hidden rounded-[0.5625rem] border ${key(entry) === selectedKey ? 'border-accent/40 shadow-[inset_0.1875rem_0_0_var(--accent)]' : 'border-transparent'}`}>
                             <button
@@ -724,8 +719,8 @@
                                 title="Manage controllers"
                                 aria-label={`Manage controllers for ${displayName(entry)}`}>
                                 <span class="hidden whitespace-nowrap min-[37.5rem]:inline">
-                                    {entryReferences.length}
-                                    {entryReferences.length === 1 ? 'controller' : 'controllers'}
+                                    {entry.controller_count}
+                                    {entry.controller_count === 1 ? 'controller' : 'controllers'}
                                 </span>
                                 <Icon
                                     class="shrink-0"

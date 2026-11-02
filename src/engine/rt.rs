@@ -4,6 +4,7 @@ use crate::{
         metrics::{AudioMetrics, CallbackDetails, CallbackMidiEvent},
     },
     engine::{
+        drum_machine::{MAX_SCHEDULED_EVENTS_PER_BLOCK, MusicalTransport, ScheduledDrumEvent},
         effects::RtEffects,
         graph::InstrumentId,
         instrument_graph::{InstrumentGraphError, RtInstrument, RtInstrumentKind},
@@ -13,6 +14,7 @@ use crate::{
     rt_channels::{RtConsumer, RtProducer},
     synths::SoundFontProgram,
 };
+use arrayvec::ArrayVec;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -34,17 +36,56 @@ pub struct ClapParameterChange {
 
 #[allow(clippy::large_enum_variant)]
 pub enum Command {
-    ReplaceProject { project: Box<RtProject> },
+    ReplaceProject {
+        project: Box<RtProject>,
+    },
     Silence,
-    SetGlobalEffects { effects: RtEffects },
-    SetGlobalGain { gain: f32 },
-    InstrumentPush { instrument: RtInstrument },
-    InstrumentReplace { id: InstrumentId, kind: RtInstrumentKind },
-    InstrumentRemove { id: InstrumentId },
-    InstrumentSelectSoundfontProgram { id: InstrumentId, program: SoundFontProgram },
-    InstrumentSetClapParameter { id: InstrumentId, parameter_id: u32, value: f64 },
-    InstrumentSetEffects { id: InstrumentId, effects: RtEffects },
-    InstrumentSetGain { id: InstrumentId, gain: f32 },
+    SetGlobalEffects {
+        effects: RtEffects,
+    },
+    SetGlobalGain {
+        gain: f32,
+    },
+    InstrumentPush {
+        instrument: RtInstrument,
+    },
+    InstrumentReplace {
+        id: InstrumentId,
+        kind: RtInstrumentKind,
+    },
+    InstrumentRemove {
+        id: InstrumentId,
+    },
+    InstrumentSelectSoundfontProgram {
+        id: InstrumentId,
+        program: SoundFontProgram,
+    },
+    InstrumentSetClapParameter {
+        id: InstrumentId,
+        parameter_id: u32,
+        value: f64,
+    },
+    InstrumentSetEffects {
+        id: InstrumentId,
+        effects: RtEffects,
+    },
+    InstrumentSetGain {
+        id: InstrumentId,
+        gain: f32,
+    },
+    SetTransport {
+        transport: MusicalTransport,
+    },
+    ControllerSetDrumMachine {
+        address: crate::engine::graph::ControllerAddress,
+        machine: Option<crate::engine::drum_machine::RtDrumMachine>,
+    },
+    ControllerAppend {
+        instrument_id: InstrumentId,
+    },
+    ControllerRemove {
+        address: crate::engine::graph::ControllerAddress,
+    },
 }
 
 pub struct AudioBlocks {
@@ -173,6 +214,37 @@ impl Engine {
             Command::InstrumentSetGain { id, gain } => {
                 self.project.instrument_graph.set_gain(id, gain)
             }
+            Command::SetTransport { transport } => {
+                if self.project.transport.config.playing && !transport.playing {
+                    self.silence();
+                    self.project.transport.sample_position = 0;
+                    self.project.transport.segment_start_frame = 0;
+                    self.project.transport.segment_start_tick = 0.0;
+                } else if self.project.transport.config.playing
+                    && transport.playing
+                    && self.project.transport.config.tempo_bpm != transport.tempo_bpm
+                {
+                    let current = self.project.transport.sample_position;
+                    let previous_frames_per_tick = self.sample_rate as f64 * 60.0
+                        / (self.project.transport.config.tempo_bpm
+                            * crate::engine::drum_machine::TICKS_PER_BEAT as f64);
+                    self.project.transport.segment_start_tick +=
+                        current.saturating_sub(self.project.transport.segment_start_frame) as f64
+                            / previous_frames_per_tick;
+                    self.project.transport.segment_start_frame = current;
+                }
+                self.project.transport.config = transport;
+                true
+            }
+            Command::ControllerSetDrumMachine { address, machine } => {
+                self.project.instrument_graph.set_drum_machine(address, machine)
+            }
+            Command::ControllerAppend { instrument_id } => {
+                self.project.instrument_graph.append_controller_slot(instrument_id)
+            }
+            Command::ControllerRemove { address } => {
+                self.project.instrument_graph.remove_controller_slot(address)
+            }
         }
     }
 
@@ -207,9 +279,36 @@ impl Engine {
         audio_blocks.main.clear();
 
         let instruments_started = Instant::now();
+        let transport = self.project.transport.config;
+        let block_start = self.project.transport.sample_position;
+        let segment_start_frame = self.project.transport.segment_start_frame;
+        let segment_start_tick = self.project.transport.segment_start_tick;
         for (instrument_id, instrument) in &mut self.project.instrument_graph.instruments {
             let started = Instant::now();
-            let _ = instrument.render_audio_block(&mut audio_blocks.temp);
+            let mut scheduled: ArrayVec<ScheduledDrumEvent, MAX_SCHEDULED_EVENTS_PER_BLOCK> =
+                ArrayVec::new();
+            if transport.playing {
+                crate::engine::instrument_graph::RtInstrumentGraph::schedule_drum_events(
+                    instrument,
+                    crate::engine::drum_machine::DrumScheduleContext {
+                        block_start,
+                        frame_count: sample_count,
+                        sample_rate: self.sample_rate as f64,
+                        tempo_bpm: transport.tempo_bpm,
+                        segment_start_frame,
+                        segment_start_tick,
+                    },
+                    transport.ticks_per_bar(),
+                    &mut scheduled,
+                );
+            }
+            render_instrument_with_events(
+                instrument,
+                &mut audio_blocks.temp,
+                &mut audio_blocks.main,
+                sample_count,
+                &scheduled,
+            );
             if let RtInstrumentKind::Clap(clap) = &mut instrument.kind {
                 push_clap_changes(
                     &mut self.clap_parameter_tx,
@@ -217,7 +316,6 @@ impl Engine {
                     clap.parameter_changes(),
                 );
             }
-            audio_blocks.main.add_samples_from_unchecked(&audio_blocks.temp);
             let elapsed_ns = elapsed_nanos(started);
             metrics.record_instrument(instrument_id.0, elapsed_ns);
             if elapsed_ns > details.slowest_instrument_ns {
@@ -227,6 +325,20 @@ impl Engine {
         }
         details.instruments_ns = elapsed_nanos(instruments_started);
         metrics.record_instruments(details.instruments_ns);
+        if transport.playing {
+            self.project.transport.sample_position =
+                self.project.transport.sample_position.saturating_add(sample_count as u64);
+        }
+        let frames_per_tick = self.sample_rate as f64 * 60.0
+            / (transport.tempo_bpm * crate::engine::drum_machine::TICKS_PER_BEAT as f64);
+        let current_tick = self.project.transport.segment_start_tick
+            + self
+                .project
+                .transport
+                .sample_position
+                .saturating_sub(self.project.transport.segment_start_frame) as f64
+                / frames_per_tick;
+        metrics.record_transport_tick(current_tick);
 
         let global_started = Instant::now();
         let smoothing_time = 0.5;
@@ -253,6 +365,61 @@ impl Engine {
             chunk.commit_all();
         }
     }
+}
+
+fn render_instrument_with_events(
+    instrument: &mut RtInstrument,
+    temp: &mut AudioBlock,
+    main: &mut AudioBlock,
+    sample_count: usize,
+    events: &[ScheduledDrumEvent],
+) {
+    let mut cursor = 0;
+    let mut event_index = 0;
+    while event_index < events.len() {
+        let offset = events[event_index].sample_offset.min(sample_count);
+        render_instrument_segment(instrument, temp, main, cursor, offset.saturating_sub(cursor));
+        cursor = offset;
+        while event_index < events.len() && events[event_index].sample_offset == offset {
+            track_drum_note(instrument, events[event_index]);
+            let _ = instrument.handle_midi_event(events[event_index].event);
+            event_index += 1;
+        }
+    }
+    render_instrument_segment(instrument, temp, main, cursor, sample_count.saturating_sub(cursor));
+}
+
+fn track_drum_note(instrument: &mut RtInstrument, scheduled: ScheduledDrumEvent) {
+    let channel = scheduled.event.channel as usize;
+    let Some(slot) = instrument.drum_machines.get_mut(scheduled.controller_id) else {
+        return;
+    };
+    match scheduled.event.kind {
+        crate::midi::MidiEventKind::NoteOn { key, velocity } if velocity > 0 => {
+            slot.active_notes[channel] |= 1u128 << key;
+        }
+        crate::midi::MidiEventKind::NoteOff { key, .. }
+        | crate::midi::MidiEventKind::NoteOn { key, velocity: 0 } => {
+            slot.active_notes[channel] &= !(1u128 << key);
+        }
+        _ => {}
+    }
+}
+
+fn render_instrument_segment(
+    instrument: &mut RtInstrument,
+    temp: &mut AudioBlock,
+    main: &mut AudioBlock,
+    offset: usize,
+    length: usize,
+) {
+    if length == 0 {
+        return;
+    }
+    temp.resize(length);
+    temp.clear();
+    let _ = instrument.render_audio_block(temp);
+    main.add_samples_from_at(temp, offset);
 }
 
 fn elapsed_nanos(started: Instant) -> u64 {

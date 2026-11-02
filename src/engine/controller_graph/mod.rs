@@ -12,6 +12,9 @@ pub fn prepare(stored: StoredController) -> (CtrController, RtController) {
             let (ctr, rt) = prepare_midi_input(controller);
             (CtrController::MidiInput(ctr), RtController::MidiInput(rt))
         }
+        StoredController::DrumMachine(controller) => {
+            (CtrController::DrumMachine(controller), RtController::DrumMachine)
+        }
     }
 }
 

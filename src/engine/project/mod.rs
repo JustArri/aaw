@@ -42,12 +42,13 @@ impl<'a> From<&ProjectContext<'a>> for InstrumentGraphContext<'a> {
 }
 
 pub async fn prepare<'a>(
-    asset: ProjectAsset,
+    mut asset: ProjectAsset,
     ctx: ProjectContext<'a>,
 ) -> Result<
     (CtrProject, RtProject, crate::engine::controller_graph::RtControllerGraph),
     InstrumentGraphError,
 > {
+    asset.project.instrument_graph.resize_drum_machines_to_bar(asset.project.transport);
     let result = instrument_graph::prepare(asset.project.instrument_graph, (&ctx).into()).await;
     let (ctr_instrument_graph, rt_instrument_graph, rt_controller_graph) = match result {
         Ok(res) => res,
@@ -66,9 +67,18 @@ pub async fn prepare<'a>(
         name: asset.project.name,
         instrument_graph: ctr_instrument_graph,
         user_presets: user_presets::prepare(asset.project.user_presets),
+        transport: asset.project.transport,
     };
 
-    let rt_project = RtProject { instrument_graph: rt_instrument_graph };
+    let rt_project = RtProject {
+        instrument_graph: rt_instrument_graph,
+        transport: RtTransport {
+            config: asset.project.transport,
+            sample_position: 0,
+            segment_start_frame: 0,
+            segment_start_tick: 0.0,
+        },
+    };
 
     Ok((ctr_project, rt_project, rt_controller_graph))
 }

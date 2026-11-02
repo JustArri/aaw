@@ -63,6 +63,17 @@ impl AudioBlock {
         }
     }
 
+    pub fn add_samples_from_at(&mut self, other: &AudioBlock, offset: usize) {
+        let count = other.sample_count.min(self.sample_count.saturating_sub(offset));
+        for channel in 0..self.channel_count {
+            let local_samples = &mut self.samples[channel];
+            let other_samples = &other.samples[channel];
+            for index in 0..count {
+                local_samples[offset + index] += other_samples[index];
+            }
+        }
+    }
+
     pub fn multiply_samples(&mut self, factor: f32) {
         for channel in 0..self.channel_count {
             for sample in &mut self.samples[channel][..self.sample_count] {

@@ -1,5 +1,6 @@
 use crate::engine::{
-    instrument_graph::StoredInstrumentGraph, project::CtrProject, user_presets::StoredUserPresets,
+    drum_machine::MusicalTransport, instrument_graph::StoredInstrumentGraph, project::CtrProject,
+    user_presets::StoredUserPresets,
 };
 use migrations_derive::Migrations;
 
@@ -10,6 +11,7 @@ pub struct StoredProject {
     pub name: String,
     pub instrument_graph: StoredInstrumentGraph,
     pub user_presets: StoredUserPresets,
+    pub transport: MusicalTransport,
 }
 
 impl From<&CtrProject> for StoredProject {
@@ -19,6 +21,7 @@ impl From<&CtrProject> for StoredProject {
             name: value.name.clone(),
             instrument_graph: (&value.instrument_graph).into(),
             user_presets: (&value.user_presets).into(),
+            transport: value.transport,
         }
     }
 }
@@ -30,6 +33,7 @@ impl From<CtrProject> for StoredProject {
             name: value.name,
             instrument_graph: value.instrument_graph.into(),
             user_presets: value.user_presets.into(),
+            transport: value.transport,
         }
     }
 }

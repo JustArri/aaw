@@ -192,6 +192,7 @@ pub struct AudioMetrics {
     deadline_miss_write_index: AtomicU64,
     deadline_miss_history: Box<[DeadlineMissSlot]>,
     realtime_scheduling_status: AtomicU64,
+    transport_tick_bits: AtomicU64,
 }
 
 impl Default for AudioMetrics {
@@ -225,6 +226,7 @@ impl Default for AudioMetrics {
                 .map(|_| DeadlineMissSlot::default())
                 .collect(),
             realtime_scheduling_status: AtomicU64::default(),
+            transport_tick_bits: AtomicU64::default(),
         }
     }
 }
@@ -343,6 +345,7 @@ impl AudioMetrics {
             miss.sequence.store(0, Ordering::Relaxed);
         }
         self.realtime_scheduling_status.store(0, Ordering::Relaxed);
+        self.transport_tick_bits.store(0, Ordering::Relaxed);
     }
 
     pub fn set_active(&self, active: bool) {
@@ -421,6 +424,14 @@ impl AudioMetrics {
             None => 3,
         };
         self.realtime_scheduling_status.store(status, Ordering::Relaxed);
+    }
+
+    pub fn record_transport_tick(&self, tick: f64) {
+        self.transport_tick_bits.store(tick.to_bits(), Ordering::Relaxed);
+    }
+
+    pub fn transport_tick(&self) -> f64 {
+        f64::from_bits(self.transport_tick_bits.load(Ordering::Relaxed))
     }
 
     pub fn snapshot(&self) -> AudioMetricsSnapshot {
@@ -543,6 +554,7 @@ mod tests {
         metrics.record_callback(480, 48_000, 12_000_000, CallbackDetails::default());
         metrics.record_commands(1_000);
         metrics.record_instrument(3, 2_000);
+        metrics.record_transport_tick(1_234.5);
         let snapshot = metrics.snapshot();
         assert_eq!(snapshot.callback_count, 2);
         assert_eq!(snapshot.average_load_percent, 85.0);
@@ -553,6 +565,7 @@ mod tests {
         assert_eq!(snapshot.phases.commands.max_time_us, 1.0);
         assert_eq!(snapshot.instruments[0].instrument_id, 3);
         assert_eq!(snapshot.instruments[0].max_time_us, 2.0);
+        assert_eq!(metrics.transport_tick(), 1_234.5);
     }
 
     #[test]

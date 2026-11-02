@@ -1,6 +1,7 @@
 use crate::{
     engine::{
         controller_graph::StoredController,
+        drum_machine::MusicalTransport,
         effects::Effects,
         graph::{ControllerId, InstrumentId},
         instrument_graph::{CtrInstrument, CtrInstrumentGraph, CtrInstrumentKind},
@@ -136,6 +137,18 @@ impl Default for StoredInstrumentGraph {
             global_effects: Default::default(),
             global_gain: 1.0,
             global_transposition: 0,
+        }
+    }
+}
+
+impl StoredInstrumentGraph {
+    pub fn resize_drum_machines_to_bar(&mut self, transport: MusicalTransport) {
+        for instrument in self.instruments.values_mut() {
+            for controller in instrument.controllers.values_mut() {
+                if let StoredController::DrumMachine(machine) = controller {
+                    machine.resize_to_bar(transport);
+                }
+            }
         }
     }
 }

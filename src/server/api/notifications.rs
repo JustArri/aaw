@@ -1,6 +1,7 @@
 use crate::{
     app_state::AppState,
     engine::{
+        drum_machine::MusicalTransport,
         effects::Effects,
         graph::{ControllerAddress, InstrumentId},
         instrument_graph::CtrInstrumentKind,
@@ -69,6 +70,7 @@ pub enum ProjectChangeKind {
     ControllerUseGlobalTransposition { address: ControllerAddress, flag: bool },
     ControllerName { address: ControllerAddress, name: String },
     UserPresets,
+    Transport { transport: MusicalTransport },
 }
 
 //--------------------------------------------------------------------------------------------------

@@ -181,7 +181,13 @@ async fn instrument_push(
                 gain: 1.0,
                 last_controller_values: Box::new([None; 128]),
             },
-            RtInstrument { kind: rt_kind, effects: rt_effects, gain: 1.0 },
+            RtInstrument {
+                kind: rt_kind,
+                effects: rt_effects,
+                gain: 1.0,
+                drum_machines: rt_controllers
+                    .map_ref(|_| crate::engine::drum_machine::RtDrumMachineSlot::new(None)),
+            },
             RtInstrumentControllers { controllers: rt_controllers },
         )
         .await?;

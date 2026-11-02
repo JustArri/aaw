@@ -1,9 +1,11 @@
 <script lang="ts">
     import Icon from '@iconify/svelte';
+    import * as api from '$lib/generated/api';
     import Button from '$lib/components/Button.svelte';
+    import { errorToUserMessage } from '$lib/error';
     import { icons } from '$lib/icons';
     import { notify } from '$lib/push-notifications.svelte';
-    import { activeProject } from '$lib/state/active-project.svelte';
+    import { activeProject, updateActiveProjectTransport } from '$lib/state/active-project.svelte';
     import {
         audioRecording,
         setAudioRecordingPaused,
@@ -20,6 +22,7 @@
     const projectName = $derived(activeProject()?.name.trim() || 'Untitled project');
     const recording = $derived(audioRecording());
     let saving = $state(false);
+    let changingTransport = $state(false);
     let changingRecording = $state(false);
     let panicking = $state(false);
     const saveState = $derived.by(() => {
@@ -112,6 +115,27 @@
             panicking = false;
         }
     }
+
+    async function onTransportToggle() {
+        const project = activeProject();
+        if (!project || changingTransport) return;
+
+        const previous = project.transport;
+        const next = { ...previous, playing: !previous.playing };
+        changingTransport = true;
+        updateActiveProjectTransport(next);
+        try {
+            const response = await api.setTransport(next);
+            if (response.status !== 204) {
+                throw new Error(`Transport update failed (${response.status})`);
+            }
+        } catch (cause) {
+            updateActiveProjectTransport(previous);
+            notify.error(errorToUserMessage(cause), { title: 'Update transport' });
+        } finally {
+            changingTransport = false;
+        }
+    }
 </script>
 
 <header
@@ -133,6 +157,27 @@
         </span>
     </a>
     <div class="flex items-center gap-1.5">
+        <Button
+            variant={activeProject()?.transport.playing ? 'danger-soft' : 'accent-outline'}
+            size="sm"
+            square
+            class="size-8.5"
+            type="button"
+            aria-label={activeProject()?.transport.playing ? 'Stop transport' : 'Play transport'}
+            title={activeProject()?.transport.playing ? 'Stop transport' : 'Play transport'}
+            busy={changingTransport}
+            disabled={changingTransport || !gatewayOnline() || !activeProject()}
+            onclick={onTransportToggle}>
+            <Icon
+                icon={changingTransport
+                    ? 'lucide:loader-circle'
+                    : activeProject()?.transport.playing
+                      ? 'lucide:square'
+                      : 'lucide:play'}
+                width="1rem"
+                class={changingTransport ? 'animate-spin' : ''} />
+        </Button>
+        <span class="bg-border mx-0.5 h-6 w-px shrink-0" aria-hidden="true"></span>
         {#if recording?.state === AudioRecordingState.Running || recording?.state === AudioRecordingState.Paused}
             <div
                 class="border-danger/35 bg-danger/8 flex items-center rounded-lg border"

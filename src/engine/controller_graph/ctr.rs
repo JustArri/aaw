@@ -1,4 +1,7 @@
-use crate::midi::{MidiFilter, MidiKeyTransform, MidiVelocityTransform};
+use crate::{
+    engine::drum_machine::DrumMachineController,
+    midi::{MidiFilter, MidiKeyTransform, MidiVelocityTransform},
+};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -6,6 +9,7 @@ use utoipa::ToSchema;
 #[serde(tag = "type", content = "data")]
 pub enum CtrController {
     MidiInput(CtrMidiInputController),
+    DrumMachine(DrumMachineController),
 }
 
 impl Default for CtrController {
@@ -18,12 +22,21 @@ impl CtrController {
     pub fn midi_input(&self) -> Option<&CtrMidiInputController> {
         match self {
             Self::MidiInput(controller) => Some(controller),
+            Self::DrumMachine(_) => None,
         }
     }
 
     pub fn midi_input_mut(&mut self) -> Option<&mut CtrMidiInputController> {
         match self {
             Self::MidiInput(controller) => Some(controller),
+            Self::DrumMachine(_) => None,
+        }
+    }
+
+    pub fn drum_machine(&self) -> Option<&DrumMachineController> {
+        match self {
+            Self::DrumMachine(controller) => Some(controller),
+            Self::MidiInput(_) => None,
         }
     }
 }

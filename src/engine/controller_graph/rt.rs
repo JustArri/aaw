@@ -7,14 +7,17 @@ use crate::{
     },
 };
 
+#[allow(clippy::large_enum_variant)]
 pub enum RtController {
     MidiInput(RtMidiInputController),
+    DrumMachine,
 }
 
 impl RtController {
     fn process(&self, event: MidiEvent, global_transposition: i8) -> Option<MidiEvent> {
         match self {
             Self::MidiInput(controller) => controller.process(event, global_transposition),
+            Self::DrumMachine => None,
         }
     }
 }

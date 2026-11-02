@@ -1,6 +1,7 @@
 use crate::{
     engine::{
         controller_graph::{self, RtControllerGraph, RtInstrumentControllers},
+        drum_machine::RtDrumMachine,
         effects::{self, EffectsContext},
         graph::{ControllerId, InstrumentId},
         resolve_asset_path,
@@ -87,8 +88,14 @@ pub async fn prepare(
         }
         let mut ctr_controllers: Siv<_, ControllerId> = ctr_controllers.into();
         let mut rt_controllers: Siv<_, ControllerId> = rt_controllers.into();
+        let mut rt_drum_machines: Siv<_, ControllerId> = ctr_controllers.map_ref(|controller| {
+            crate::engine::drum_machine::RtDrumMachineSlot::new(
+                controller.drum_machine().map(RtDrumMachine::compile),
+            )
+        });
         ctr_controllers.ensure_capacity(ctx.num_controllers);
         rt_controllers.ensure_capacity(ctx.num_controllers);
+        rt_drum_machines.ensure_capacity(ctx.num_controllers);
 
         let (effects, rt_effects) = effects::prepare(stored.effects, (&ctx).into())?;
         let (kind, rt_kind) = prepare_kind(stored.kind, &ctx).await?;
@@ -103,8 +110,15 @@ pub async fn prepare(
                 last_controller_values: stored.last_controller_values,
             },
         );
-        rt_instruments
-            .insert(id, RtInstrument { kind: rt_kind, effects: rt_effects, gain: stored.gain });
+        rt_instruments.insert(
+            id,
+            RtInstrument {
+                kind: rt_kind,
+                effects: rt_effects,
+                gain: stored.gain,
+                drum_machines: rt_drum_machines,
+            },
+        );
         rt_controller_instruments
             .insert(id, RtInstrumentControllers { controllers: rt_controllers });
     }

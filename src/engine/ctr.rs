@@ -4,6 +4,7 @@ use crate::{
     engine::{
         ClapParameterChange, Command, Engine, InstrumentMidiEvent,
         controller_graph::{RtController, RtControllerGraph, RtInstrumentControllers},
+        drum_machine::{DrumMachineController, MusicalTransport, RtDrumMachine},
         effects::{Effects, RtEffects},
         graph::{ControllerAddress, ControllerId, InstrumentId},
         instrument_graph::{
@@ -225,6 +226,58 @@ impl EngineHandle {
         );
     }
 
+    pub async fn set_transport(&self, transport: MusicalTransport) -> Result<(), EngineError> {
+        if !transport.is_valid() {
+            return Err(EngineError::Rejected);
+        }
+        let mut resized = Vec::new();
+        {
+            let project = self.project.read().await;
+            for (instrument_id, instrument) in &project.instrument_graph.instruments {
+                for (controller_id, controller) in &instrument.controllers {
+                    let crate::engine::controller_graph::CtrController::DrumMachine(machine) =
+                        controller
+                    else {
+                        continue;
+                    };
+                    let mut machine = machine.clone();
+                    if machine.resize_to_bar(transport) {
+                        let address = ControllerAddress {
+                            instrument_id: *instrument_id,
+                            controller_id: *controller_id,
+                        };
+                        resized.push((address, machine));
+                    }
+                }
+            }
+        }
+        self.accept(Command::SetTransport { transport }).await?;
+        for (address, machine) in &resized {
+            self.accept(Command::ControllerSetDrumMachine {
+                address: *address,
+                machine: Some(RtDrumMachine::compile(machine)),
+            })
+            .await?;
+        }
+        let mut project = self.project.write().await;
+        let revision = CtrProject::next_revision(&mut project.revision);
+        project.transport = transport;
+        for (address, machine) in resized {
+            if let Some(controller) = project
+                .instrument_graph
+                .controller_mut(address.instrument_id, address.controller_id)
+            {
+                *controller = crate::engine::controller_graph::CtrController::DrumMachine(machine);
+            }
+            self.broadcast_project_change(
+                revision,
+                ProjectChangeKind::Controller { address, removed: false },
+            );
+        }
+        self.broadcast_project_change(revision, ProjectChangeKind::Transport { transport });
+        Ok(())
+    }
+
     pub async fn instrument_push(
         &self,
         ctr: CtrInstrument,
@@ -361,6 +414,10 @@ impl EngineHandle {
         &self,
         instrument_id: InstrumentId,
     ) -> Result<ControllerId, EngineError> {
+        if self.project.read().await.instrument_graph.instruments.get(instrument_id).is_none() {
+            return Err(EngineError::Rejected);
+        }
+        self.accept(Command::ControllerAppend { instrument_id }).await?;
         let mut project = self.project.write().await;
         let id = project
             .instrument_graph
@@ -387,7 +444,69 @@ impl EngineHandle {
         Ok(id)
     }
 
+    pub async fn drum_machine_append(
+        &self,
+        instrument_id: InstrumentId,
+    ) -> Result<ControllerId, EngineError> {
+        let transport = {
+            let project = self.project.read().await;
+            if project.instrument_graph.instruments.get(instrument_id).is_none() {
+                return Err(EngineError::Rejected);
+            }
+            project.transport
+        };
+        self.accept(Command::ControllerAppend { instrument_id }).await?;
+        let mut controller = DrumMachineController::default();
+        controller.resize_to_bar(transport);
+        let mut project = self.project.write().await;
+        let instrument = project
+            .instrument_graph
+            .instruments
+            .get_mut(instrument_id)
+            .ok_or(EngineError::Rejected)?;
+        let id = instrument
+            .controllers
+            .push(crate::engine::controller_graph::CtrController::DrumMachine(controller.clone()));
+        let rt_id = self
+            .controller_graph
+            .write()
+            .await
+            .instruments
+            .get_mut(instrument_id)
+            .ok_or(EngineError::Rejected)?
+            .controllers
+            .push(RtController::DrumMachine);
+        if id != rt_id {
+            return Err(EngineError::Rejected);
+        }
+        let address = ControllerAddress { instrument_id, controller_id: id };
+        drop(project);
+        self.accept(Command::ControllerSetDrumMachine {
+            address,
+            machine: Some(RtDrumMachine::compile(&controller)),
+        })
+        .await?;
+        let mut project = self.project.write().await;
+        let revision = CtrProject::next_revision(&mut project.revision);
+        self.broadcast_project_change(
+            revision,
+            ProjectChangeKind::Controller { address, removed: false },
+        );
+        Ok(id)
+    }
+
     pub async fn controller_remove(&self, address: ControllerAddress) -> Result<(), EngineError> {
+        if self
+            .project
+            .read()
+            .await
+            .instrument_graph
+            .controller(address.instrument_id, address.controller_id)
+            .is_none()
+        {
+            return Err(EngineError::Rejected);
+        }
+        self.accept(Command::ControllerRemove { address }).await?;
         let mut project = self.project.write().await;
         if !project.instrument_graph.remove_controller(address.instrument_id, address.controller_id)
         {
@@ -416,8 +535,15 @@ impl EngineHandle {
         address: ControllerAddress,
         controller: crate::engine::controller_graph::CtrController,
     ) -> Result<(), EngineError> {
+        if let Some(machine) = controller.drum_machine()
+            && !machine.is_valid()
+        {
+            return Err(EngineError::Rejected);
+        }
         let (_, rt_controller) =
             crate::engine::controller_graph::prepare(controller.clone().into());
+        let machine = controller.drum_machine().map(RtDrumMachine::compile);
+        self.accept(Command::ControllerSetDrumMachine { address, machine }).await?;
         let mut project = self.project.write().await;
         let Some(ctr_controller) =
             project.instrument_graph.controller_mut(address.instrument_id, address.controller_id)
@@ -439,6 +565,24 @@ impl EngineHandle {
     }
 
     pub async fn controller_set_enabled(&self, address: ControllerAddress, flag: bool) {
+        let drum_machine = {
+            let project = self.project.read().await;
+            project
+                .instrument_graph
+                .controller(address.instrument_id, address.controller_id)
+                .and_then(|controller| controller.drum_machine())
+                .cloned()
+        };
+        if let Some(mut drum_machine) = drum_machine {
+            drum_machine.enabled = flag;
+            let _ = self
+                .controller_replace(
+                    address,
+                    crate::engine::controller_graph::CtrController::DrumMachine(drum_machine),
+                )
+                .await;
+            return;
+        }
         self.update_controller(address, ControllerUpdate::Enabled(flag)).await;
     }
 

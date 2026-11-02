@@ -1,6 +1,7 @@
 import { gatewayNotResponding } from '$lib/error';
 import * as api from '$lib/generated/api';
 import type {
+    CtrController,
     CtrInstrumentKind,
     Effects,
     Instrument,
@@ -35,6 +36,13 @@ export type ControllerSlot = {
     name: string;
 };
 
+export type ControllerEntry = {
+    id: number;
+    instrument_id: number;
+    controller_id: number;
+    controller: CtrController;
+};
+
 type DummySynth = { name: string; max_voices: number };
 type FluidSynth = {
     name: string;
@@ -59,11 +67,20 @@ type ClapSynth = {
     plugin_parameters: ParameterInfo[];
 };
 
-export type SynthEntry =
-    | { id: number; kind: 'Dummy'; synth: DummySynth; effects: Effects; gain: number }
-    | { id: number; kind: 'Fluid'; synth: FluidSynth; effects: Effects; gain: number }
-    | { id: number; kind: 'Sfizz'; synth: SfizzSynth; effects: Effects; gain: number }
-    | { id: number; kind: 'Clap'; synth: ClapSynth; effects: Effects; gain: number };
+type SynthEntryCommon = {
+    id: number;
+    effects: Effects;
+    gain: number;
+    controller_count: number;
+};
+
+export type SynthEntry = SynthEntryCommon &
+    (
+        | { kind: 'Dummy'; synth: DummySynth }
+        | { kind: 'Fluid'; synth: FluidSynth }
+        | { kind: 'Sfizz'; synth: SfizzSynth }
+        | { kind: 'Clap'; synth: ClapSynth }
+    );
 
 let instrumentsState = $state({} as Record<string, Instrument>);
 let fetchPromise: Promise<void> | null = null;
@@ -92,8 +109,24 @@ export function instrumentSlots(): Record<string, ControllerSlot> {
     );
 }
 
+export function controllerEntries(): ControllerEntry[] {
+    return Object.entries(instrumentsState).flatMap(([instrumentId, instrument]) =>
+        Object.entries(instrument.controllers).map(([controllerId, controller]) => ({
+            id: Number(instrumentId) * 65_536 + Number(controllerId),
+            instrument_id: Number(instrumentId),
+            controller_id: Number(controllerId),
+            controller
+        }))
+    );
+}
+
 function toEntry(id: string, instrument: Instrument): SynthEntry {
-    const common = { id: Number(id), effects: instrument.effects, gain: instrument.gain };
+    const common = {
+        id: Number(id),
+        effects: instrument.effects,
+        gain: instrument.gain,
+        controller_count: Object.keys(instrument.controllers).length
+    };
     if ('Dummy' in instrument.kind) {
         return {
             ...common,
@@ -253,6 +286,29 @@ export async function fetchSynths(forceFresh = false) {
 
 export async function fetchSynthInstrumentSlots() {
     await fetchSynths(true);
+}
+
+export async function setControllerEnabled(id: number, enabled: boolean) {
+    const instrumentId = Math.floor(id / 65_536);
+    const controllerId = id % 65_536;
+    const instrument = instrumentsState[String(instrumentId)];
+    const controller = instrument?.controllers[String(controllerId)];
+    if (!instrument || !controller) {
+        throw new Error('Controller does not exist');
+    }
+    const updated = {
+        ...controller,
+        data: { ...controller.data, enabled }
+    } as CtrController;
+    const response = await request(() =>
+        api.controllerReplace(instrumentId, controllerId, updated)
+    );
+    if (response.status !== 204) {
+        responseError(response.status, response.data);
+    }
+    updateInstrument(instrumentId, {
+        controllers: { ...instrument.controllers, [controllerId]: updated }
+    });
 }
 
 function responseError(status: number, data: unknown): never {

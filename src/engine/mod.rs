@@ -21,6 +21,7 @@ use tokio::sync::{Mutex, RwLock, broadcast};
 
 pub mod controller_graph;
 mod ctr;
+pub mod drum_machine;
 pub mod effects;
 pub mod graph;
 pub mod instrument_graph;

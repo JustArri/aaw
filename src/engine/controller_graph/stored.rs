@@ -1,5 +1,8 @@
 use crate::{
-    engine::controller_graph::{CtrController, CtrMidiInputController},
+    engine::{
+        controller_graph::{CtrController, CtrMidiInputController},
+        drum_machine::DrumMachineController,
+    },
     midi::{MidiFilter, MidiKeyTransform, MidiVelocityTransform},
 };
 use serde::{Deserialize, Serialize};
@@ -9,12 +12,14 @@ use utoipa::ToSchema;
 #[serde(tag = "type", content = "data")]
 pub enum StoredController {
     MidiInput(StoredMidiInputController),
+    DrumMachine(DrumMachineController),
 }
 
 impl From<&CtrController> for StoredController {
     fn from(value: &CtrController) -> Self {
         match value {
             CtrController::MidiInput(controller) => Self::MidiInput(controller.into()),
+            CtrController::DrumMachine(controller) => Self::DrumMachine(controller.clone()),
         }
     }
 }
@@ -23,6 +28,7 @@ impl From<CtrController> for StoredController {
     fn from(value: CtrController) -> Self {
         match value {
             CtrController::MidiInput(controller) => Self::MidiInput(controller.into()),
+            CtrController::DrumMachine(controller) => Self::DrumMachine(controller),
         }
     }
 }

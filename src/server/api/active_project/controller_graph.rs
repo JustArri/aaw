@@ -2,6 +2,7 @@ use crate::{
     app_state::AppState,
     engine::{
         controller_graph::CtrController,
+        drum_machine::MusicalTransport,
         graph::{ControllerAddress, ControllerId, InstrumentId},
     },
 };
@@ -19,7 +20,10 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(set_global_transposition))
         .routes(routes!(global_transposition))
         .routes(routes!(controller_list, controller_append))
+        .routes(routes!(drum_machine_append))
         .routes(routes!(controller, controller_replace, controller_remove))
+        .routes(routes!(transport, set_transport))
+        .routes(routes!(transport_position))
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, IntoParams)]
@@ -101,6 +105,51 @@ async fn controller_append(
     Path(path): Path<InstrumentPath>,
 ) -> Result<Json<ControllerId>, (StatusCode, String)> {
     Ok(Json(app_state.engine_handle.controller_append(path.instrument_id).await?))
+}
+
+#[utoipa::path(
+    post,
+    path = "/instruments/{instrument_id}/drum-machines",
+    params(InstrumentPath),
+    responses((status = OK, body = ControllerId, description = "Created drum machine controller ID"))
+)]
+async fn drum_machine_append(
+    State(app_state): State<AppState>,
+    Path(path): Path<InstrumentPath>,
+) -> Result<Json<ControllerId>, (StatusCode, String)> {
+    Ok(Json(app_state.engine_handle.drum_machine_append(path.instrument_id).await?))
+}
+
+#[utoipa::path(
+    get,
+    path = "/transport",
+    responses((status = OK, body = MusicalTransport, description = "Project musical transport"))
+)]
+async fn transport(State(app_state): State<AppState>) -> Json<MusicalTransport> {
+    Json(app_state.engine_handle.project().await.transport)
+}
+
+#[utoipa::path(
+    get,
+    path = "/transport-position",
+    responses((status = OK, body = f64, content_type = "application/json", description = "Current musical transport tick"))
+)]
+async fn transport_position(State(app_state): State<AppState>) -> Json<f64> {
+    Json(app_state.audio_metrics.transport_tick())
+}
+
+#[utoipa::path(
+    put,
+    path = "/transport",
+    request_body(content = MusicalTransport, content_type = "application/json"),
+    responses((status = NO_CONTENT, description = "Project musical transport updated"))
+)]
+async fn set_transport(
+    State(app_state): State<AppState>,
+    Json(transport): Json<MusicalTransport>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    app_state.engine_handle.set_transport(transport).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[utoipa::path(

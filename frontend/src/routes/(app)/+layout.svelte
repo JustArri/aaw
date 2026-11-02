@@ -72,7 +72,7 @@
         <TopBar {activeLabel} />
 
         <main
-            class="px-3 pt-3 pb-23.5 min-[37.5rem]:px-5 min-[56.25rem]:mx-auto min-[56.25rem]:h-full min-[56.25rem]:min-h-0 min-[56.25rem]:w-full min-[56.25rem]:max-w-360 min-[56.25rem]:overflow-y-auto min-[56.25rem]:px-7.5 min-[56.25rem]:pt-4 min-[56.25rem]:pb-10">
+            class="min-w-0 overflow-x-clip px-3 pt-3 pb-23.5 min-[37.5rem]:px-5 min-[56.25rem]:mx-auto min-[56.25rem]:h-full min-[56.25rem]:min-h-0 min-[56.25rem]:w-full min-[56.25rem]:max-w-360 min-[56.25rem]:overflow-y-auto min-[56.25rem]:px-7.5 min-[56.25rem]:pt-4 min-[56.25rem]:pb-10">
             {@render children()}
         </main>
     </section>
