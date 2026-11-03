@@ -180,29 +180,36 @@ impl DeadlineMissSlot {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct AudioPerformanceSample {
+    callback_index: u64,
+    render_time_ns: u64,
+    budget_ns: u64,
+    peak_load_scaled: u64,
+    max_render_time_ns: u64,
+    callback_count: u64,
+    deadline_miss_count: u64,
+}
+
 impl PerformanceHistorySlot {
-    fn write(
-        &self,
-        sequence: u64,
-        callback_index: u64,
-        render_time_ns: u64,
-        budget_ns: u64,
-        peak_load_scaled: u64,
-        max_render_time_ns: u64,
-        callback_count: u64,
-        deadline_miss_count: u64,
-    ) {
+    fn write(&self, sequence: u64, sample: AudioPerformanceSample) {
         self.sequence.store(0, Ordering::Release);
-        self.callback_index.store(callback_index, Ordering::Relaxed);
-        self.average_load_scaled
-            .store(render_time_ns.saturating_mul(LOAD_SCALE) / budget_ns.max(1), Ordering::Relaxed);
-        self.peak_load_scaled.store(peak_load_scaled, Ordering::Relaxed);
-        self.average_render_time_ns
-            .store(render_time_ns.checked_div(callback_count).unwrap_or(0), Ordering::Relaxed);
-        self.max_render_time_ns.store(max_render_time_ns, Ordering::Relaxed);
-        self.average_budget_ns
-            .store(budget_ns.checked_div(callback_count).unwrap_or(0), Ordering::Relaxed);
-        self.deadline_miss_count.store(deadline_miss_count, Ordering::Relaxed);
+        self.callback_index.store(sample.callback_index, Ordering::Relaxed);
+        self.average_load_scaled.store(
+            sample.render_time_ns.saturating_mul(LOAD_SCALE) / sample.budget_ns.max(1),
+            Ordering::Relaxed,
+        );
+        self.peak_load_scaled.store(sample.peak_load_scaled, Ordering::Relaxed);
+        self.average_render_time_ns.store(
+            sample.render_time_ns.checked_div(sample.callback_count).unwrap_or(0),
+            Ordering::Relaxed,
+        );
+        self.max_render_time_ns.store(sample.max_render_time_ns, Ordering::Relaxed);
+        self.average_budget_ns.store(
+            sample.budget_ns.checked_div(sample.callback_count).unwrap_or(0),
+            Ordering::Relaxed,
+        );
+        self.deadline_miss_count.store(sample.deadline_miss_count, Ordering::Relaxed);
         self.sequence.store(sequence, Ordering::Release);
     }
 
@@ -515,15 +522,18 @@ impl AudioMetrics {
             let write_index = self.performance_history_write_index.fetch_add(1, Ordering::Relaxed);
             let slot =
                 &self.performance_history[write_index as usize % self.performance_history.len()];
+
             slot.write(
                 write_index + 1,
-                callback_index,
-                render_time_ns,
-                budget_ns,
-                peak_load_scaled,
-                max_render_time_ns,
-                callback_count,
-                deadline_miss_count,
+                AudioPerformanceSample {
+                    callback_index,
+                    render_time_ns,
+                    budget_ns,
+                    peak_load_scaled,
+                    max_render_time_ns,
+                    callback_count,
+                    deadline_miss_count,
+                },
             );
         }
     }
