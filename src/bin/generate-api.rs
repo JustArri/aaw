@@ -25,8 +25,8 @@ fn main() -> ExitCode {
 
 fn generate_openapi(destination: &Path) -> bool {
     let output = destination.join("openapi.json");
-    // The DAV filesystem is not accessed while collecting OpenAPI metadata.
-    let openapi = aaw::server::api_router(".", ".").into_openapi();
+    // The asset DAV filesystem is not accessed while collecting OpenAPI metadata.
+    let openapi = aaw::server::api_router(".").into_openapi();
 
     let json = match openapi.to_pretty_json() {
         Ok(json) => json,

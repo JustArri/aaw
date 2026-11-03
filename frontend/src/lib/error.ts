@@ -1,8 +1,36 @@
 import { unreachable } from './util';
 
 type GatewayErrorOptions = ErrorOptions & {
-    responseBody?: string;
+    responseBody?: unknown;
 };
+
+function responseBodyMessage(responseBody: unknown) {
+    if (typeof responseBody === 'string') {
+        return responseBody.trim() || undefined;
+    }
+    if (responseBody instanceof Error) {
+        return responseBody.message.trim() || undefined;
+    }
+    if (responseBody === null || responseBody === undefined) {
+        return undefined;
+    }
+    if (typeof Blob !== 'undefined' && responseBody instanceof Blob) {
+        return undefined;
+    }
+    if (typeof responseBody === 'object') {
+        const message = Reflect.get(responseBody, 'message');
+        if (typeof message === 'string' && message.trim()) {
+            return message.trim();
+        }
+        try {
+            const serialized = JSON.stringify(responseBody);
+            return serialized && serialized !== '{}' ? serialized : undefined;
+        } catch {
+            return undefined;
+        }
+    }
+    return String(responseBody).trim() || undefined;
+}
 
 export class GatewayError extends Error {
     constructor(
@@ -13,7 +41,7 @@ export class GatewayError extends Error {
             | 'bad-request',
         options?: GatewayErrorOptions
     ) {
-        let message = options?.responseBody?.trim();
+        let message = responseBodyMessage(options?.responseBody);
 
         if (!message) {
             switch (code) {
@@ -46,7 +74,7 @@ export function gatewayNotResponding(cause?: unknown) {
 
 export type GatewayErrorCode = 400 | 401 | 500;
 
-export function gatewayErrorByStatus(status: GatewayErrorCode, responseBody?: string) {
+export function gatewayErrorByStatus(status: GatewayErrorCode, responseBody?: unknown) {
     const options = { responseBody };
 
     switch (status) {

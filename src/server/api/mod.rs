@@ -16,13 +16,10 @@ pub mod midi;
 pub mod midi_app_controls;
 pub mod notifications;
 pub mod projects;
-pub mod recordings_dav;
+pub mod recordings;
 pub mod system;
 
-pub fn router(
-    assets_dir: impl AsRef<std::path::Path>,
-    recordings_dir: impl AsRef<std::path::Path>,
-) -> OpenApiRouter<AppState> {
+pub fn router(assets_dir: impl AsRef<std::path::Path>) -> OpenApiRouter<AppState> {
     #[derive(OpenApi)]
     #[openapi(components(schemas(notifications::Notification)))]
     struct Api;
@@ -39,9 +36,9 @@ pub fn router(
         .nest("/system", system::router())
         .nest("/active-project", active_project::router())
         .nest("/projects", projects::router())
+        .nest("/recordings", recordings::router())
         .nest("/assets", assets::router())
         .merge(assets_dav::router("/assets/fs", assets_dir))
-        .merge(recordings_dav::router("/recordings", recordings_dir))
         .routes(routes!(notifications::handler))
 }
 

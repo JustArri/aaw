@@ -259,32 +259,29 @@ async fn run(args: Args) -> anyhow::Result<()> {
 
     let output_stream = Arc::new(Mutex::new(output_stream));
 
-    let root_router =
-        aaw::server::router(assets_dir.clone(), recordings_dir.clone()).with_state(AppState {
-            midi_tx: midi_bc_tx.clone(),
-            midi_runtime: Arc::clone(&midi_runtime),
-            midi_event_senders,
-            engine,
-            engine_handle: engine_handle.clone(),
-            output_stream: Arc::clone(&output_stream),
-            min_instruments: args.min_instruments,
-            min_controllers: args.min_controllers,
-            stream_error: Arc::clone(&stream_error),
-            engine_metrics,
-            aaw_root_dir: aaw_root_dir.into(),
-            projects: Arc::new(RwLock::new(
-                Projects::new(projects_dir).await.context("failed to load projects")?,
-            )),
-            engine_midi_configurations: Arc::new(RwLock::new(engine_midi_configurations)),
-            active_engine_midi_configuration: Arc::new(RwLock::new(
-                active_engine_midi_configuration,
-            )),
-            assets: Arc::new(RwLock::new(
-                Assets::new(assets_dir).await.context("failed to load assets")?,
-            )),
-            recordings_dir: recordings_dir.into(),
-            preferences: Arc::new(RwLock::new(preferences)),
-        });
+    let root_router = aaw::server::router(assets_dir.clone()).with_state(AppState {
+        midi_tx: midi_bc_tx.clone(),
+        midi_runtime: Arc::clone(&midi_runtime),
+        midi_event_senders,
+        engine,
+        engine_handle: engine_handle.clone(),
+        output_stream: Arc::clone(&output_stream),
+        min_instruments: args.min_instruments,
+        min_controllers: args.min_controllers,
+        stream_error: Arc::clone(&stream_error),
+        engine_metrics,
+        aaw_root_dir: aaw_root_dir.into(),
+        projects: Arc::new(RwLock::new(
+            Projects::new(projects_dir).await.context("failed to load projects")?,
+        )),
+        engine_midi_configurations: Arc::new(RwLock::new(engine_midi_configurations)),
+        active_engine_midi_configuration: Arc::new(RwLock::new(active_engine_midi_configuration)),
+        assets: Arc::new(RwLock::new(
+            Assets::new(assets_dir).await.context("failed to load assets")?,
+        )),
+        recordings_dir: recordings_dir.into(),
+        preferences: Arc::new(RwLock::new(preferences)),
+    });
 
     let stop = CancellationToken::new();
     let relay_handle = aaw::spawn_midi_relay_task(
