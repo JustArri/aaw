@@ -1,12 +1,16 @@
 use aaw::{
     APP_VERSION, MAX_BLOCK_SIZE, PACKAGE_NAME,
-    app_state::{AppState, LastProject, Preferences},
+    app_state::{AppState, LastEngineMidiConfiguration, LastProject, Preferences},
     assets::Assets,
     audio::{self, params::DeviceCfgSelection},
     engine::{
         self, EngineContext,
         midi_app_controls::StoredMidiEngineControls,
         project::{CtrProjectStorage, ProjectAsset, StoredProject, StoredProjectVersioned},
+    },
+    engine_midi_configurations::{
+        CtrEngineMidiConfiguration, CtrEngineMidiConfigurationStorage, EngineMidiConfigurations,
+        StoredEngineMidiConfiguration,
     },
     files::{self, load_opt},
     midi::MidiRuntime,
@@ -127,6 +131,8 @@ async fn run(args: Args) -> anyhow::Result<()> {
 
     let projects_dir = aaw_root_dir.join(aaw::PROJECTS_DIR);
     tokio::fs::create_dir_all(&projects_dir).await?;
+    let engine_midi_configurations_dir = aaw_root_dir.join(aaw::ENGINE_MIDI_CONFIGURATIONS_DIR);
+    tokio::fs::create_dir_all(&engine_midi_configurations_dir).await?;
     let assets_dir = aaw_root_dir.join(aaw::ASSETS_DIR);
     tokio::fs::create_dir_all(&assets_dir).await?;
     let recordings_dir = aaw_root_dir.join(aaw::RECORDINGS_DIR);
@@ -163,10 +169,48 @@ async fn run(args: Args) -> anyhow::Result<()> {
 
     let preferences =
         load_opt::<Preferences>(&aaw_root_dir, aaw::CFG_PREFERENCES).await.unwrap_or_default();
-    let midi_app_controls =
-        load_opt::<StoredMidiEngineControls>(&aaw_root_dir, aaw::CFG_MIDI_APP_CONTROLS)
+    let mut engine_midi_configurations =
+        EngineMidiConfigurations::new(engine_midi_configurations_dir)
             .await
-            .unwrap_or_default();
+            .context("failed to load engine MIDI configurations")?;
+    let last_engine_midi_configuration = load_opt::<LastEngineMidiConfiguration>(
+        &aaw_root_dir,
+        aaw::CFG_LAST_ENGINE_MIDI_CONFIGURATION,
+    )
+    .await;
+    let loaded_engine_midi_configuration = match last_engine_midi_configuration {
+        Some(LastEngineMidiConfiguration { id: Some(id) }) => engine_midi_configurations
+            .load(id)
+            .await
+            .ok()
+            .map(|configuration| (configuration, Some(id))),
+        _ => None,
+    };
+    let (engine_midi_configuration, engine_midi_configuration_id) =
+        if let Some(configuration) = loaded_engine_midi_configuration {
+            configuration
+        } else {
+            let midi_app_controls =
+                load_opt::<StoredMidiEngineControls>(&aaw_root_dir, aaw::CFG_MIDI_APP_CONTROLS)
+                    .await
+                    .unwrap_or_default();
+            let input_auto_connections =
+                load_opt(&aaw_root_dir, aaw::CFG_MIDI_AC).await.unwrap_or_default();
+            (
+                StoredEngineMidiConfiguration {
+                    midi_app_controls,
+                    input_auto_connections,
+                    ..Default::default()
+                },
+                None,
+            )
+        };
+    let active_engine_midi_configuration = CtrEngineMidiConfiguration {
+        name: engine_midi_configuration.name.clone(),
+        storage: engine_midi_configuration_id.map(|id| CtrEngineMidiConfigurationStorage { id }),
+    };
+    let midi_app_controls = engine_midi_configuration.midi_app_controls;
+    let midi_auto_connections = engine_midi_configuration.input_auto_connections;
 
     let (project_change_tx, _) = broadcast::channel(args.project_change_bc_capacity);
     let (midi_app_controls_change_tx, _) = broadcast::channel(args.project_change_bc_capacity);
@@ -188,7 +232,6 @@ async fn run(args: Args) -> anyhow::Result<()> {
     .await
     .context("failed to create engine")?;
 
-    let midi_auto_connections = load_opt(&aaw_root_dir, aaw::CFG_MIDI_AC).await.unwrap_or_default();
     let midi_event_senders: Arc<[_]> = Arc::new([midi_relay_tx]);
 
     let midi_runtime = Arc::new(Mutex::new(
@@ -231,6 +274,10 @@ async fn run(args: Args) -> anyhow::Result<()> {
             aaw_root_dir: aaw_root_dir.into(),
             projects: Arc::new(RwLock::new(
                 Projects::new(projects_dir).await.context("failed to load projects")?,
+            )),
+            engine_midi_configurations: Arc::new(RwLock::new(engine_midi_configurations)),
+            active_engine_midi_configuration: Arc::new(RwLock::new(
+                active_engine_midi_configuration,
             )),
             assets: Arc::new(RwLock::new(
                 Assets::new(assets_dir).await.context("failed to load assets")?,

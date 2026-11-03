@@ -44,6 +44,12 @@
         { type: 'item', label: 'System', href: '/system', icon: 'lucide:power' },
         { type: 'title', label: 'Files' },
         { type: 'item', label: 'Projects', href: '/projects', icon: 'lucide:folders' },
+        {
+            type: 'item',
+            label: 'MIDI Configurations',
+            href: '/engine-midi-configurations',
+            icon: 'lucide:file-cog'
+        },
         { type: 'item', label: 'Assets', href: '/assets', icon: 'lucide:archive' },
         { type: 'item', label: 'Recordings', href: '/recordings', icon: 'lucide:file-music' }
     ];

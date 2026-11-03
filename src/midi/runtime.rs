@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::Arc};
 use thiserror::Error;
 use tracing::{info, warn};
+use utoipa::ToSchema;
 
 const LOG_TARGET: &str = "midi-runtime";
 
@@ -148,7 +149,7 @@ pub struct InputPortInfo {
     pub name: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct InputAutoConnection {
     pub preferred_slot_id: Option<usize>,
     pub slot_id_fixed: bool,
@@ -246,6 +247,13 @@ impl MidiRuntime {
 
     pub fn input_auto_connections_mut(&mut self) -> &mut HashMap<String, InputAutoConnection> {
         &mut self.input_auto_connections
+    }
+
+    pub fn replace_input_auto_connections(
+        &mut self,
+        input_auto_connections: HashMap<String, InputAutoConnection>,
+    ) {
+        self.input_auto_connections = input_auto_connections;
     }
 
     fn disconnect_non_existent_inputs(&mut self) -> Result<(), InputSlotError> {

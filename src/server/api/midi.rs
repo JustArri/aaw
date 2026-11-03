@@ -1,6 +1,5 @@
 use crate::{
     app_state::AppState,
-    files,
     midi::{InputAutoConnection, InputSlotError, MidiEvent},
     rt_channels::NotifiedRtSharedProducer,
     server::WsHandlerAction,
@@ -224,8 +223,6 @@ async fn midi_insert_input_auto_connection(
         },
     );
 
-    files::save(&app_state.aaw_root_dir, crate::CFG_MIDI_AC, ac).await;
-
     StatusCode::NO_CONTENT
 }
 
@@ -253,8 +250,6 @@ async fn midi_delete_input_auto_connection(
     let mut rt = app_state.midi_runtime.lock().await;
     let ac = rt.input_auto_connections_mut();
     ac.remove(&req.port_id);
-
-    files::save(&app_state.aaw_root_dir, crate::CFG_MIDI_AC, ac).await;
 
     StatusCode::NO_CONTENT
 }

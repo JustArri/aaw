@@ -2,6 +2,7 @@ use crate::{
     DEFAULT_CHANNEL_COUNT, DEFAULT_SAMPLE_RATE, MAX_BLOCK_SIZE,
     assets::Assets,
     engine::{Engine, EngineHandle, metrics::EngineMetrics},
+    engine_midi_configurations::{CtrEngineMidiConfiguration, EngineMidiConfigurations},
     files,
     midi::{MidiEvent, MidiRuntime},
     projects::Projects,
@@ -37,6 +38,8 @@ pub struct AppState {
     pub engine_metrics: Arc<EngineMetrics>,
     pub aaw_root_dir: Arc<Path>,
     pub projects: Arc<RwLock<Projects>>,
+    pub engine_midi_configurations: Arc<RwLock<EngineMidiConfigurations>>,
+    pub active_engine_midi_configuration: Arc<RwLock<CtrEngineMidiConfiguration>>,
     pub assets: Arc<RwLock<Assets>>,
     pub recordings_dir: Arc<Path>,
     pub preferences: Arc<RwLock<Preferences>>,
@@ -60,11 +63,25 @@ impl AppState {
     pub async fn save_last_project(&self, id: Option<uuid::Uuid>) {
         files::save(&self.aaw_root_dir, crate::CFG_LAST_PROJECT, &LastProject { id }).await;
     }
+
+    pub async fn save_last_engine_midi_configuration(&self, id: Option<uuid::Uuid>) {
+        files::save(
+            &self.aaw_root_dir,
+            crate::CFG_LAST_ENGINE_MIDI_CONFIGURATION,
+            &LastEngineMidiConfiguration { id },
+        )
+        .await;
+    }
 }
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Serialize, Deserialize)]
 pub struct LastProject {
+    pub id: Option<uuid::Uuid>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct LastEngineMidiConfiguration {
     pub id: Option<uuid::Uuid>,
 }
 
