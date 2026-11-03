@@ -5,6 +5,7 @@ use aaw::{
     audio::{self, params::DeviceCfgSelection},
     engine::{
         self, EngineContext,
+        midi_app_controls::StoredMidiEngineControls,
         project::{CtrProjectStorage, ProjectAsset, StoredProject, StoredProjectVersioned},
     },
     files::{self, load_opt},
@@ -162,8 +163,13 @@ async fn run(args: Args) -> anyhow::Result<()> {
 
     let preferences =
         load_opt::<Preferences>(&aaw_root_dir, aaw::CFG_PREFERENCES).await.unwrap_or_default();
+    let midi_app_controls =
+        load_opt::<StoredMidiEngineControls>(&aaw_root_dir, aaw::CFG_MIDI_APP_CONTROLS)
+            .await
+            .unwrap_or_default();
 
     let (project_change_tx, _) = broadcast::channel(args.project_change_bc_capacity);
+    let (midi_app_controls_change_tx, _) = broadcast::channel(args.project_change_bc_capacity);
     let (engine, engine_handle, engine_runtime) = engine::create_engine(
         ProjectAsset { project, storage: project_storage },
         EngineContext {
@@ -175,6 +181,8 @@ async fn run(args: Args) -> anyhow::Result<()> {
             min_instruments: args.min_instruments,
             min_controllers: args.min_controllers,
             project_change_tx,
+            midi_app_controls_change_tx,
+            midi_app_controls,
         },
     )
     .await

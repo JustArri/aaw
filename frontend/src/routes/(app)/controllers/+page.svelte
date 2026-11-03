@@ -1006,6 +1006,8 @@
     let machines = $state<Machine[]>([]);
     let loading = $state(true);
     let adding = $state(false);
+    let addingMidiController = $state(false);
+    let controllerEditorRevision = $state(0);
     let saving = $state(new Set<number>());
     let dirtySaves = $state(new Set<number>());
     let removing = $state(new Set<number>());
@@ -1137,6 +1139,18 @@
             notify.error(errorToUserMessage(cause), { title: 'Add drum machine' });
         } finally {
             adding = false;
+        }
+    }
+
+    async function addMidiController() {
+        addingMidiController = true;
+        try {
+            await api.controllerAppend(instrumentId);
+            controllerEditorRevision += 1;
+        } catch (cause) {
+            notify.error(errorToUserMessage(cause), { title: 'Add MIDI input controller' });
+        } finally {
+            addingMidiController = false;
         }
     }
 
@@ -1430,7 +1444,7 @@
     }
 </script>
 
-<div class="grid min-w-0 gap-4 overflow-x-clip">
+<div class="grid min-w-0 gap-5 overflow-x-clip">
     <header class="flex min-w-0 items-center gap-3">
         <a
             class="border-border bg-surface-button text-foreground-muted hover:text-accent grid size-9 shrink-0 place-items-center rounded-lg border transition-colors"
@@ -1447,15 +1461,10 @@
     {#if Number.isInteger(instrumentId) && instrumentId >= 0}
         <ProjectTransport onchange={load} />
 
-        <section class="grid min-w-0 gap-3">
-            <div class="flex items-center gap-2">
-                <div class="mr-auto">
-                    <h3 class="text-foreground m-0 text-sm font-semibold">Drum machines</h3>
-                    <p class="text-foreground-muted m-0 text-xs">One-bar sequencers</p>
-                </div>
-                <Button variant="accent-outline" busy={adding} onclick={addMachine}>
-                    <Icon icon="lucide:plus" width="1rem" /> Add
-                </Button>
+        <section class="grid min-w-0 gap-4">
+            <div>
+                <h3 class="text-foreground m-0 text-sm font-semibold">Drum machines</h3>
+                <p class="text-foreground-muted m-0 text-xs">One-bar sequencers</p>
             </div>
             {#if loading}<p class="text-foreground-muted m-0 text-sm">Loading drum machines…</p>
             {:else if machines.length === 0}<div
@@ -1482,15 +1491,6 @@
                         </div>
                         <Button
                             size="sm"
-                            variant={machine.data.enabled ? 'accent-outline' : 'secondary'}
-                            onclick={() => {
-                                machine.data.enabled = !machine.data.enabled;
-                                return saveMachine(machine);
-                            }}>
-                            {machine.data.enabled ? 'Enabled' : 'Disabled'}
-                        </Button>
-                        <Button
-                            size="sm"
                             variant="accent-outline"
                             disabled={machine.data.lanes.length >= 64 || saving.has(machine.id)}
                             onclick={() => addLane(machine)}>
@@ -1509,6 +1509,15 @@
                             busyLabel="Clearing"
                             disabled={saving.has(machine.id) || !machineHasSteps(machine)}
                             onconfirm={() => clearMachine(machine)} />
+                        <Button
+                            size="sm"
+                            variant={machine.data.enabled ? 'accent-outline' : 'secondary'}
+                            onclick={() => {
+                                machine.data.enabled = !machine.data.enabled;
+                                return saveMachine(machine);
+                            }}>
+                            {machine.data.enabled ? 'Enabled' : 'Disabled'}
+                        </Button>
                         <TimedConfirmButton
                             label="Remove"
                             confirmLabel="Confirm remove"
@@ -1782,14 +1791,30 @@
                         </p>{/if}
                 </article>
             {/each}
+            <Button
+                class="justify-self-end"
+                variant="accent-outline"
+                busy={adding}
+                onclick={addMachine}>
+                <Icon icon="lucide:plus" width="1rem" /> Add
+            </Button>
         </section>
 
-        <section class="grid gap-2">
+        <section class="grid gap-3">
             <div>
                 <h3 class="text-foreground m-0 text-sm font-semibold">MIDI input controllers</h3>
                 <p class="text-foreground-muted m-0 text-xs">Live MIDI routing and transforms</p>
             </div>
-            <ControllerEditor embedded {instrumentId} />
+            {#key controllerEditorRevision}
+                <ControllerEditor embedded {instrumentId} showAddButton={false} />
+            {/key}
+            <Button
+                class="justify-self-end"
+                variant="accent-outline"
+                busy={addingMidiController}
+                onclick={addMidiController}>
+                <Icon icon="lucide:plus" width="1rem" /> Add
+            </Button>
         </section>
     {:else}<p class="text-danger m-0 text-sm">Select an instrument first.</p>{/if}
 </div>

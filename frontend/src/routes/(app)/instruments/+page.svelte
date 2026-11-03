@@ -37,6 +37,7 @@
         setInstrumentIgnoreVelocityTransform,
         setInstrumentKeyTransform,
         setInstrumentName,
+        setInstrumentSourceFilter,
         setInstrumentSynth,
         setInstrumentUsesGlobalTransposition,
         setInstrumentVelocityTransform
@@ -50,12 +51,18 @@
     } from '$lib/state/synths.svelte';
     import { errorToUserMessage } from '$lib/error';
 
-    let { instrumentId = null, embedded = false } = $props<{
+    let {
+        instrumentId = null,
+        embedded = false,
+        showAddButton = true
+    } = $props<{
         instrumentId?: number | null;
         embedded?: boolean;
+        showAddButton?: boolean;
     }>();
 
     const midiChannels = Array.from({ length: 16 }, (_, channel) => channel);
+    const midiSources = Array.from({ length: 16 }, (_, source) => source);
     const midiControllerNames: Record<number, string> = {
         0: 'Bank select',
         1: 'Modulation',
@@ -161,6 +168,8 @@
     let velocityMin = $state(0);
     let velocityMax = $state(127);
     let ignoreVelocityTransform = $state(false);
+    let sourceFilterType = $state<MidiFilterKind>(MidiFilterKind.Denylist);
+    let sources = $state<number[]>([]);
     let channelFilterType = $state<MidiFilterKind>(MidiFilterKind.Denylist);
     let channels = $state<number[]>([]);
     let ccFilterType = $state<MidiFilterKind>(MidiFilterKind.Denylist);
@@ -247,6 +256,16 @@
                             [...selectedSlot.channel_filter.list].sort(
                                 (left, right) => left - right
                             )
+                        ))
+        )
+    );
+    let sourcesChanged = $derived(
+        Boolean(
+            selectedSlot &&
+                (sourceFilterType !== selectedSlot.source_filter.type ||
+                    JSON.stringify([...sources].sort((left, right) => left - right)) !==
+                        JSON.stringify(
+                            [...selectedSlot.source_filter.list].sort((left, right) => left - right)
                         ))
         )
     );
@@ -431,6 +450,8 @@
         velocityMax =
             slot.velocity_transform.type === 'Linear' ? slot.velocity_transform.data.max : 127;
         ignoreVelocityTransform = slot.ignore_velocity_transform;
+        sourceFilterType = slot.source_filter.type;
+        sources = [...slot.source_filter.list];
         channelFilterType = slot.channel_filter.type;
         channels = [...slot.channel_filter.list];
         ccFilterType = slot.cc_filter.type;
@@ -724,6 +745,33 @@
             }
         } catch (cause) {
             notify.error(errorToUserMessage(cause), { title: 'Update channel filter' });
+        }
+    }
+
+    async function saveSourceFilter() {
+        if (selectedId === null || !sourcesChanged) {
+            return;
+        }
+        const id = selectedId;
+        const filter: MidiFilter = {
+            type: sourceFilterType,
+            list: [...sources].sort((left, right) => left - right)
+        };
+        const succeeded = await run(
+            'Update MIDI source filter',
+            () => setInstrumentSourceFilter(id, filter),
+            'sources'
+        );
+        if (succeeded && selectedId === id) {
+            sources = [...filter.list];
+        }
+    }
+
+    function toggleSource(source: number, checked: boolean) {
+        if (checked) {
+            sources = [...sources, source].sort((left, right) => left - right);
+        } else {
+            sources = sources.filter((item) => item !== source);
         }
     }
 
@@ -1084,16 +1132,18 @@
                     Add a MIDI input controller to route MIDI events into this instrument.
                 </p>
             </div>
-            <Button
-                variant="primary"
-                size="sm"
-                type="button"
-                busy={addingInstrument}
-                disabled={busy}
-                onclick={() => void appendInstrument()}>
-                <Icon icon="lucide:plus" width="1rem" />
-                Add MIDI input
-            </Button>
+            {#if showAddButton}
+                <Button
+                    variant="primary"
+                    size="sm"
+                    type="button"
+                    busy={addingInstrument}
+                    disabled={busy}
+                    onclick={() => void appendInstrument()}>
+                    <Icon icon="lucide:plus" width="1rem" />
+                    Add MIDI input
+                </Button>
+            {/if}
         </section>
     {/if}
 
@@ -1140,21 +1190,30 @@
                                 class={togglingId === selectedId ? 'animate-spin' : ''} />
                             {selectedSlot.enabled ? 'Enabled' : 'Disabled'}
                         </Button>
-                        <Button
-                            variant="secondary"
-                            size="sm"
-                            square
-                            class="size-8.5"
-                            type="button"
-                            aria-label="Add MIDI input controller"
-                            busy={addingInstrument}
+                        {#if showAddButton}
+                            <Button
+                                variant="secondary"
+                                size="sm"
+                                square
+                                class="size-8.5"
+                                type="button"
+                                aria-label="Add MIDI input controller"
+                                busy={addingInstrument}
+                                disabled={busy}
+                                onclick={() => void appendInstrument()}>
+                                <Icon
+                                    icon={addingInstrument ? 'lucide:loader-circle' : 'lucide:plus'}
+                                    width="1.125rem"
+                                    class={addingInstrument ? 'animate-spin' : ''} />
+                            </Button>
+                        {/if}
+                        <TimedConfirmButton
+                            label="Remove"
+                            confirmLabel="Confirm remove"
+                            busyLabel="Removing"
+                            busy={removingInstrument}
                             disabled={busy}
-                            onclick={() => void appendInstrument()}>
-                            <Icon
-                                icon={addingInstrument ? 'lucide:loader-circle' : 'lucide:plus'}
-                                width="1.125rem"
-                                class={addingInstrument ? 'animate-spin' : ''} />
-                        </Button>
+                            onconfirm={deleteSelected} />
                     </div>{:else}<Button
                         variant="ghost"
                         size="md"
@@ -1203,6 +1262,83 @@
                         bind:checked={useGlobalTransposition}
                         onchange={() => void saveTranspositionMode()} />
                 </section>
+
+                <form
+                    class="border-border grid gap-5 border-b p-4"
+                    use:submitControlGroupOnEnter
+                    onsubmit={(event) => {
+                        event.preventDefault();
+                        void saveSourceFilter();
+                    }}>
+                    <h3 class="text-foreground-strong m-0 text-xs font-semibold uppercase">
+                        MIDI input sources
+                    </h3>
+                    <div class="grid gap-2">
+                        <div class="grid min-w-0 gap-4">
+                            <SegmentedControl
+                                name="midi-source-filter-mode"
+                                ariaLabel="MIDI input source filter mode"
+                                compact
+                                bind:value={sourceFilterType}
+                                options={[
+                                    { value: MidiFilterKind.Allowlist, label: 'Allow only' },
+                                    {
+                                        value: MidiFilterKind.Denylist,
+                                        label: 'Allow all except'
+                                    }
+                                ]} />
+                            <div class="grid gap-1.5">
+                                <div class="grid grid-cols-8 gap-1">
+                                    {#each midiSources as source}<label
+                                            class={`has-focus-visible:outline-accent grid min-h-9 cursor-pointer place-items-center rounded-md border font-mono text-xs font-semibold transition-colors has-focus-visible:outline-2 has-focus-visible:outline-offset-2 ${sources.includes(source) ? 'border-accent/60 bg-accent/12 text-accent' : 'border-border-strong bg-surface-inset text-foreground-muted hover:border-accent/35 hover:text-foreground'}`}>
+                                            <input
+                                                class="sr-only"
+                                                type="checkbox"
+                                                checked={sources.includes(source)}
+                                                onchange={(event) =>
+                                                    toggleSource(
+                                                        source,
+                                                        event.currentTarget.checked
+                                                    )} />
+                                            <span>{source + 1}</span>
+                                        </label>{/each}
+                                </div>
+                                <div class="flex justify-end gap-1.5">
+                                    <Button
+                                        variant="secondary"
+                                        size="xs"
+                                        class="text-foreground-muted"
+                                        type="button"
+                                        disabled={sources.length === midiSources.length}
+                                        onclick={() => {
+                                            sources = [...midiSources];
+                                        }}>
+                                        All
+                                    </Button>
+                                    <Button
+                                        variant="secondary"
+                                        size="xs"
+                                        class="text-foreground-muted"
+                                        type="button"
+                                        disabled={sources.length === 0}
+                                        onclick={() => {
+                                            sources = [];
+                                        }}>
+                                        None
+                                    </Button>
+                                </div>
+                            </div>
+                        </div>
+                        <ApplyButton
+                            saving={savingSections.has('sources')}
+                            pending={sourcesChanged} />
+                    </div>
+                    <small class="text-foreground-muted">
+                        Checked input slots are {sourceFilterType === MidiFilterKind.Allowlist
+                            ? 'allowed'
+                            : 'blocked'}.
+                    </small>
+                </form>
 
                 <form
                     class="border-border grid gap-5 border-b p-4"
@@ -1721,16 +1857,18 @@
                     </div>
                 </section>
 
-                <section class="p-4">
-                    <TimedConfirmButton
-                        class="w-full"
-                        label="Remove instrument"
-                        confirmLabel="Confirm remove instrument"
-                        busyLabel="Removing…"
-                        busy={removingInstrument}
-                        disabled={busy}
-                        onconfirm={deleteSelected} />
-                </section>
+                {#if !embedded}
+                    <section class="p-4">
+                        <TimedConfirmButton
+                            class="w-full"
+                            label="Remove instrument"
+                            confirmLabel="Confirm remove instrument"
+                            busyLabel="Removing…"
+                            busy={removingInstrument}
+                            disabled={busy}
+                            onconfirm={deleteSelected} />
+                    </section>
+                {/if}
             </div>
         </aside>
     {/if}

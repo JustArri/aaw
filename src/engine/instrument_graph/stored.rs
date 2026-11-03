@@ -1,6 +1,6 @@
 use crate::{
     engine::{
-        controller_graph::StoredController,
+        controller_graph::{StoredController, StoredControllerV1},
         drum_machine::MusicalTransport,
         effects::Effects,
         graph::{ControllerId, InstrumentId},
@@ -81,8 +81,21 @@ impl From<CtrInstrumentKind> for StoredInstrumentKind {
 }
 
 #[serde_as]
+#[derive(Debug, Clone, Deserialize)]
+pub struct StoredInstrumentV1 {
+    pub name: String,
+    pub kind: StoredInstrumentKind,
+    pub controllers: HashMap<ControllerId, StoredControllerV1>,
+    pub effects: Effects,
+    pub gain: f32,
+
+    #[serde_as(as = "Box<[_; 128]>")]
+    pub last_controller_values: Box<[Option<u8>; 128]>,
+}
+
+#[serde_as]
 #[derive(Debug, Clone, Migrations)]
-#[migrations(version = 1, version_type = u32)]
+#[migrations(version = 2, version_type = u32)]
 pub struct StoredInstrument {
     pub name: String,
     pub kind: StoredInstrumentKind,
@@ -93,6 +106,23 @@ pub struct StoredInstrument {
     #[serde_as(as = "Box<[_; 128]>")]
     #[schema(value_type = [Option<u8>; 128])]
     pub last_controller_values: Box<[Option<u8>; 128]>,
+}
+
+impl From<StoredInstrumentV1> for StoredInstrumentV2 {
+    fn from(value: StoredInstrumentV1) -> Self {
+        Self {
+            name: value.name,
+            kind: value.kind,
+            controllers: value
+                .controllers
+                .into_iter()
+                .map(|(id, controller)| (id, controller.into()))
+                .collect(),
+            effects: value.effects,
+            gain: value.gain,
+            last_controller_values: value.last_controller_values,
+        }
+    }
 }
 
 impl From<&CtrInstrument> for StoredInstrument {
@@ -172,5 +202,73 @@ impl From<CtrInstrumentGraph> for StoredInstrumentGraph {
             global_gain: value.global_gain,
             global_transposition: value.global_transposition,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::controller_graph::{CtrMidiInputController, StoredMidiInputController};
+
+    #[test]
+    fn migrates_v1_instrument_and_its_unversioned_midi_controller() {
+        let mut controllers = HashMap::new();
+        controllers.insert(
+            ControllerId(0),
+            StoredController::MidiInput(StoredMidiInputController::from(
+                CtrMidiInputController::default(),
+            )),
+        );
+        let instrument = StoredInstrument {
+            name: "Instrument".into(),
+            kind: StoredInstrumentKind::Dummy { max_voices: 32 },
+            controllers,
+            effects: Effects::default(),
+            gain: 1.0,
+            last_controller_values: Box::new([None; 128]),
+        };
+        let mut value = serde_json::to_value(instrument).expect("serialize instrument");
+        let instrument = value.as_object_mut().expect("instrument should be an object");
+        instrument.insert("version".into(), 1.into());
+        let controller = instrument
+            .get_mut("controllers")
+            .and_then(|controllers| controllers.get_mut("0"))
+            .and_then(|controller| controller.get_mut("data"))
+            .and_then(serde_json::Value::as_object_mut)
+            .expect("MIDI input controller data should be an object");
+        controller.remove("version");
+        controller.remove("source_filter");
+
+        let instrument: StoredInstrument =
+            serde_json::from_value(value).expect("deserialize v1 instrument");
+        let StoredController::MidiInput(controller) = &instrument.controllers[&ControllerId(0)]
+        else {
+            panic!("expected MIDI input controller");
+        };
+
+        assert_eq!(controller.source_filter.as_u128(), u128::MAX);
+    }
+
+    #[test]
+    fn serializes_current_instrument_and_midi_controller_as_v2() {
+        let mut controllers = HashMap::new();
+        controllers.insert(
+            ControllerId(0),
+            StoredController::MidiInput(StoredMidiInputController::from(
+                CtrMidiInputController::default(),
+            )),
+        );
+        let instrument = StoredInstrument {
+            name: String::new(),
+            kind: StoredInstrumentKind::Dummy { max_voices: 32 },
+            controllers,
+            effects: Effects::default(),
+            gain: 1.0,
+            last_controller_values: Box::new([None; 128]),
+        };
+        let value = serde_json::to_value(instrument).expect("serialize instrument");
+
+        assert_eq!(value["version"], 2);
+        assert_eq!(value["controllers"]["0"]["data"]["version"], 2);
     }
 }

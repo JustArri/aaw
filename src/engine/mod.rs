@@ -2,6 +2,7 @@ use crate::{
     DEFAULT_CHANNEL_COUNT, DEFAULT_SAMPLE_RATE, MAX_BLOCK_SIZE,
     engine::{
         instrument_graph::InstrumentGraphError,
+        midi_app_controls::{CtrMidiEngineControls, StoredMidiEngineControls},
         project::{ProjectAsset, ProjectContext},
     },
     rt_channels,
@@ -25,6 +26,7 @@ pub mod drum_machine;
 pub mod effects;
 pub mod graph;
 pub mod instrument_graph;
+pub mod midi_app_controls;
 pub mod project;
 mod rt;
 pub mod user_presets;
@@ -41,6 +43,8 @@ pub struct EngineContext<'a> {
     pub min_instruments: usize,
     pub min_controllers: usize,
     pub project_change_tx: broadcast::Sender<Arc<ProjectChange>>,
+    pub midi_app_controls_change_tx: broadcast::Sender<Arc<CtrMidiEngineControls>>,
+    pub midi_app_controls: StoredMidiEngineControls,
 }
 
 impl<'a> From<&EngineContext<'a>> for ProjectContext<'a> {
@@ -75,9 +79,14 @@ pub async fn create_engine<'a>(
         file_path: PathBuf::new(),
     }));
 
-    let (ctr_project, rt_project, controller_graph) =
+    let (ctr_project, rt_project, controller_graph, project_midi_app_controls) =
         project::prepare(project, (&ctx).into()).await?;
     let controller_graph = Arc::new(RwLock::new(controller_graph));
+    let (ctr_midi_app_controls, rt_midi_app_controls) =
+        midi_app_controls::prepare_engine(ctx.midi_app_controls);
+    let ctr_midi_app_controls = Arc::new(RwLock::new(ctr_midi_app_controls));
+    let rt_midi_app_controls = Arc::new(RwLock::new(rt_midi_app_controls));
+    let project_midi_app_controls = Arc::new(RwLock::new(project_midi_app_controls));
 
     let handle = EngineHandle {
         cmd_tx,
@@ -86,9 +95,13 @@ pub async fn create_engine<'a>(
         next_cmd_id: Arc::new(AtomicU32::new(0)),
         project: Arc::new(RwLock::new(ctr_project)),
         project_change_tx: ctx.project_change_tx,
+        midi_app_controls_change_tx: ctx.midi_app_controls_change_tx,
         audio_rec_state: Arc::clone(&audio_rec_state),
         audio_rec_params: Arc::clone(&audio_rec_params),
         controller_graph: Arc::clone(&controller_graph),
+        ctr_midi_app_controls,
+        rt_midi_app_controls,
+        project_midi_app_controls,
     };
 
     let (cmd_rx, cmd_notify) = cmd_rx.unwrap();

@@ -15,13 +15,6 @@ pub fn derive_migrations(input: TokenStream) -> TokenStream {
 
 fn expand_migrations(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let (version, version_type) = parse_configuration(&input)?;
-    if version != 1 {
-        return Err(Error::new_spanned(
-            &input.ident,
-            "only the initial migration version is currently supported",
-        ));
-    }
-
     if !input.generics.params.is_empty() || input.generics.where_clause.is_some() {
         return Err(Error::new_spanned(
             &input.generics,
@@ -56,30 +49,28 @@ fn expand_migrations(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream
         ));
     }
 
-    let version_literal = Literal::u32_unsuffixed(version);
+    if let Some(attribute) = fields
+        .iter()
+        .flat_map(|field| &field.attrs)
+        .find(|attribute| attribute.path().is_ident("migrations"))
+    {
+        return Err(Error::new_spanned(
+            attribute,
+            "field migrations are not inferred; freeze the previous wire struct and implement its conversion to the next version",
+        ));
+    }
+
     let name = &input.ident;
     let visibility = &input.vis;
     let preview = format_ident!("{name}Preview");
     let versioned = format_ident!("{name}Versioned");
-    let current_wire = format_ident!("{name}V{version}");
-    let current_variant = format_ident!("V{version}");
     let serialize_wire = format_ident!("__{name}Serialize");
     let schema_wire = format_ident!("__{name}Schema");
 
-    let field_names: Vec<_> = fields
+    let field_names = fields
         .iter()
         .map(|field| field.ident.as_ref().expect("named fields were checked"))
-        .collect();
-    let wire_field_definitions = fields.iter().map(|field| {
-        let attrs = serde_attrs(&field.attrs);
-        let visibility = &field.vis;
-        let ident = field.ident.as_ref().expect("named fields were checked");
-        let ty = &field.ty;
-        quote! {
-            #(#attrs)*
-            #visibility #ident: #ty
-        }
-    });
+        .collect::<Vec<_>>();
     let serialize_field_definitions = fields.iter().map(|field| {
         let attrs = serde_attrs(&field.attrs);
         let ident = field.ident.as_ref().expect("named fields were checked");
@@ -111,6 +102,64 @@ fn expand_migrations(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream
         .collect();
     let schema_attrs =
         if schema_attrs.is_empty() { vec![quote!(#[schema(as = #name)])] } else { schema_attrs };
+    let versions = (1..=version).collect::<Vec<_>>();
+    let version_literals =
+        versions.iter().map(|version| Literal::u32_unsuffixed(*version)).collect::<Vec<_>>();
+    let wire_names =
+        versions.iter().map(|version| format_ident!("{name}V{version}")).collect::<Vec<_>>();
+    let variant_names =
+        versions.iter().map(|version| format_ident!("V{version}")).collect::<Vec<_>>();
+
+    let variant_definitions = variant_names
+        .iter()
+        .zip(&wire_names)
+        .map(|(variant, wire)| quote!(#variant(#wire)))
+        .collect::<Vec<_>>();
+    let version_match_arms = variant_names
+        .iter()
+        .zip(&version_literals)
+        .map(|(variant, literal)| quote!(Self::#variant(_) => Some(#literal)))
+        .collect::<Vec<_>>();
+    let current_wire = wire_names.last().expect("at least version 1");
+    let wire_field_definitions = fields.iter().map(|field| {
+        let attrs = serde_attrs(&field.attrs);
+        let visibility = &field.vis;
+        let ident = field.ident.as_ref().expect("named fields were checked");
+        let ty = &field.ty;
+        quote! {
+            #(#attrs)*
+            #visibility #ident: #ty
+        }
+    });
+    let deserialize_match_arms = variant_names
+        .iter()
+        .zip(&wire_names)
+        .zip(&version_literals)
+        .map(|((variant, wire), literal)| {
+            quote! {
+                #literal => {
+                    let value = ::serde_json::from_value::<#wire>(value)
+                        .map_err(D::Error::custom)?;
+                    Ok(Self::#variant(value))
+                }
+            }
+        })
+        .collect::<Vec<_>>();
+    let migration_match_arms = (0..versions.len().saturating_sub(1))
+        .map(|index| {
+            let source_variant = &variant_names[index];
+            let target_variant = &variant_names[index + 1];
+
+            quote! {
+                Self::#source_variant(value) => {
+                    Self::#target_variant(::core::convert::Into::into(value))
+                }
+            }
+        })
+        .collect::<Vec<_>>();
+    let current_variant = variant_names.last().expect("at least version 1");
+    let current_assignments = field_names.iter().map(|field| quote!(#field: value.#field));
+    let current_version_literal = Literal::u32_unsuffixed(version);
     let error_context = name.to_string();
 
     Ok(quote! {
@@ -120,16 +169,16 @@ fn expand_migrations(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream
         }
 
         #visibility enum #versioned {
-            #current_variant(#current_wire),
+            #(#variant_definitions,)*
             Current(#name),
         }
 
         impl #versioned {
-            pub const CURRENT_VERSION: #version_type = #version_literal;
+            pub const CURRENT_VERSION: #version_type = #current_version_literal;
 
             pub fn version(&self) -> ::core::option::Option<#version_type> {
                 match self {
-                    Self::#current_variant(_) => Some(#version_literal),
+                    #(#version_match_arms,)*
                     Self::Current(_) => None,
                 }
             }
@@ -141,8 +190,9 @@ fn expand_migrations(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream
 
             pub fn migrate_to_next(self) -> Self {
                 match self {
+                    #(#migration_match_arms,)*
                     Self::#current_variant(value) => Self::Current(#name {
-                        #(#field_names: value.#field_names,)*
+                        #(#current_assignments,)*
                     }),
                     current @ Self::Current(_) => current,
                 }
@@ -172,11 +222,7 @@ fn expand_migrations(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream
                     .map_err(D::Error::custom)?;
 
                 match preview.version {
-                    #version_literal => {
-                        let value = ::serde_json::from_value::<#current_wire>(value)
-                            .map_err(D::Error::custom)?;
-                        Ok(Self::#current_variant(value))
-                    }
+                    #(#deserialize_match_arms,)*
                     version => Err(D::Error::custom(format_args!(
                         "unsupported version: {version} ({})",
                         #error_context,

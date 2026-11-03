@@ -20,11 +20,24 @@
     import { gatewayOnline } from '$lib/state/gateway.svelte';
 
     import Icon from '@iconify/svelte';
+    import { onMount } from 'svelte';
 
-    let { items, activeLabel }: { items: NavigationEntry[]; activeLabel: string } = $props();
-    let links = $derived(items.filter((item): item is NavigationLink => item.type === 'item'));
+    let {
+        items,
+        activeHref,
+        open,
+        onClose
+    }: {
+        items: NavigationEntry[];
+        activeHref: string;
+        open: boolean;
+        onClose: () => void;
+    } = $props();
     let outputStream = $derived(audioOutputStream());
     let hostOutputs = $derived(audioHostOutputs());
+    let navigationElement: HTMLElement | undefined = $state();
+    let canScrollUp = $state(false);
+    let canScrollDown = $state(false);
     let activeOutput = $derived(
         hostOutputs
             .find((entry) => entry.host.id === outputStream?.host_id)
@@ -34,14 +47,47 @@
     function formatSampleRate(sampleRate: number) {
         return `${(sampleRate / 1_000).toLocaleString(undefined, { maximumFractionDigits: 3 })} kHz`;
     }
+
+    function updateScrollHints() {
+        if (!navigationElement) {
+            return;
+        }
+
+        canScrollUp = navigationElement.scrollTop > 1;
+        canScrollDown =
+            navigationElement.scrollTop + navigationElement.clientHeight <
+            navigationElement.scrollHeight - 1;
+    }
+
+    onMount(() => {
+        if (!navigationElement) {
+            return;
+        }
+
+        const observer = new ResizeObserver(updateScrollHints);
+        observer.observe(navigationElement);
+        updateScrollHints();
+
+        return () => observer.disconnect();
+    });
 </script>
 
+{#if open}
+    <button
+        class="bg-scrim/60 fixed inset-0 z-40 cursor-pointer border-0 backdrop-blur-[0.125rem] min-[56.25rem]:hidden"
+        type="button"
+        aria-label="Close navigation"
+        onclick={onClose}>
+    </button>
+{/if}
+
 <aside
-    class="min-[56.25rem]:border-border min-[56.25rem]:bg-surface-1 hidden min-[56.25rem]:sticky min-[56.25rem]:top-0 min-[56.25rem]:flex min-[56.25rem]:h-screen min-[56.25rem]:flex-col min-[56.25rem]:border-r min-[56.25rem]:px-3.25 min-[56.25rem]:pt-6 min-[56.25rem]:pb-3.75">
-    <div class="flex items-center gap-3 px-2 pt-0 pb-8">
+    class={`border-border bg-surface-1 fixed inset-y-0 left-0 z-50 flex h-dvh min-h-0 w-[min(15rem,calc(100vw-3rem))] flex-col border-r px-3.25 pt-6 pb-[max(0.9375rem,env(safe-area-inset-bottom))] shadow-2xl transition-[transform,visibility] duration-200 min-[56.25rem]:visible min-[56.25rem]:static min-[56.25rem]:z-auto min-[56.25rem]:w-auto min-[56.25rem]:translate-x-0 min-[56.25rem]:pb-3.75 min-[56.25rem]:shadow-none ${open ? 'visible translate-x-0' : 'invisible -translate-x-full'}`}>
+    <div class="flex items-center gap-3 px-2 pb-8">
         <div
             class="border-accent/40 bg-accent/9 flex size-8.5 items-center justify-center gap-0.5 rounded-[0.5625rem] border"
-            aria-hidden="true">
+            role="img"
+            aria-label="AAW">
             <i class="bg-accent h-2 w-0.5 rounded-full"></i>
             <i class="bg-accent h-4.5 w-0.5 rounded-full"></i>
             <i class="bg-accent h-3 w-0.5 rounded-full"></i>
@@ -55,26 +101,51 @@
         </div>
     </div>
 
-    <nav class="grid gap-1" aria-label="Primary navigation">
-        {#each items as item}
-            {#if item.type === 'title'}
-                <span
-                    class="text-foreground-inactive mx-3 mt-4 mb-1 block text-xs font-bold tracking-[.16em] uppercase first:mt-0">
-                    {item.label}
-                </span>
-            {:else}
-                <a
-                    class={`hover:bg-surface-hover hover:text-foreground relative flex w-full cursor-pointer items-center gap-3 rounded-lg border-0 px-3 py-2.5 text-sm ${activeLabel === item.label ? 'bg-accent/10 text-accent' : 'text-foreground-muted bg-transparent'}`}
-                    href={item.href}>
-                    <Icon icon={item.icon} width="1.125rem" />
-                    <span>{item.label}</span>
-                </a>
-            {/if}
-        {/each}
-    </nav>
+    <div class="relative min-h-0 flex-1 overflow-hidden">
+        <nav
+            bind:this={navigationElement}
+            class="grid h-full min-h-0 [scrollbar-width:none] content-start gap-1 overflow-y-auto [&::-webkit-scrollbar]:hidden"
+            aria-label="Primary navigation"
+            onscroll={updateScrollHints}>
+            {#each items as item}
+                {#if item.type === 'title'}
+                    <span
+                        class="text-foreground-inactive mx-3 mt-4 mb-1 block text-xs font-bold tracking-[.16em] uppercase first:mt-0">
+                        {item.label}
+                    </span>
+                {:else}
+                    <a
+                        class={`hover:bg-surface-hover hover:text-foreground relative flex min-h-10 w-full cursor-pointer items-center gap-3 rounded-lg border-0 px-3 py-2.5 text-sm ${activeHref === item.href ? 'bg-accent/10 text-accent' : 'text-foreground-muted bg-transparent'}`}
+                        href={item.href}
+                        aria-label={item.label}
+                        onclick={onClose}>
+                        <Icon icon={item.icon} width="1.125rem" />
+                        <span>{item.label}</span>
+                    </a>
+                {/if}
+            {/each}
+        </nav>
+
+        {#if canScrollUp}
+            <div
+                class="from-surface-1 pointer-events-none absolute inset-x-0 top-0 flex h-8 items-start justify-center bg-linear-to-b to-transparent pt-0.5"
+                aria-hidden="true">
+                <Icon class="text-foreground-inactive" icon="lucide:chevron-up" width="1rem" />
+            </div>
+        {/if}
+        {#if canScrollDown}
+            <div
+                class="from-surface-1 pointer-events-none absolute inset-x-0 bottom-0 flex h-10 items-end justify-center bg-linear-to-t to-transparent pb-0.5"
+                aria-hidden="true">
+                <Icon class="text-foreground-inactive" icon="lucide:chevron-down" width="1rem" />
+            </div>
+        {/if}
+    </div>
 
     <div class="mt-auto">
-        <div class="border-border mb-1.5 flex items-center gap-2.5 border-b px-2.5 py-4">
+        <div
+            class="border-border mb-1.5 flex items-center gap-2.5 border-b px-2.5 py-4"
+            title={`Engine ${gatewayOnline() ? 'online' : 'offline'}`}>
             <EngineStatusIndicator />
             <div class="min-w-0 flex-1">
                 <strong class="block text-xs">
@@ -102,23 +173,12 @@
             </div>
         </div>
         <a
-            class={`hover:bg-surface-hover hover:text-foreground flex w-full cursor-pointer items-center gap-3 rounded-lg border-0 px-3 py-2.5 text-sm ${activeLabel === 'Settings' ? 'bg-accent/10 text-accent' : 'text-foreground-muted bg-transparent'}`}
-            href="/settings">
+            class={`hover:bg-surface-hover hover:text-foreground flex min-h-10 w-full cursor-pointer items-center gap-3 rounded-lg border-0 px-3 py-2.5 text-sm ${activeHref === '/settings' ? 'bg-accent/10 text-accent' : 'text-foreground-muted bg-transparent'}`}
+            href="/settings"
+            aria-label="Settings"
+            onclick={onClose}>
             <Icon icon="lucide:settings" width="1.125rem" />
             <span>Settings</span>
         </a>
     </div>
 </aside>
-
-<nav
-    class="border-border-strong bg-surface-1/97 fixed right-0 bottom-0 left-0 z-40 flex min-h-17.25 overflow-x-auto border-t px-[max(0.25rem,env(safe-area-inset-right))] pt-1.25 pb-[max(0.3125rem,env(safe-area-inset-bottom))] backdrop-blur-md min-[56.25rem]:hidden"
-    aria-label="Primary navigation">
-    {#each links as item}
-        <a
-            class={`relative flex min-w-16 flex-none cursor-pointer flex-col items-center justify-center gap-1 border-0 bg-transparent px-3 text-xs ${activeLabel === item.label ? 'text-accent' : 'text-foreground-nav'}`}
-            href={item.href}>
-            <Icon class="shrink-0" icon={item.icon} width="1.1875rem" />
-            <span class="whitespace-nowrap">{item.label}</span>
-        </a>
-    {/each}
-</nav>

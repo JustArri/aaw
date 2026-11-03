@@ -22,6 +22,7 @@ export type ControllerSlot = {
     controller_id: number;
     synth_id: number;
     enabled: boolean;
+    source_filter: import('$lib/generated/models').MidiFilter;
     ignore_key_transform: boolean;
     key_transform: import('$lib/generated/models').MidiKeyTransform;
     ignore_velocity_transform: boolean;

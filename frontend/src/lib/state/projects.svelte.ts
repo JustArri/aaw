@@ -105,7 +105,7 @@ export async function saveProject(project: StoredProject) {
     }
 }
 
-export async function loadProject(projectId: string) {
+export async function downloadProjectFile(projectId: string) {
     if (loading) {
         return;
     }
@@ -125,9 +125,12 @@ export async function loadProject(projectId: string) {
     switch (rsp.status) {
         case 200:
             return rsp.data;
-        default:
+        default: {
+            const errorData: unknown = rsp.data;
+            const message = errorData instanceof Blob ? await errorData.text() : String(errorData);
             reportGatewayError(rsp.status);
-            throw gatewayErrorByStatus(rsp.status, rsp.data);
+            throw gatewayErrorByStatus(rsp.status, message);
+        }
     }
 }
 

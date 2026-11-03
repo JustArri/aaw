@@ -2,6 +2,7 @@ use crate::{
     app_state::AppState,
     engine::{
         EngineError,
+        midi_app_controls::{StoredMidiProjectControls, prepare_project},
         project::{
             self, CtrProject, CtrProjectStorage, ProjectAsset, ProjectContext, StoredProject,
         },
@@ -33,6 +34,7 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(set_user_presets))
         .routes(routes!(user_presets))
         .routes(routes!(activate_user_preset))
+        .routes(routes!(midi_app_controls, set_midi_app_controls))
         .merge(instrument_graph::router())
         .merge(controller_graph::router())
 }
@@ -52,7 +54,7 @@ async fn new_active_project(
 ) -> Result<StatusCode, (StatusCode, String)> {
     let stream_config = app_state.stream_config().await;
 
-    let (ctr_project, rt_project, controller_graph) = project::prepare(
+    let (ctr_project, rt_project, controller_graph, midi_app_controls) = project::prepare(
         ProjectAsset { project: StoredProject::default(), storage: None },
         ProjectContext {
             assets_dir: &app_state.assets.read().await.dir,
@@ -63,7 +65,10 @@ async fn new_active_project(
     )
     .await?;
 
-    app_state.engine_handle.replace_project(ctr_project, rt_project, controller_graph).await?;
+    app_state
+        .engine_handle
+        .replace_project(ctr_project, rt_project, controller_graph, midi_app_controls)
+        .await?;
     app_state.save_last_project(None).await;
 
     Ok(StatusCode::NO_CONTENT)
@@ -107,7 +112,7 @@ async fn import_active_project(
 ) -> Result<StatusCode, (StatusCode, String)> {
     let stream_config = app_state.stream_config().await;
 
-    let (ctr_project, rt_project, controller_graph) = project::prepare(
+    let (ctr_project, rt_project, controller_graph, midi_app_controls) = project::prepare(
         ProjectAsset { project, storage: None },
         ProjectContext {
             assets_dir: &app_state.assets.read().await.dir,
@@ -118,7 +123,10 @@ async fn import_active_project(
     )
     .await?;
 
-    app_state.engine_handle.replace_project(ctr_project, rt_project, controller_graph).await?;
+    app_state
+        .engine_handle
+        .replace_project(ctr_project, rt_project, controller_graph, midi_app_controls)
+        .await?;
     app_state.save_last_project(None).await;
 
     Ok(StatusCode::NO_CONTENT)
@@ -281,30 +289,40 @@ async fn activate_user_preset(
     State(app_state): State<AppState>,
     Path(path): Path<UserPresetPath>,
 ) -> Result<StatusCode, (StatusCode, String)> {
-    let project = app_state.engine_handle.project().await;
-    let Some(preset) = project.user_presets.entries.get(path.preset_id) else {
+    if app_state.engine_handle.project().await.user_presets.entries.get(path.preset_id).is_none() {
         return Err((StatusCode::NOT_FOUND, format!("user preset #{} not found", path.preset_id)));
-    };
-    let preset_controllers = preset.controllers.clone();
-    let controller_addresses: Vec<_> = (&project.instrument_graph.instruments)
-        .into_iter()
-        .flat_map(|(instrument_id, instrument)| {
-            instrument.controllers.iter_valid_ids().map(|controller_id| {
-                crate::engine::graph::ControllerAddress {
-                    instrument_id: *instrument_id,
-                    controller_id: *controller_id,
-                }
-            })
-        })
-        .collect();
-    drop(project);
-
-    for address in controller_addresses {
-        let enabled = preset_controllers.contains(&address);
-        app_state.engine_handle.controller_set_enabled(address, enabled).await;
     }
+    app_state.engine_handle.activate_user_preset(path.preset_id).await;
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+//--------------------------------------------------------------------------------------------------
+
+#[utoipa::path(
+    get,
+    path = "/midi-app-controls",
+    operation_id = "project_midi_app_controls",
+    responses((status = OK, body = StoredMidiProjectControls, description = "Project MIDI app controls"))
+)]
+async fn midi_app_controls(State(app_state): State<AppState>) -> Json<StoredMidiProjectControls> {
+    Json(app_state.engine_handle.project().await.midi_app_controls.clone().into())
+}
+
+#[utoipa::path(
+    put,
+    path = "/midi-app-controls",
+    operation_id = "set_project_midi_app_controls",
+    request_body(content = StoredMidiProjectControls, content_type = "application/json"),
+    responses((status = NO_CONTENT, description = "Project MIDI app controls replaced"))
+)]
+async fn set_midi_app_controls(
+    State(app_state): State<AppState>,
+    Json(stored): Json<StoredMidiProjectControls>,
+) -> StatusCode {
+    let (controls, _) = prepare_project(stored);
+    app_state.engine_handle.set_midi_project_controls(controls).await;
+    StatusCode::NO_CONTENT
 }
 
 //--------------------------------------------------------------------------------------------------

@@ -11,6 +11,7 @@ pub mod assets;
 pub mod assets_dav;
 pub mod audio;
 pub mod midi;
+pub mod midi_app_controls;
 pub mod notifications;
 pub mod projects;
 pub mod recordings_dav;
@@ -29,6 +30,7 @@ pub fn router(
         .routes(routes!(silence))
         .routes(routes!(effects_tuning))
         .nest("/midi", midi::router())
+        .nest("/midi-app-controls", midi_app_controls::router())
         .nest("/audio", audio::router())
         .nest("/system", system::router())
         .nest("/active-project", active_project::router())

@@ -184,6 +184,10 @@ export async function setInstrumentChannelFilter(id: number, channel_filter: Mid
     await replaceController(id, { channel_filter });
 }
 
+export async function setInstrumentSourceFilter(id: number, source_filter: MidiFilter) {
+    await replaceController(id, { source_filter });
+}
+
 export async function setInstrumentCcFilter(id: number, cc_filter: MidiFilter) {
     await replaceController(id, { cc_filter });
 }

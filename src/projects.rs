@@ -155,10 +155,36 @@ impl Projects {
         Ok(project)
     }
 
+    pub async fn read_file(&self, id: uuid::Uuid) -> Result<Vec<u8>, std::io::Error> {
+        fs::read(Self::project_path(&self.dir, id)).await
+    }
+
     pub async fn delete(&mut self, id: uuid::Uuid) -> Result<(), StoredProjectError> {
         let path = Self::project_path(&self.dir, id);
         fs::remove_file(path).await?;
         let _ = self.list.remove(&id);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn reads_project_file_without_parsing_or_reencoding_it() {
+        let directory = std::env::temp_dir().join(format!("aaw-projects-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&directory).await.expect("create temporary project directory");
+        let id = uuid::Uuid::new_v4();
+        let expected = b"not valid JSON: \xff";
+        fs::write(Projects::project_path(&directory, id), expected)
+            .await
+            .expect("write project file");
+        let projects = Projects { dir: directory.clone(), list: HashMap::new() };
+
+        let actual = projects.read_file(id).await.expect("read raw project file");
+
+        assert_eq!(actual, expected);
+        fs::remove_dir_all(directory).await.expect("remove temporary project directory");
     }
 }

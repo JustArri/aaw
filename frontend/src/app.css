@@ -44,9 +44,10 @@
     --accent-foreground: #061017;
     --success: #19875d;
     --success-glow: rgb(25 135 93 / 0.45);
-    --danger: #b74758;
-    --danger-border: #b14d5c;
-    --danger-foreground: #be4054;
+    --danger: #a4515f;
+    --danger-fill: #9f5965;
+    --danger-border: #9a5e67;
+    --danger-foreground: #a4515f;
     --contrast: #000000;
     --scrim: #000000;
     --overlay-shadow: rgb(0 0 0 / 0.45);
@@ -122,9 +123,10 @@
     --accent-foreground: #061017;
     --success: #55ca96;
     --success-glow: rgb(85 202 150 / 0.65);
-    --danger: #d17784;
-    --danger-border: #a74f5c;
-    --danger-foreground: #dc7d89;
+    --danger: #bd7882;
+    --danger-fill: #965864;
+    --danger-border: #83555d;
+    --danger-foreground: #c17c86;
     --contrast: #ffffff;
     --scrim: #000000;
     --overlay-shadow: rgb(0 0 0 / 0.45);
@@ -208,6 +210,7 @@
     --color-accent-foreground: var(--accent-foreground);
     --color-success: var(--success);
     --color-danger: var(--danger);
+    --color-danger-fill: var(--danger-fill);
     --color-danger-border: var(--danger-border);
     --color-danger-foreground: var(--danger-foreground);
     --color-contrast: var(--contrast);

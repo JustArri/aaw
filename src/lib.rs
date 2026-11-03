@@ -37,6 +37,8 @@ pub const CFG_LAST_PROJECT_SUBJECT: &str = "last project";
 pub const CFG_LAST_PROJECT: (&str, &str) = ("config/last-project.json", CFG_LAST_PROJECT_SUBJECT);
 pub const CFG_MIDI_AC: (&str, &str) =
     ("config/midi-auto-connections.json", "midi auto-connections");
+pub const CFG_MIDI_APP_CONTROLS: (&str, &str) =
+    ("config/midi-app-controls.json", "MIDI app controls");
 pub const CFG_PREFERENCES: (&str, &str) = ("config/preferences.json", "preferences");
 pub const PROJECTS_DIR: &str = "projects";
 pub const ASSETS_DIR: &str = "assets";

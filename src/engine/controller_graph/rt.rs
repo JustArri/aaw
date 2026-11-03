@@ -24,6 +24,7 @@ impl RtController {
 
 pub struct RtMidiInputController {
     pub enabled: bool,
+    pub source_mask: u128,
     pub ignore_key_transform: bool,
     pub key_transform: CompiledMidiKeyTransform,
     pub ignore_velocity_transform: bool,
@@ -41,6 +42,7 @@ impl Default for RtMidiInputController {
     fn default() -> Self {
         Self {
             enabled: true,
+            source_mask: u128::MAX,
             ignore_key_transform: false,
             key_transform: MidiKeyTransform::default().compile(),
             ignore_velocity_transform: false,
@@ -58,6 +60,9 @@ impl Default for RtMidiInputController {
 
 impl RtMidiInputController {
     fn process(&self, event: MidiEvent, global_transposition: i8) -> Option<MidiEvent> {
+        if event.slot >= u128::BITS as usize || self.source_mask & (1u128 << event.slot) == 0 {
+            return None;
+        }
         if self.channel_mask & (1u16 << event.channel) == 0 {
             return None;
         }

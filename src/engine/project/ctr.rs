@@ -1,6 +1,6 @@
 use crate::engine::{
     drum_machine::MusicalTransport, instrument_graph::CtrInstrumentGraph,
-    user_presets::CtrUserPresets,
+    midi_app_controls::CtrMidiProjectControls, user_presets::CtrUserPresets,
 };
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -21,6 +21,7 @@ pub struct CtrProject {
     pub name: String,
     pub instrument_graph: CtrInstrumentGraph,
     pub user_presets: CtrUserPresets,
+    pub midi_app_controls: CtrMidiProjectControls,
     pub transport: MusicalTransport,
 }
 

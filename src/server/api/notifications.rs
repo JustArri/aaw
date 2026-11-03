@@ -5,6 +5,7 @@ use crate::{
         effects::Effects,
         graph::{ControllerAddress, InstrumentId},
         instrument_graph::CtrInstrumentKind,
+        midi_app_controls::{CtrMidiEngineControls, CtrMidiProjectControls},
         project::CtrProjectStorage,
     },
     midi::{MidiEvent, MidiFilter, MidiKeyTransform, MidiVelocityTransform},
@@ -29,6 +30,7 @@ use utoipa::ToSchema;
 pub enum Notification<'a> {
     MidiEvent(&'a MidiEvent),
     ProjectChange(&'a ProjectChange),
+    EngineMidiAppControls(&'a CtrMidiEngineControls),
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -57,6 +59,7 @@ pub enum ProjectChangeKind {
     GlobalTransposition { transposition: i8 },
     Controller { address: ControllerAddress, removed: bool },
     ControllerEnabled { address: ControllerAddress, flag: bool },
+    ControllerSourceFilter { address: ControllerAddress, filter: MidiFilter },
     ControllerIgnoreKeyTransform { address: ControllerAddress, flag: bool },
     ControllerKeyTransform { address: ControllerAddress, transform: MidiKeyTransform },
     ControllerIgnoreVelocityTransform { address: ControllerAddress, flag: bool },
@@ -70,6 +73,7 @@ pub enum ProjectChangeKind {
     ControllerUseGlobalTransposition { address: ControllerAddress, flag: bool },
     ControllerName { address: ControllerAddress, name: String },
     UserPresets,
+    MidiAppControls { controls: CtrMidiProjectControls },
     Transport { transport: MusicalTransport },
 }
 
@@ -99,6 +103,7 @@ pub async fn handler(
 async fn handle_socket(mut socket: WebSocket, state: AppState) {
     let mut midi_rx = state.midi_tx.subscribe();
     let mut project_change_rx = state.engine_handle.subscribe_project_changes();
+    let mut midi_app_controls_change_rx = state.engine_handle.subscribe_midi_app_controls_changes();
 
     loop {
         let action = tokio::select! {
@@ -111,6 +116,12 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
             rx_result = project_change_rx.recv() => {
                 handle_broadcast_rx_result(rx_result, &mut socket, |change| {
                     Notification::ProjectChange(change)
+                })
+                .await
+            }
+            rx_result = midi_app_controls_change_rx.recv() => {
+                handle_broadcast_rx_result(rx_result, &mut socket, |controls| {
+                    Notification::EngineMidiAppControls(controls)
                 })
                 .await
             }

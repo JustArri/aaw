@@ -9,7 +9,7 @@ use crate::{
 use axum::{
     Json,
     extract::{Path, State},
-    http::StatusCode,
+    http::{StatusCode, header},
 };
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
@@ -149,7 +149,7 @@ async fn load_active_project(
     let revision = project.revision;
     let id = path.project_id;
 
-    let (ctr_project, rt_project, controller_graph) = project::prepare(
+    let (ctr_project, rt_project, controller_graph, midi_app_controls) = project::prepare(
         ProjectAsset { project, storage: Some(CtrProjectStorage { id, revision }) },
         ProjectContext {
             assets_dir: &app_state.assets.read().await.dir,
@@ -160,7 +160,10 @@ async fn load_active_project(
     )
     .await?;
 
-    app_state.engine_handle.replace_project(ctr_project, rt_project, controller_graph).await?;
+    app_state
+        .engine_handle
+        .replace_project(ctr_project, rt_project, controller_graph, midi_app_controls)
+        .await?;
     app_state.save_last_project(Some(id)).await;
 
     Ok(StatusCode::NO_CONTENT)
@@ -258,9 +261,9 @@ async fn delete_project(
     responses(
         (
             status = OK,
-            body = StoredProject,
-            content_type = "application/json",
-            description = "Project deleted"
+            body = String,
+            content_type = "application/octet-stream",
+            description = "Original project file"
         ),
         (status = BAD_REQUEST, body = String, description = "Bad Request"),
         (status = INTERNAL_SERVER_ERROR, body = String, description = "Internal Server Error"),
@@ -269,13 +272,22 @@ async fn delete_project(
 async fn read_project(
     State(app_state): State<AppState>,
     Path(path): Path<ProjectPath>,
-) -> Result<Json<StoredProject>, (StatusCode, String)> {
-    let mut projects = app_state.projects.write().await;
-    let project = projects
-        .load(path.project_id)
+) -> Result<([(header::HeaderName, String); 2], Vec<u8>), (StatusCode, String)> {
+    let projects = app_state.projects.read().await;
+    let content = projects
+        .read_file(path.project_id)
         .await
         .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
-    Ok(Json(project))
+    Ok((
+        [
+            (header::CONTENT_TYPE, "application/octet-stream".into()),
+            (
+                header::CONTENT_DISPOSITION,
+                format!("attachment; filename=\"{}.json\"", path.project_id),
+            ),
+        ],
+        content,
+    ))
 }
 
 //--------------------------------------------------------------------------------------------------

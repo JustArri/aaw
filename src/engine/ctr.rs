@@ -11,6 +11,10 @@ use crate::{
             CtrInstrument, CtrInstrumentKind, CtrInstrumentProgramChange, RtInstrument,
             RtInstrumentKind,
         },
+        midi_app_controls::{
+            CtrMidiEngineControls, CtrMidiProjectControls, MidiAppAction, RtMidiEngineControls,
+            RtMidiProjectControls,
+        },
         project::{CtrProject, CtrProjectStorage, RtProject, StoredProject},
         user_presets::CtrUserPresets,
     },
@@ -70,13 +74,24 @@ pub struct EngineHandle {
     pub(super) next_cmd_id: Arc<AtomicU32>,
     pub(super) project: Arc<RwLock<CtrProject>>,
     pub(super) controller_graph: Arc<RwLock<RtControllerGraph>>,
+    pub(super) ctr_midi_app_controls: Arc<RwLock<CtrMidiEngineControls>>,
+    pub(super) rt_midi_app_controls: Arc<RwLock<RtMidiEngineControls>>,
+    pub(super) project_midi_app_controls: Arc<RwLock<RtMidiProjectControls>>,
     pub(super) project_change_tx: broadcast::Sender<Arc<ProjectChange>>,
+    pub(super) midi_app_controls_change_tx: broadcast::Sender<Arc<CtrMidiEngineControls>>,
     pub(super) audio_rec_state: Arc<RwLock<AudioRecordingState>>,
     pub(super) audio_rec_params: Arc<Mutex<AudioRecordingParams>>,
 }
 
 impl EngineHandle {
     pub async fn process_midi_event(&self, event: MidiEvent) {
+        let mut app_actions = Vec::new();
+        self.rt_midi_app_controls.read().await.process(event, |action| app_actions.push(action));
+        self.project_midi_app_controls
+            .read()
+            .await
+            .process(event, |action| app_actions.push(action));
+
         let mut processed = Vec::new();
         self.controller_graph
             .read()
@@ -106,6 +121,45 @@ impl EngineHandle {
                 _ => {}
             }
         }
+
+        for action in app_actions {
+            self.execute_midi_app_action(action).await;
+        }
+    }
+
+    async fn execute_midi_app_action(&self, action: MidiAppAction) {
+        match action {
+            MidiAppAction::ToggleTransport => {
+                let mut transport = self.project.read().await.transport;
+                transport.playing = !transport.playing;
+                let _ = self.set_transport(transport).await;
+            }
+            MidiAppAction::SetTransportPlaying(playing) => {
+                let mut transport = self.project.read().await.transport;
+                if transport.playing != playing {
+                    transport.playing = playing;
+                    let _ = self.set_transport(transport).await;
+                }
+            }
+            MidiAppAction::ToggleInstrumentController(address) => {
+                let enabled = self
+                    .project
+                    .read()
+                    .await
+                    .instrument_graph
+                    .controller(address.instrument_id, address.controller_id)
+                    .map(|controller| controller.enabled());
+                if let Some(enabled) = enabled {
+                    self.controller_set_enabled(address, !enabled).await;
+                }
+            }
+            MidiAppAction::SetInstrumentControllerEnabled(address, enabled) => {
+                self.controller_set_enabled(address, enabled).await;
+            }
+            MidiAppAction::ActivateUserPreset(index) => {
+                self.activate_user_preset(index).await;
+            }
+        }
     }
 
     pub async fn project(&self) -> RwLockReadGuard<'_, CtrProject> {
@@ -122,6 +176,12 @@ impl EngineHandle {
 
     pub fn subscribe_project_changes(&self) -> broadcast::Receiver<Arc<ProjectChange>> {
         self.project_change_tx.subscribe()
+    }
+
+    pub fn subscribe_midi_app_controls_changes(
+        &self,
+    ) -> broadcast::Receiver<Arc<CtrMidiEngineControls>> {
+        self.midi_app_controls_change_tx.subscribe()
     }
 
     pub async fn start_recording(
@@ -183,9 +243,11 @@ impl EngineHandle {
         ctr: CtrProject,
         rt: RtProject,
         controller_graph: RtControllerGraph,
+        midi_app_controls: RtMidiProjectControls,
     ) -> Result<(), EngineError> {
         self.accept(Command::ReplaceProject { project: Box::new(rt) }).await?;
         *self.controller_graph.write().await = controller_graph;
+        *self.project_midi_app_controls.write().await = midi_app_controls;
         self.pending_replies.lock().await.clear();
         let revision = ctr.revision;
         *self.project.write().await = ctr;
@@ -626,6 +688,14 @@ impl EngineHandle {
         self.update_controller(address, ControllerUpdate::ChannelFilter(filter)).await;
     }
 
+    pub async fn controller_set_source_filter(
+        &self,
+        address: ControllerAddress,
+        filter: MidiFilter,
+    ) {
+        self.update_controller(address, ControllerUpdate::SourceFilter(filter)).await;
+    }
+
     pub async fn controller_set_cc_filter(&self, address: ControllerAddress, filter: MidiFilter) {
         self.update_controller(address, ControllerUpdate::CcFilter(filter)).await;
     }
@@ -675,6 +745,48 @@ impl EngineHandle {
         let revision = CtrProject::next_revision(&mut project.revision);
         project.user_presets = presets;
         self.broadcast_project_change(revision, ProjectChangeKind::UserPresets);
+    }
+
+    pub async fn activate_user_preset(&self, index: usize) {
+        let project = self.project.read().await;
+        let Some(preset) = project.user_presets.entries.get(index) else {
+            return;
+        };
+        let preset_controllers = preset.controllers.clone();
+        let addresses: Vec<_> = (&project.instrument_graph.instruments)
+            .into_iter()
+            .flat_map(|(instrument_id, instrument)| {
+                instrument.controllers.iter_valid_ids().map(|controller_id| ControllerAddress {
+                    instrument_id: *instrument_id,
+                    controller_id: *controller_id,
+                })
+            })
+            .collect();
+        drop(project);
+
+        for address in addresses {
+            self.controller_set_enabled(address, preset_controllers.contains(&address)).await;
+        }
+    }
+
+    pub async fn midi_engine_controls(&self) -> CtrMidiEngineControls {
+        self.ctr_midi_app_controls.read().await.clone()
+    }
+
+    pub async fn set_midi_engine_controls(&self, controls: CtrMidiEngineControls) {
+        let rt = RtMidiEngineControls::from(&controls);
+        *self.rt_midi_app_controls.write().await = rt;
+        *self.ctr_midi_app_controls.write().await = controls.clone();
+        let _ = self.midi_app_controls_change_tx.send(Arc::new(controls));
+    }
+
+    pub async fn set_midi_project_controls(&self, controls: CtrMidiProjectControls) {
+        let rt = RtMidiProjectControls::from(&controls);
+        *self.project_midi_app_controls.write().await = rt;
+        let mut project = self.project.write().await;
+        project.midi_app_controls = controls.clone();
+        let revision = CtrProject::next_revision(&mut project.revision);
+        self.broadcast_project_change(revision, ProjectChangeKind::MidiAppControls { controls });
     }
 
     async fn update_controller(&self, address: ControllerAddress, update: ControllerUpdate) {
@@ -751,6 +863,7 @@ impl EngineHandle {
 
 enum ControllerUpdate {
     Enabled(bool),
+    SourceFilter(MidiFilter),
     IgnoreKeyTransform(bool),
     KeyTransform(MidiKeyTransform),
     IgnoreVelocityTransform(bool),
@@ -777,6 +890,11 @@ impl ControllerUpdate {
                 ctr.enabled = flag;
                 rt.enabled = flag;
                 ProjectChangeKind::ControllerEnabled { address, flag }
+            }
+            Self::SourceFilter(filter) => {
+                rt.source_mask = filter.as_u128();
+                ctr.source_filter = filter.clone();
+                ProjectChangeKind::ControllerSourceFilter { address, filter }
             }
             Self::IgnoreKeyTransform(flag) => {
                 ctr.ignore_key_transform = flag;

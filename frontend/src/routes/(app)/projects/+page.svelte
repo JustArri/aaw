@@ -5,9 +5,9 @@
     import Button from '$lib/components/Button.svelte';
     import {
         deleteProject,
+        downloadProjectFile,
         exportActiveProject,
         fetchProjects,
-        loadProject,
         loadActiveProject,
         projects,
         refreshProjects,
@@ -162,16 +162,22 @@
         selectProjectFile(files.item(0));
     }
 
-    function downloadProject(project: StoredProject) {
-        const blob = new Blob([`${JSON.stringify(project, null, 4)}\n`], {
-            type: 'application/json'
-        });
+    function downloadBlob(blob: Blob, name: string) {
         const url = URL.createObjectURL(blob);
         const anchor = document.createElement('a');
         anchor.href = url;
-        anchor.download = `${safeFilename(project.name)}.json`;
+        anchor.download = `${safeFilename(name)}.json`;
         anchor.click();
         URL.revokeObjectURL(url);
+    }
+
+    function downloadProject(project: StoredProject) {
+        downloadBlob(
+            new Blob([`${JSON.stringify(project, null, 4)}\n`], {
+                type: 'application/json'
+            }),
+            project.name
+        );
     }
 
     async function importProject(setActive: boolean) {
@@ -223,7 +229,7 @@
         }
     }
 
-    async function exportSaved(projectId: string) {
+    async function exportSaved(projectId: string, projectName: string) {
         if (exportingId) {
             return;
         }
@@ -231,14 +237,14 @@
         libraryErrorMessage = '';
 
         try {
-            const project = await loadProject(projectId);
-            if (!project) {
+            const projectFile = await downloadProjectFile(projectId);
+            if (!projectFile) {
                 notify.warning('The project could not be loaded.', {
                     title: 'Export saved project'
                 });
                 return;
             }
-            downloadProject(project);
+            downloadBlob(projectFile, projectName);
         } catch (error) {
             libraryErrorMessage = messageFor(error);
             notify.error(libraryErrorMessage, { title: 'Export saved project' });
@@ -664,7 +670,7 @@
                             title={`Export ${displayProjectName(project.name)}`}
                             busy={exportingId === project.id}
                             disabled={exportingId !== null || loadingId !== null}
-                            onclick={() => void exportSaved(project.id)}>
+                            onclick={() => void exportSaved(project.id, project.name)}>
                             <Icon
                                 icon={exportingId === project.id
                                     ? 'lucide:loader-circle'
