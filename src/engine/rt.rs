@@ -1,13 +1,11 @@
 use crate::{
-    audio::{
-        AudioBlock, AudioRecordingChunk,
-        metrics::{AudioMetrics, CallbackDetails, CallbackMidiEvent},
-    },
+    audio::{AudioBlock, AudioRecordingChunk},
     engine::{
         drum_machine::{MAX_SCHEDULED_EVENTS_PER_BLOCK, MusicalTransport, ScheduledDrumEvent},
         effects::RtEffects,
         graph::InstrumentId,
         instrument_graph::{InstrumentGraphError, RtInstrument, RtInstrumentKind},
+        metrics::{CallbackDetails, CallbackMidiEvent, EngineMetrics},
         project::RtProject,
     },
     midi::MidiEvent,
@@ -140,7 +138,7 @@ impl Engine {
         }
     }
 
-    pub fn run(&mut self, buffer: &mut [f32], metrics: &AudioMetrics) -> CallbackDetails {
+    pub fn run(&mut self, buffer: &mut [f32], metrics: &EngineMetrics) -> CallbackDetails {
         let mut details = CallbackDetails::default();
         let started = Instant::now();
         self.dispatch_commands();
@@ -266,7 +264,7 @@ impl Engine {
     fn render_next_audio_block(
         &mut self,
         buffer: &mut [f32],
-        metrics: &AudioMetrics,
+        metrics: &EngineMetrics,
         details: &mut CallbackDetails,
     ) {
         let Some(audio_blocks) = self.audio_blocks.as_mut() else {

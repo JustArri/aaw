@@ -135,7 +135,7 @@ async fn transport(State(app_state): State<AppState>) -> Json<MusicalTransport> 
     responses((status = OK, body = f64, content_type = "application/json", description = "Current musical transport tick"))
 )]
 async fn transport_position(State(app_state): State<AppState>) -> Json<f64> {
-    Json(app_state.audio_metrics.transport_tick())
+    Json(app_state.engine_metrics.transport_tick())
 }
 
 #[utoipa::path(

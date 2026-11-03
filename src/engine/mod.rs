@@ -26,6 +26,7 @@ pub mod drum_machine;
 pub mod effects;
 pub mod graph;
 pub mod instrument_graph;
+pub mod metrics;
 pub mod midi_app_controls;
 pub mod project;
 mod rt;

@@ -25,6 +25,12 @@
             icon: 'lucide:sliders-horizontal'
         },
         { type: 'title', label: 'Engine' },
+        {
+            type: 'item',
+            label: 'Performance',
+            href: '/engine-performance',
+            icon: 'lucide:chart-no-axes-combined'
+        },
         { type: 'item', label: 'MIDI Inputs', href: '/midi-inputs', icon: 'lucide:cable' },
         { type: 'item', label: 'Keyboard', href: '/keyboard', icon: 'lucide:keyboard' },
         { type: 'item', label: 'MIDI Events', href: '/midi-events', icon: 'lucide:piano' },

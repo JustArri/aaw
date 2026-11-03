@@ -2,13 +2,12 @@ use crate::{
     MAX_BLOCK_SIZE,
     audio::{
         self,
-        metrics::AudioMetrics,
         params::{
             DeviceCfgSelection, DeviceSelection, HostSelection, LatencySelection,
             SampleRateSelection,
         },
     },
-    engine::{Engine, instrument_graph::InstrumentGraphError},
+    engine::{Engine, instrument_graph::InstrumentGraphError, metrics::EngineMetrics},
 };
 use cpal::{
     BufferSize,
@@ -83,7 +82,7 @@ impl ResolvedConfig {
         self,
         engine: Arc<Mutex<Engine>>,
         stream_error: Arc<AtomicBool>,
-        metrics: Arc<AudioMetrics>,
+        metrics: Arc<EngineMetrics>,
     ) -> Result<cpal::Stream> {
         use cpal::SampleFormat as Fmt;
 
@@ -146,7 +145,7 @@ async fn build_stream<T>(
     config: cpal::StreamConfig,
     engine: Arc<Mutex<Engine>>,
     stream_error: Arc<AtomicBool>,
-    metrics: Arc<AudioMetrics>,
+    metrics: Arc<EngineMetrics>,
 ) -> Result<cpal::Stream>
 where
     T: cpal::Sample + cpal::SizedSample + cpal::FromSample<f32>,

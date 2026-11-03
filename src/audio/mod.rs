@@ -1,7 +1,6 @@
 mod block;
 mod chunk;
 pub mod info;
-pub mod metrics;
 pub mod output;
 pub mod params;
 

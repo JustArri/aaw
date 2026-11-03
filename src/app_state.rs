@@ -1,8 +1,7 @@
 use crate::{
     DEFAULT_CHANNEL_COUNT, DEFAULT_SAMPLE_RATE, MAX_BLOCK_SIZE,
     assets::Assets,
-    audio::metrics::AudioMetrics,
-    engine::{Engine, EngineHandle},
+    engine::{Engine, EngineHandle, metrics::EngineMetrics},
     files,
     midi::{MidiEvent, MidiRuntime},
     projects::Projects,
@@ -35,7 +34,7 @@ pub struct AppState {
     pub min_instruments: usize,
     pub min_controllers: usize,
     pub stream_error: Arc<AtomicBool>,
-    pub audio_metrics: Arc<AudioMetrics>,
+    pub engine_metrics: Arc<EngineMetrics>,
     pub aaw_root_dir: Arc<Path>,
     pub projects: Arc<RwLock<Projects>>,
     pub assets: Arc<RwLock<Assets>>,

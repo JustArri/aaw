@@ -196,7 +196,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
             .context("failed to create midi runtime")?,
     ));
 
-    let audio_metrics = Arc::new(audio::metrics::AudioMetrics::default());
+    let engine_metrics = Arc::new(engine::metrics::EngineMetrics::default());
 
     let output_stream = if let Some(info) =
         load_opt::<AudioOutputStreamInfo>(&aaw_root_dir, aaw::CFG_AUDIO_OUTPUT).await
@@ -205,7 +205,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
             info,
             Arc::clone(&engine),
             Arc::clone(&stream_error),
-            Arc::clone(&audio_metrics),
+            Arc::clone(&engine_metrics),
         )
         .await
         .inspect_err(|err| warn!("{err}"))
@@ -227,7 +227,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
             min_instruments: args.min_instruments,
             min_controllers: args.min_controllers,
             stream_error: Arc::clone(&stream_error),
-            audio_metrics,
+            engine_metrics,
             aaw_root_dir: aaw_root_dir.into(),
             projects: Arc::new(RwLock::new(
                 Projects::new(projects_dir).await.context("failed to load projects")?,
@@ -295,7 +295,7 @@ async fn try_start_stream(
     stream_info: AudioOutputStreamInfo,
     engine: Arc<Mutex<engine::Engine>>,
     stream_error: Arc<AtomicBool>,
-    audio_metrics: Arc<audio::metrics::AudioMetrics>,
+    engine_metrics: Arc<engine::metrics::EngineMetrics>,
 ) -> anyhow::Result<AudioOutputStream> {
     let device_config = audio::output::ResolvedConfig::find(DeviceCfgSelection {
         host: audio::params::HostSelection::Id(stream_info.host_id.as_str()),
@@ -326,7 +326,7 @@ async fn try_start_stream(
     };
 
     let stream = resolved_config
-        .start_stream(Arc::clone(&engine), stream_error, audio_metrics)
+        .start_stream(Arc::clone(&engine), stream_error, engine_metrics)
         .await
         .context("failed to start audio stream")?;
 

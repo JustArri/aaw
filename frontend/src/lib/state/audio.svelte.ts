@@ -1,6 +1,5 @@
 import type {
     AudioHostOutputs,
-    AudioMetricsSnapshot,
     AudioOutputStreamInfo,
     AudioRecordingInfo,
     OutputStreamLatency,
@@ -14,14 +13,11 @@ import { gatewayOnline, reportGatewayError, reportGatewayOffline } from './gatew
 let hostOutputsState = $state([] as AudioHostOutputs[]);
 let outputStreamState = $state(null as AudioOutputStreamInfo | null);
 let recordingState = $state(null as AudioRecordingInfo | null);
-let metricsState = $state(null as AudioMetricsSnapshot | null);
 let fetchingOutputs = false;
 let fetchingOutputStream = false;
 let fetchingRecording = false;
 let settingOutputStream = false;
 let settingRecording = false;
-let fetchingMetrics = false;
-let resettingMetrics = false;
 
 export function audioHostOutputs() {
     return hostOutputsState;
@@ -33,60 +29,6 @@ export function audioOutputStream() {
 
 export function audioRecording() {
     return recordingState;
-}
-
-export function audioMetrics() {
-    return metricsState;
-}
-
-export async function fetchAudioMetrics() {
-    if (fetchingMetrics) {
-        return;
-    }
-    fetchingMetrics = true;
-
-    let response;
-
-    try {
-        response = await api.audioMetrics();
-    } catch (error) {
-        reportGatewayOffline();
-        throw gatewayNotResponding(error);
-    } finally {
-        fetchingMetrics = false;
-    }
-
-    if (response.status !== 200) {
-        reportGatewayError(response.status);
-        throw gatewayErrorByStatus(response.status);
-    }
-
-    metricsState = response.data;
-}
-
-export async function resetAudioMetrics() {
-    if (resettingMetrics) {
-        return;
-    }
-    resettingMetrics = true;
-
-    let response;
-
-    try {
-        response = await api.resetAudioMetrics();
-    } catch (error) {
-        reportGatewayOffline();
-        throw gatewayNotResponding(error);
-    } finally {
-        resettingMetrics = false;
-    }
-
-    if (response.status !== 204) {
-        reportGatewayError(response.status);
-        throw gatewayErrorByStatus(response.status);
-    }
-
-    await fetchAudioMetrics();
 }
 
 export function autoUpdateAudio() {

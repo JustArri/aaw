@@ -181,7 +181,7 @@ impl DeadlineMissSlot {
 }
 
 #[derive(Debug, Clone)]
-pub struct AudioPerformanceSample {
+struct EnginePerformanceRecord {
     callback_index: u64,
     render_time_ns: u64,
     budget_ns: u64,
@@ -192,7 +192,7 @@ pub struct AudioPerformanceSample {
 }
 
 impl PerformanceHistorySlot {
-    fn write(&self, sequence: u64, sample: AudioPerformanceSample) {
+    fn write(&self, sequence: u64, sample: EnginePerformanceRecord) {
         self.sequence.store(0, Ordering::Release);
         self.callback_index.store(sample.callback_index, Ordering::Relaxed);
         self.average_load_scaled.store(
@@ -213,13 +213,13 @@ impl PerformanceHistorySlot {
         self.sequence.store(sequence, Ordering::Release);
     }
 
-    fn snapshot(&self) -> Option<(u64, AudioPerformanceHistorySample)> {
+    fn snapshot(&self) -> Option<(u64, EnginePerformanceHistorySample)> {
         let sequence = self.sequence.load(Ordering::Acquire);
         if sequence == 0 {
             return None;
         }
 
-        let snapshot = AudioPerformanceHistorySample {
+        let snapshot = EnginePerformanceHistorySample {
             callback_index: self.callback_index.load(Ordering::Relaxed),
             average_load_percent: scaled_percent(self.average_load_scaled.load(Ordering::Relaxed)),
             peak_load_percent: scaled_percent(self.peak_load_scaled.load(Ordering::Relaxed)),
@@ -235,7 +235,7 @@ impl PerformanceHistorySlot {
     }
 }
 
-pub struct AudioMetrics {
+pub struct EngineMetrics {
     active: AtomicBool,
     callback_count: AtomicU64,
     rendered_frames: AtomicU64,
@@ -272,7 +272,7 @@ pub struct AudioMetrics {
     transport_tick_bits: AtomicU64,
 }
 
-impl Default for AudioMetrics {
+impl Default for EngineMetrics {
     fn default() -> Self {
         Self {
             active: AtomicBool::default(),
@@ -376,7 +376,7 @@ pub struct DeadlineMissSnapshot {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, ToSchema)]
-pub struct AudioPerformanceHistorySample {
+pub struct EnginePerformanceHistorySample {
     pub callback_index: u64,
     pub average_load_percent: f64,
     pub peak_load_percent: f64,
@@ -387,7 +387,7 @@ pub struct AudioPerformanceHistorySample {
 }
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
-pub struct AudioMetricsSnapshot {
+pub struct EngineMetricsSnapshot {
     pub active: bool,
     pub callback_count: u64,
     pub rendered_frames: u64,
@@ -404,7 +404,7 @@ pub struct AudioMetricsSnapshot {
     pub phases: AudioPhaseMetricsSnapshot,
     pub instruments: Vec<InstrumentMetricsSnapshot>,
     pub deadline_misses: Vec<DeadlineMissSnapshot>,
-    pub performance_history: Vec<AudioPerformanceHistorySample>,
+    pub performance_history: Vec<EnginePerformanceHistorySample>,
     pub realtime_scheduling: RealtimeSchedulingStatus,
 }
 
@@ -416,7 +416,7 @@ pub enum RealtimeSchedulingStatus {
     Unsupported,
 }
 
-impl AudioMetrics {
+impl EngineMetrics {
     pub fn reset(&self) {
         self.callback_count.store(0, Ordering::Relaxed);
         self.rendered_frames.store(0, Ordering::Relaxed);
@@ -525,7 +525,7 @@ impl AudioMetrics {
 
             slot.write(
                 write_index + 1,
-                AudioPerformanceSample {
+                EnginePerformanceRecord {
                     callback_index,
                     render_time_ns,
                     budget_ns,
@@ -589,7 +589,7 @@ impl AudioMetrics {
         f64::from_bits(self.transport_tick_bits.load(Ordering::Relaxed))
     }
 
-    pub fn snapshot(&self) -> AudioMetricsSnapshot {
+    pub fn snapshot(&self) -> EngineMetricsSnapshot {
         let total_time = self.render_time_ns.load(Ordering::Relaxed);
         let total_budget = self.callback_budget_ns.load(Ordering::Relaxed);
         let instruments = self
@@ -621,7 +621,7 @@ impl AudioMetrics {
         let performance_history =
             performance_history.into_iter().map(|(_, sample)| sample).collect();
 
-        AudioMetricsSnapshot {
+        EngineMetricsSnapshot {
             active: self.active.load(Ordering::Relaxed),
             callback_count: self.callback_count.load(Ordering::Relaxed),
             rendered_frames: self.rendered_frames.load(Ordering::Relaxed),
@@ -710,7 +710,7 @@ mod tests {
 
     #[test]
     fn records_load_phases_and_instruments() {
-        let metrics = AudioMetrics::default();
+        let metrics = EngineMetrics::default();
         metrics.record_callback(480, 48_000, 5_000_000, CallbackDetails::default());
         metrics.record_callback(480, 48_000, 12_000_000, CallbackDetails::default());
         metrics.record_commands(1_000);
@@ -741,7 +741,7 @@ mod tests {
 
     #[test]
     fn records_one_second_performance_history_samples() {
-        let metrics = AudioMetrics::default();
+        let metrics = EngineMetrics::default();
         for _ in 0..100 {
             metrics.record_callback(480, 48_000, 5_000_000, CallbackDetails::default());
         }
