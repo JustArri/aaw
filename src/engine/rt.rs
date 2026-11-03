@@ -78,6 +78,10 @@ pub enum Command {
         address: crate::engine::graph::ControllerAddress,
         machine: Option<crate::engine::drum_machine::RtDrumMachine>,
     },
+    ControllerSetDrumMachineEnabled {
+        address: crate::engine::graph::ControllerAddress,
+        enabled: bool,
+    },
     ControllerAppend {
         instrument_id: InstrumentId,
     },
@@ -236,6 +240,9 @@ impl Engine {
             }
             Command::ControllerSetDrumMachine { address, machine } => {
                 self.project.instrument_graph.set_drum_machine(address, machine)
+            }
+            Command::ControllerSetDrumMachineEnabled { address, enabled } => {
+                self.project.instrument_graph.set_drum_machine_enabled(address, enabled)
             }
             Command::ControllerAppend { instrument_id } => {
                 self.project.instrument_graph.append_controller_slot(instrument_id)

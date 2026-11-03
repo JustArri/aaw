@@ -3,8 +3,11 @@
     import { onMount } from 'svelte';
     import { flip } from 'svelte/animate';
     import Button from '$lib/components/Button.svelte';
+    import NumericControl from '$lib/components/NumericControl.svelte';
+    import SelectDropdown from '$lib/components/SelectDropdown.svelte';
+    import type { ParameterInfo, UserPresetAction } from '$lib/generated/models';
     import { notify } from '$lib/push-notifications.svelte';
-    import { fetchInstrumentSlots, instrumentSlots } from '$lib/state/instruments.svelte';
+    import { controllerEntries, fetchSynths, synths, SynthKind } from '$lib/state/synths.svelte';
     import {
         activateUserPreset,
         cloneUserPresets,
@@ -25,16 +28,51 @@
     let dragY = $state(0);
     let dropInsertionIndex = $state<number | null>(null);
 
-    let instruments = $derived(
-        Object.entries(instrumentSlots())
-            .map(([id, slot]) => ({ id: Number(id), slot }))
-            .sort((left, right) => left.id - right.id)
+    let instruments = $derived(synths().sort((left, right) => left.id - right.id));
+    let controllers = $derived(
+        controllerEntries().sort(
+            (left, right) =>
+                left.instrument_id - right.instrument_id || left.controller_id - right.controller_id
+        )
+    );
+    let fluidInstruments = $derived(
+        instruments.filter((instrument) => instrument.kind === SynthKind.Fluid)
+    );
+    let clapInstruments = $derived(
+        instruments.filter((instrument) => instrument.kind === SynthKind.Clap)
     );
     let changed = $derived(JSON.stringify(draft) !== JSON.stringify(userPresets()));
 
+    const actionTypeOptions = [
+        {
+            value: 'disable-all',
+            label: 'Disable all controllers',
+            description: 'Disable every controller before applying later actions.'
+        },
+        {
+            value: 'set-controller',
+            label: 'Set controller state',
+            description: 'Enable or disable one instrument controller.'
+        },
+        {
+            value: 'set-program',
+            label: 'Set SoundFont program',
+            description: 'Select a bank and program on a SoundFont instrument.'
+        },
+        {
+            value: 'set-clap-parameter',
+            label: 'Set CLAP parameter',
+            description: 'Set one writable parameter on a CLAP plugin instrument.'
+        }
+    ];
+    const enabledOptions = [
+        { value: 'true', label: 'Enabled' },
+        { value: 'false', label: 'Disabled' }
+    ];
+
     onMount(async () => {
         try {
-            const [presets] = await Promise.all([fetchUserPresets(), fetchInstrumentSlots()]);
+            const [presets] = await Promise.all([fetchUserPresets(), fetchSynths()]);
             initializeUserPresetsDraft(presets);
         } catch (error) {
             notify.error(error instanceof Error ? error.message : String(error), {
@@ -48,7 +86,7 @@
     function addPreset() {
         draft.entries.push({
             name: `Preset ${draft.entries.length + 1}`,
-            instruments: instruments.filter(({ slot }) => slot.enabled).map(({ id }) => id)
+            actions: ['DisableAllInstrumentControllers']
         });
     }
 
@@ -124,23 +162,312 @@
         dropInsertionIndex = null;
     }
 
-    function toggleInstrument(presetIndex: number, instrumentId: number, enabled: boolean) {
-        const preset = draft.entries[presetIndex];
-        if (enabled) {
-            preset.instruments = [...preset.instruments, instrumentId].sort(
-                (left, right) => left - right
-            );
-        } else {
-            preset.instruments = preset.instruments.filter((id) => id !== instrumentId);
+    function actionType(action: UserPresetAction) {
+        if (action === 'DisableAllInstrumentControllers') {
+            return 'disable-all';
         }
+        if ('SetInstrumentControllerEnabled' in action) {
+            return 'set-controller';
+        }
+        return 'SetSoundFontProgram' in action ? 'set-program' : 'set-clap-parameter';
     }
 
-    function selectAllInstruments(presetIndex: number) {
-        draft.entries[presetIndex].instruments = instruments.map(({ id }) => id);
+    function controllerKey(instrumentId: number, controllerId: number) {
+        return String(instrumentId * 65_536 + controllerId);
     }
 
-    function clearInstruments(presetIndex: number) {
-        draft.entries[presetIndex].instruments = [];
+    function controllerName(entry: (typeof controllers)[number]) {
+        const instrument = instruments.find((candidate) => candidate.id === entry.instrument_id);
+        const instrumentName =
+            instrument?.synth.name.trim() || `Instrument #${entry.instrument_id + 1}`;
+        const type = entry.controller.type === 'MidiInput' ? 'MIDI input' : 'Drum machine';
+        const name = entry.controller.data.name.trim();
+        return `${instrumentName} · ${name ? `${type}: ${name}` : type}`;
+    }
+
+    function controllerOptions(action: UserPresetAction) {
+        const options = controllers.map((entry) => ({
+            value: controllerKey(entry.instrument_id, entry.controller_id),
+            label: controllerName(entry)
+        }));
+        if (
+            action === 'DisableAllInstrumentControllers' ||
+            !('SetInstrumentControllerEnabled' in action)
+        ) {
+            return options;
+        }
+        const address = action.SetInstrumentControllerEnabled.controller;
+        const value = controllerKey(address.instrument_id, address.controller_id);
+        return options.some((option) => option.value === value)
+            ? options
+            : [
+                  {
+                      value,
+                      label: `Missing controller ${address.instrument_id}:${address.controller_id}`
+                  },
+                  ...options
+              ];
+    }
+
+    function instrumentOptions(action: UserPresetAction) {
+        const options = fluidInstruments.map((instrument) => ({
+            value: String(instrument.id),
+            label: instrument.synth.name.trim() || `SoundFont instrument #${instrument.id + 1}`
+        }));
+        if (action === 'DisableAllInstrumentControllers' || !('SetSoundFontProgram' in action)) {
+            return options;
+        }
+        const value = String(action.SetSoundFontProgram.instrument);
+        return options.some((option) => option.value === value)
+            ? options
+            : [{ value, label: `Missing instrument #${Number(value) + 1}` }, ...options];
+    }
+
+    function programOptions(action: UserPresetAction) {
+        if (action === 'DisableAllInstrumentControllers' || !('SetSoundFontProgram' in action)) {
+            return [];
+        }
+        const data = action.SetSoundFontProgram;
+        const instrument = fluidInstruments.find((candidate) => candidate.id === data.instrument);
+        const options =
+            instrument?.synth.info.banks.flatMap((bank) =>
+                bank.presets.map((program) => ({
+                    value: `${bank.number}:${program.number}`,
+                    label: program.name,
+                    description: `Bank ${bank.number} · Program ${program.number}`
+                }))
+            ) ?? [];
+        const value = `${data.program.bank}:${data.program.preset_id}`;
+        return options.some((option) => option.value === value)
+            ? options
+            : [
+                  { value, label: `Bank ${data.program.bank} · Program ${data.program.preset_id}` },
+                  ...options
+              ];
+    }
+
+    function writableClapParameters(instrument: (typeof clapInstruments)[number] | undefined) {
+        return (
+            instrument?.synth.plugin_parameters.filter(
+                (parameter) => (parameter.flags & 4) === 0 && (parameter.flags & 8) === 0
+            ) ?? []
+        );
+    }
+
+    function clapInstrumentOptions(action: UserPresetAction) {
+        const options = clapInstruments.map((instrument) => ({
+            value: String(instrument.id),
+            label: instrument.synth.name.trim() || `CLAP instrument #${instrument.id + 1}`
+        }));
+        if (action === 'DisableAllInstrumentControllers' || !('SetClapParameter' in action)) {
+            return options;
+        }
+        const value = String(action.SetClapParameter.instrument);
+        return options.some((option) => option.value === value)
+            ? options
+            : [{ value, label: `Missing CLAP instrument #${Number(value) + 1}` }, ...options];
+    }
+
+    function clapParameter(action: UserPresetAction): ParameterInfo | undefined {
+        if (action === 'DisableAllInstrumentControllers' || !('SetClapParameter' in action)) {
+            return undefined;
+        }
+        const data = action.SetClapParameter;
+        return clapInstruments
+            .find((instrument) => instrument.id === data.instrument)
+            ?.synth.plugin_parameters.find((parameter) => parameter.id === data.parameter_id);
+    }
+
+    function clapParameterOptions(action: UserPresetAction) {
+        if (action === 'DisableAllInstrumentControllers' || !('SetClapParameter' in action)) {
+            return [];
+        }
+        const data = action.SetClapParameter;
+        const instrument = clapInstruments.find((candidate) => candidate.id === data.instrument);
+        const options = writableClapParameters(instrument).map((parameter) => ({
+            value: String(parameter.id),
+            label: parameter.name || `Parameter ${parameter.id}`,
+            description: parameter.module || undefined
+        }));
+        const value = String(data.parameter_id);
+        return options.some((option) => option.value === value)
+            ? options
+            : [{ value, label: `Missing parameter ${value}` }, ...options];
+    }
+
+    function parameterPrecision(parameter: ParameterInfo | undefined) {
+        return parameter && (parameter.flags & 1) !== 0 ? 0 : 3;
+    }
+
+    function parameterSmallStep(parameter: ParameterInfo | undefined) {
+        if (!parameter) {
+            return 0.01;
+        }
+        return (parameter.flags & 1) !== 0
+            ? 1
+            : Math.max((parameter.max_value - parameter.min_value) / 100, 0.001);
+    }
+
+    function replaceAction(presetIndex: number, actionIndex: number, action: UserPresetAction) {
+        draft.entries[presetIndex].actions[actionIndex] = action;
+    }
+
+    function setActionType(presetIndex: number, actionIndex: number, type: string) {
+        if (type === 'disable-all') {
+            replaceAction(presetIndex, actionIndex, 'DisableAllInstrumentControllers');
+            return;
+        }
+        if (type === 'set-controller') {
+            const controller = controllers[0];
+            replaceAction(presetIndex, actionIndex, {
+                SetInstrumentControllerEnabled: {
+                    controller: {
+                        instrument_id: controller?.instrument_id ?? 0,
+                        controller_id: controller?.controller_id ?? 0
+                    },
+                    flag: true
+                }
+            });
+            return;
+        }
+        if (type === 'set-program') {
+            const instrument = fluidInstruments[0];
+            replaceAction(presetIndex, actionIndex, {
+                SetSoundFontProgram: {
+                    instrument: instrument?.id ?? 0,
+                    program: { ...(instrument?.synth.program ?? { bank: 0, preset_id: 0 }) }
+                }
+            });
+            return;
+        }
+        const instrument = clapInstruments[0];
+        const parameter = writableClapParameters(instrument)[0];
+        replaceAction(presetIndex, actionIndex, {
+            SetClapParameter: {
+                instrument: instrument?.id ?? 0,
+                parameter_id: parameter?.id ?? 0,
+                value: parameter?.value ?? parameter?.default_value ?? 0
+            }
+        });
+    }
+
+    function setActionController(presetIndex: number, actionIndex: number, value: string) {
+        const action = draft.entries[presetIndex].actions[actionIndex];
+        if (
+            action === 'DisableAllInstrumentControllers' ||
+            !('SetInstrumentControllerEnabled' in action)
+        ) {
+            return;
+        }
+        replaceAction(presetIndex, actionIndex, {
+            SetInstrumentControllerEnabled: {
+                ...action.SetInstrumentControllerEnabled,
+                controller: {
+                    instrument_id: Math.floor(Number(value) / 65_536),
+                    controller_id: Number(value) % 65_536
+                }
+            }
+        });
+    }
+
+    function setActionEnabled(presetIndex: number, actionIndex: number, value: string) {
+        const action = draft.entries[presetIndex].actions[actionIndex];
+        if (
+            action === 'DisableAllInstrumentControllers' ||
+            !('SetInstrumentControllerEnabled' in action)
+        ) {
+            return;
+        }
+        replaceAction(presetIndex, actionIndex, {
+            SetInstrumentControllerEnabled: {
+                ...action.SetInstrumentControllerEnabled,
+                flag: value === 'true'
+            }
+        });
+    }
+
+    function setActionInstrument(presetIndex: number, actionIndex: number, value: string) {
+        const instrument = fluidInstruments.find((candidate) => candidate.id === Number(value));
+        replaceAction(presetIndex, actionIndex, {
+            SetSoundFontProgram: {
+                instrument: Number(value),
+                program: { ...(instrument?.synth.program ?? { bank: 0, preset_id: 0 }) }
+            }
+        });
+    }
+
+    function setActionProgram(presetIndex: number, actionIndex: number, value: string) {
+        const action = draft.entries[presetIndex].actions[actionIndex];
+        if (action === 'DisableAllInstrumentControllers' || !('SetSoundFontProgram' in action)) {
+            return;
+        }
+        const [bank, presetId] = value.split(':').map(Number);
+        replaceAction(presetIndex, actionIndex, {
+            SetSoundFontProgram: {
+                ...action.SetSoundFontProgram,
+                program: { bank, preset_id: presetId }
+            }
+        });
+    }
+
+    function setActionClapInstrument(presetIndex: number, actionIndex: number, value: string) {
+        const instrument = clapInstruments.find((candidate) => candidate.id === Number(value));
+        const parameter = writableClapParameters(instrument)[0];
+        replaceAction(presetIndex, actionIndex, {
+            SetClapParameter: {
+                instrument: Number(value),
+                parameter_id: parameter?.id ?? 0,
+                value: parameter?.value ?? parameter?.default_value ?? 0
+            }
+        });
+    }
+
+    function setActionClapParameter(presetIndex: number, actionIndex: number, value: string) {
+        const action = draft.entries[presetIndex].actions[actionIndex];
+        if (action === 'DisableAllInstrumentControllers' || !('SetClapParameter' in action)) {
+            return;
+        }
+        const instrument = clapInstruments.find(
+            (candidate) => candidate.id === action.SetClapParameter.instrument
+        );
+        const parameter = writableClapParameters(instrument).find(
+            (candidate) => candidate.id === Number(value)
+        );
+        replaceAction(presetIndex, actionIndex, {
+            SetClapParameter: {
+                ...action.SetClapParameter,
+                parameter_id: Number(value),
+                value: parameter?.value ?? parameter?.default_value ?? 0
+            }
+        });
+    }
+
+    function setActionClapValue(presetIndex: number, actionIndex: number, value: number) {
+        const action = draft.entries[presetIndex].actions[actionIndex];
+        if (action === 'DisableAllInstrumentControllers' || !('SetClapParameter' in action)) {
+            return;
+        }
+        replaceAction(presetIndex, actionIndex, {
+            SetClapParameter: { ...action.SetClapParameter, value }
+        });
+    }
+
+    function addAction(presetIndex: number) {
+        draft.entries[presetIndex].actions.push('DisableAllInstrumentControllers');
+    }
+
+    function removeAction(presetIndex: number, actionIndex: number) {
+        draft.entries[presetIndex].actions.splice(actionIndex, 1);
+    }
+
+    function moveAction(presetIndex: number, actionIndex: number, offset: number) {
+        const actions = draft.entries[presetIndex].actions;
+        const destination = actionIndex + offset;
+        if (destination < 0 || destination >= actions.length) {
+            return;
+        }
+        const [action] = actions.splice(actionIndex, 1);
+        actions.splice(destination, 0, action);
     }
 
     function discardChanges() {
@@ -305,55 +632,197 @@
                             </button>
                         </div>
 
-                        <div class="mt-4 grid gap-1.5">
-                            <div class="grid grid-cols-2 gap-1.5">
-                                {#each instruments as instrument}
-                                    {@const selected = preset.instruments.includes(instrument.id)}
-                                    <button
-                                        class={`flex min-h-9 min-w-0 cursor-pointer items-center gap-2 rounded-lg border px-2.5 text-left text-sm transition-colors ${selected ? 'border-accent/50 bg-accent/10 text-foreground' : 'border-border bg-surface-card text-foreground hover:bg-surface-hover'}`}
-                                        type="button"
-                                        aria-pressed={selected}
-                                        onclick={() => {
-                                            toggleInstrument(index, instrument.id, !selected);
-                                        }}>
-                                        <span
-                                            class={`grid size-4.5 shrink-0 place-items-center rounded-full border transition-colors ${selected ? 'border-accent/70 bg-accent/10' : 'border-border-strong bg-surface-card'}`}
-                                            aria-hidden="true">
-                                            {#if selected}<span
-                                                    class="bg-accent size-2 rounded-full">
-                                                </span>{/if}
-                                        </span>
-                                        <span
-                                            class={`truncate ${instrument.slot.name.trim() ? '' : 'text-foreground-muted italic'}`}>
-                                            {instrument.slot.name.trim() || 'MIDI input controller'}
-                                        </span>
-                                    </button>
-                                {:else}<p class="text-foreground-muted col-span-2 m-0 text-sm">
-                                        No instruments available.
-                                    </p>{/each}
+                        <div class="mt-4 grid gap-2">
+                            <div class="flex items-baseline justify-between gap-2">
+                                <span
+                                    class="text-foreground-strong text-xs font-semibold uppercase">
+                                    Actions
+                                </span>
+                                <span class="text-foreground-muted text-xs">
+                                    Applied from top to bottom
+                                </span>
                             </div>
-                            {#if instruments.length > 0}<div class="flex justify-end gap-1.5">
-                                    <Button
-                                        variant="ghost"
-                                        size="xs"
-                                        class="bg-surface-button"
-                                        type="button"
-                                        disabled={instruments.every(({ id }) =>
-                                            preset.instruments.includes(id)
-                                        )}
-                                        onclick={() => selectAllInstruments(index)}>
-                                        All
-                                    </Button>
-                                    <Button
-                                        variant="ghost"
-                                        size="xs"
-                                        class="bg-surface-button"
-                                        type="button"
-                                        disabled={preset.instruments.length === 0}
-                                        onclick={() => clearInstruments(index)}>
-                                        None
-                                    </Button>
-                                </div>{/if}
+                            {#each preset.actions as action, actionIndex}
+                                <div
+                                    class="border-border bg-surface-card grid gap-2 rounded-lg border p-2.5">
+                                    <div class="flex min-w-0 items-center gap-1.5">
+                                        <span
+                                            class="text-foreground-muted w-5 shrink-0 text-center font-mono text-xs">
+                                            {actionIndex + 1}
+                                        </span>
+                                        <SelectDropdown
+                                            class="min-w-0 flex-1"
+                                            value={actionType(action)}
+                                            options={actionTypeOptions}
+                                            compact
+                                            ariaLabel={`Preset ${index + 1} action ${actionIndex + 1} type`}
+                                            onchange={(value) =>
+                                                setActionType(index, actionIndex, value)} />
+                                        <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            square
+                                            type="button"
+                                            aria-label="Move action up"
+                                            title="Move action up"
+                                            disabled={actionIndex === 0}
+                                            onclick={() => moveAction(index, actionIndex, -1)}>
+                                            <Icon icon="lucide:arrow-up" width="0.875rem" />
+                                        </Button>
+                                        <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            square
+                                            type="button"
+                                            aria-label="Move action down"
+                                            title="Move action down"
+                                            disabled={actionIndex === preset.actions.length - 1}
+                                            onclick={() => moveAction(index, actionIndex, 1)}>
+                                            <Icon icon="lucide:arrow-down" width="0.875rem" />
+                                        </Button>
+                                        <Button
+                                            variant="danger-ghost"
+                                            size="sm"
+                                            square
+                                            type="button"
+                                            aria-label="Remove action"
+                                            title="Remove action"
+                                            onclick={() => removeAction(index, actionIndex)}>
+                                            <Icon icon="lucide:x" width="0.875rem" />
+                                        </Button>
+                                    </div>
+
+                                    {#if action === 'DisableAllInstrumentControllers'}
+                                        <p class="text-foreground-muted m-0 px-6 text-xs">
+                                            Disables every controller in the project.
+                                        </p>
+                                    {:else if 'SetInstrumentControllerEnabled' in action}
+                                        <div
+                                            class="grid gap-2 min-[37.5rem]:grid-cols-[minmax(0,1fr)_9rem]">
+                                            <SelectDropdown
+                                                value={controllerKey(
+                                                    action.SetInstrumentControllerEnabled.controller
+                                                        .instrument_id,
+                                                    action.SetInstrumentControllerEnabled.controller
+                                                        .controller_id
+                                                )}
+                                                options={controllerOptions(action)}
+                                                searchable
+                                                compact
+                                                searchPlaceholder="Search controllers"
+                                                noMatchesText="No matching controllers"
+                                                ariaLabel="Instrument controller"
+                                                onchange={(value) =>
+                                                    setActionController(
+                                                        index,
+                                                        actionIndex,
+                                                        value
+                                                    )} />
+                                            <SelectDropdown
+                                                value={String(
+                                                    action.SetInstrumentControllerEnabled.flag
+                                                )}
+                                                options={enabledOptions}
+                                                compact
+                                                ariaLabel="Controller state"
+                                                onchange={(value) =>
+                                                    setActionEnabled(index, actionIndex, value)} />
+                                        </div>
+                                    {:else if 'SetSoundFontProgram' in action}
+                                        <div class="grid gap-2 min-[37.5rem]:grid-cols-2">
+                                            <SelectDropdown
+                                                value={String(
+                                                    action.SetSoundFontProgram.instrument
+                                                )}
+                                                options={instrumentOptions(action)}
+                                                searchable
+                                                compact
+                                                searchPlaceholder="Search SoundFont instruments"
+                                                noMatchesText="No SoundFont instruments"
+                                                ariaLabel="SoundFont instrument"
+                                                onchange={(value) =>
+                                                    setActionInstrument(
+                                                        index,
+                                                        actionIndex,
+                                                        value
+                                                    )} />
+                                            <SelectDropdown
+                                                value={`${action.SetSoundFontProgram.program.bank}:${action.SetSoundFontProgram.program.preset_id}`}
+                                                options={programOptions(action)}
+                                                searchable
+                                                compact
+                                                searchPlaceholder="Search programs"
+                                                noMatchesText="No programs available"
+                                                ariaLabel="SoundFont program"
+                                                onchange={(value) =>
+                                                    setActionProgram(index, actionIndex, value)} />
+                                        </div>
+                                    {:else}
+                                        {@const parameter = clapParameter(action)}
+                                        <div class="grid gap-2 min-[37.5rem]:grid-cols-2">
+                                            <SelectDropdown
+                                                value={String(action.SetClapParameter.instrument)}
+                                                options={clapInstrumentOptions(action)}
+                                                searchable
+                                                compact
+                                                searchPlaceholder="Search CLAP instruments"
+                                                noMatchesText="No CLAP instruments"
+                                                ariaLabel="CLAP instrument"
+                                                onchange={(value) =>
+                                                    setActionClapInstrument(
+                                                        index,
+                                                        actionIndex,
+                                                        value
+                                                    )} />
+                                            <SelectDropdown
+                                                value={String(action.SetClapParameter.parameter_id)}
+                                                options={clapParameterOptions(action)}
+                                                searchable
+                                                compact
+                                                searchPlaceholder="Search parameters"
+                                                noMatchesText="No writable parameters"
+                                                ariaLabel="CLAP parameter"
+                                                onchange={(value) =>
+                                                    setActionClapParameter(
+                                                        index,
+                                                        actionIndex,
+                                                        value
+                                                    )} />
+                                        </div>
+                                        <NumericControl
+                                            compact
+                                            label={parameter?.name ||
+                                                `Parameter ${action.SetClapParameter.parameter_id}`}
+                                            value={action.SetClapParameter.value}
+                                            unit="value"
+                                            smallStep={parameterSmallStep(parameter)}
+                                            largeStep={parameterSmallStep(parameter) * 10}
+                                            resetValue={parameter?.default_value ??
+                                                action.SetClapParameter.value}
+                                            min={parameter?.min_value ??
+                                                Math.min(0, action.SetClapParameter.value)}
+                                            max={parameter?.max_value ??
+                                                Math.max(1, action.SetClapParameter.value)}
+                                            precision={parameterPrecision(parameter)}
+                                            onchange={(value) =>
+                                                setActionClapValue(index, actionIndex, value)} />
+                                    {/if}
+                                </div>
+                            {:else}
+                                <p
+                                    class="text-foreground-muted m-0 rounded-lg border border-dashed border-border p-3 text-center text-xs">
+                                    This preset has no actions.
+                                </p>
+                            {/each}
+                            <Button
+                                variant="secondary"
+                                size="sm"
+                                class="justify-self-start"
+                                type="button"
+                                onclick={() => addAction(index)}>
+                                <Icon icon="lucide:plus" width="0.875rem" />
+                                Add action
+                            </Button>
                         </div>
 
                         <div class="mt-3 flex justify-end gap-1">

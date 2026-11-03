@@ -1,21 +1,47 @@
 import { gatewayNotResponding } from '$lib/error';
 import * as api from '$lib/generated/api';
-import type { StoredUserPresets } from '$lib/generated/models';
+import type { StoredUserPresets, UserPreset, UserPresetAction } from '$lib/generated/models';
 import { reportGatewayError, reportGatewayOffline } from './gateway.svelte';
 
-export type EditableUserPreset = { name: string; instruments: number[] };
+export type EditableUserPresetAction = UserPresetAction;
+export type EditableUserPreset = UserPreset;
 export type EditableUserPresets = { version: number; entries: EditableUserPreset[] };
 
-const EMPTY_USER_PRESETS: EditableUserPresets = { version: 1, entries: [] };
+const EMPTY_USER_PRESETS: EditableUserPresets = { version: 2, entries: [] };
+
+function cloneAction(action: EditableUserPresetAction): EditableUserPresetAction {
+    if (action === 'DisableAllInstrumentControllers') {
+        return action;
+    }
+    if ('SetInstrumentControllerEnabled' in action) {
+        const { controller, flag } = action.SetInstrumentControllerEnabled;
+        return {
+            SetInstrumentControllerEnabled: {
+                controller: { ...controller },
+                flag
+            }
+        };
+    }
+    if ('SetClapParameter' in action) {
+        return {
+            SetClapParameter: { ...action.SetClapParameter }
+        };
+    }
+    const { instrument, program } = action.SetSoundFontProgram;
+    return {
+        SetSoundFontProgram: {
+            instrument,
+            program: { ...program }
+        }
+    };
+}
 
 function fromStored(presets: StoredUserPresets): EditableUserPresets {
     return {
         version: presets.version,
         entries: presets.entries.map((preset) => ({
             name: preset.name,
-            instruments: preset.controllers.map(
-                (address) => address.instrument_id * 65_536 + address.controller_id
-            )
+            actions: preset.actions.map(cloneAction)
         }))
     };
 }
@@ -25,10 +51,7 @@ function toStored(presets: EditableUserPresets): StoredUserPresets {
         version: presets.version,
         entries: presets.entries.map((preset) => ({
             name: preset.name,
-            controllers: preset.instruments.map((id) => ({
-                instrument_id: Math.floor(id / 65_536),
-                controller_id: id % 65_536
-            }))
+            actions: preset.actions.map(cloneAction)
         }))
     };
 }
@@ -38,7 +61,7 @@ export function cloneUserPresets(presets: EditableUserPresets): EditableUserPres
         version: presets.version,
         entries: presets.entries.map((preset) => ({
             name: preset.name,
-            instruments: [...preset.instruments]
+            actions: preset.actions.map(cloneAction)
         }))
     };
 }

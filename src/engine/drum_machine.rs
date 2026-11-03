@@ -288,6 +288,10 @@ impl RtDrumMachine {
         Self { enabled: controller.enabled, loop_ticks, events }
     }
 
+    pub fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
+    }
+
     pub fn schedule(
         &self,
         ctx: DrumScheduleContext,
@@ -419,6 +423,31 @@ mod tests {
             &mut events,
         );
         assert!(events.is_empty());
+    }
+
+    #[test]
+    fn enabled_state_can_change_without_recompiling() {
+        let mut controller = DrumMachineController::default();
+        controller.sequences[0].steps[0].enabled = true;
+        let mut machine = RtDrumMachine::compile(&controller);
+        let context = DrumScheduleContext {
+            block_start: 0,
+            frame_count: 256,
+            sample_rate: 48_000.0,
+            tempo_bpm: 120.0,
+            segment_start_frame: 0,
+            segment_start_tick: 0.0,
+        };
+
+        machine.set_enabled(false);
+        let mut disabled_events = ArrayVec::new();
+        machine.schedule(context, ControllerId(0), &mut disabled_events);
+        assert!(disabled_events.is_empty());
+
+        machine.set_enabled(true);
+        let mut enabled_events = ArrayVec::new();
+        machine.schedule(context, ControllerId(0), &mut enabled_events);
+        assert!(!enabled_events.is_empty());
     }
 
     #[test]

@@ -16,7 +16,7 @@ use crate::{
             RtMidiProjectControls,
         },
         project::{CtrProject, CtrProjectStorage, RtProject, StoredProject},
-        user_presets::CtrUserPresets,
+        user_presets::{CtrUserPresets, UserPresetAction},
     },
     midi::{
         ControlChange, MidiEvent, MidiEventKind, MidiFilter, MidiKeyTransform,
@@ -627,25 +627,40 @@ impl EngineHandle {
     }
 
     pub async fn controller_set_enabled(&self, address: ControllerAddress, flag: bool) {
-        let drum_machine = {
+        let is_drum_machine = {
             let project = self.project.read().await;
             project
                 .instrument_graph
                 .controller(address.instrument_id, address.controller_id)
-                .and_then(|controller| controller.drum_machine())
-                .cloned()
+                .map(|controller| controller.drum_machine().is_some())
         };
-        if let Some(mut drum_machine) = drum_machine {
-            drum_machine.enabled = flag;
-            let _ = self
-                .controller_replace(
-                    address,
-                    crate::engine::controller_graph::CtrController::DrumMachine(drum_machine),
-                )
-                .await;
+        if is_drum_machine == Some(true) {
+            if self
+                .accept(Command::ControllerSetDrumMachineEnabled { address, enabled: flag })
+                .await
+                .is_err()
+            {
+                return;
+            }
+            let mut project = self.project.write().await;
+            let Some(crate::engine::controller_graph::CtrController::DrumMachine(controller)) =
+                project
+                    .instrument_graph
+                    .controller_mut(address.instrument_id, address.controller_id)
+            else {
+                return;
+            };
+            controller.enabled = flag;
+            let revision = CtrProject::next_revision(&mut project.revision);
+            self.broadcast_project_change(
+                revision,
+                ProjectChangeKind::ControllerEnabled { address, flag },
+            );
             return;
         }
-        self.update_controller(address, ControllerUpdate::Enabled(flag)).await;
+        if is_drum_machine == Some(false) {
+            self.update_controller(address, ControllerUpdate::Enabled(flag)).await;
+        }
     }
 
     pub async fn controller_set_ignore_key_transform(
@@ -752,8 +767,8 @@ impl EngineHandle {
         let Some(preset) = project.user_presets.entries.get(index) else {
             return;
         };
-        let preset_controllers = preset.controllers.clone();
-        let addresses: Vec<_> = (&project.instrument_graph.instruments)
+        let actions = preset.actions.clone();
+        let all_controllers: Vec<_> = (&project.instrument_graph.instruments)
             .into_iter()
             .flat_map(|(instrument_id, instrument)| {
                 instrument.controllers.iter_valid_ids().map(|controller_id| ControllerAddress {
@@ -764,8 +779,24 @@ impl EngineHandle {
             .collect();
         drop(project);
 
-        for address in addresses {
-            self.controller_set_enabled(address, preset_controllers.contains(&address)).await;
+        for action in actions {
+            match action {
+                UserPresetAction::DisableAllInstrumentControllers => {
+                    for controller in &all_controllers {
+                        self.controller_set_enabled(*controller, false).await;
+                    }
+                }
+                UserPresetAction::SetInstrumentControllerEnabled { controller, flag } => {
+                    self.controller_set_enabled(controller, flag).await;
+                }
+                UserPresetAction::SetSoundFontProgram { instrument, program } => {
+                    let _ = self.instrument_select_soundfont_program(instrument, program).await;
+                }
+                UserPresetAction::SetClapParameter { instrument, parameter_id, value } => {
+                    let _ =
+                        self.instrument_set_clap_parameter(instrument, parameter_id, value).await;
+                }
+            }
         }
     }
 

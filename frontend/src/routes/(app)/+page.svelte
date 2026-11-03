@@ -1,9 +1,10 @@
 <script lang="ts">
     import Icon from '@iconify/svelte';
-    import { onMount } from 'svelte';
+    import { onDestroy, onMount } from 'svelte';
     import NumericControl from '$lib/components/NumericControl.svelte';
     import ProjectTransport from '$lib/components/ProjectTransport.svelte';
     import { decibelsToLinearGain, linearGainToDecibels } from '$lib/gain';
+    import type { UserPresetAction } from '$lib/generated/models';
     import { icons } from '$lib/icons';
     import { notify } from '$lib/push-notifications.svelte';
     import { activeProject } from '$lib/state/active-project.svelte';
@@ -32,24 +33,47 @@
     let loading = $state(true);
     let togglingInstrument = $state<number | null>(null);
     let activatingPreset = $state<number | null>(null);
+    let activationAnimationPreset = $state<number | null>(null);
     let creatingPreset = $state(false);
+    let activationAnimationTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const ACTIVATION_GLOW_DURATION = 320;
 
     let instruments = $derived(controllerEntries().sort((left, right) => left.id - right.id));
     let project = $derived(activeProject());
     let globalGainDb = $derived(linearGainToDecibels(project?.instrument_graph.global_gain ?? 1));
     let availableSynths = $derived(synths());
-    let enabledInstrumentIds = $derived(
-        instruments.filter(({ controller }) => controller.data.enabled).map(({ id }) => id)
+    let enabledControllerCount = $derived(
+        instruments.filter(({ controller }) => controller.data.enabled).length
     );
-    let activePresetIndex = $derived(
-        userPresets().entries.findIndex((preset) => {
-            const presetIds = [...preset.instruments].sort((left, right) => left - right);
-            return (
-                presetIds.length === enabledInstrumentIds.length &&
-                presetIds.every((id, index) => id === enabledInstrumentIds[index])
-            );
-        })
-    );
+
+    onDestroy(() => clearTimeout(activationAnimationTimer));
+
+    function activationGlow(node: HTMLSpanElement) {
+        const animation = node.animate(
+            [
+                {
+                    opacity: 1,
+                    boxShadow: 'inset 0 0 0.75rem var(--accent-glow), 0 0 1rem var(--accent-glow)'
+                },
+                {
+                    opacity: 0,
+                    boxShadow:
+                        'inset 0 0 0.125rem var(--accent-glow-soft), 0 0 0.25rem var(--accent-glow-soft)'
+                }
+            ],
+            {
+                duration: ACTIVATION_GLOW_DURATION,
+                easing: 'cubic-bezier(0.16, 1, 0.3, 1)',
+                fill: 'forwards'
+            }
+        );
+        return {
+            destroy() {
+                animation.cancel();
+            }
+        };
+    }
 
     onMount(async () => {
         try {
@@ -77,6 +101,18 @@
         );
     }
 
+    function soundFontProgramName(entry: SynthEntry | undefined) {
+        if (entry?.kind !== SynthKind.Fluid) {
+            return undefined;
+        }
+        const program = entry.synth.program;
+        const name = entry.synth.info.banks
+            .find((bank) => bank.number === program.bank)
+            ?.presets.find((preset) => preset.number === program.preset_id)
+            ?.name.trim();
+        return name || `Bank ${program.bank} / Program ${program.preset_id}`;
+    }
+
     function controllerName(entry: (typeof instruments)[number]) {
         const type = entry.controller.type === 'MidiInput' ? 'MIDI input' : 'Drum machine';
         const name = entry.controller.data.name.trim();
@@ -85,6 +121,35 @@
 
     function presetName(index: number, name: string) {
         return name.trim() || `Unnamed preset #${index + 1}`;
+    }
+
+    function currentStateActions(): UserPresetAction[] {
+        return [
+            'DisableAllInstrumentControllers',
+            ...instruments
+                .filter(({ controller }) => controller.data.enabled)
+                .map((entry) => ({
+                    SetInstrumentControllerEnabled: {
+                        controller: {
+                            instrument_id: entry.instrument_id,
+                            controller_id: entry.controller_id
+                        },
+                        flag: true
+                    }
+                })),
+            ...availableSynths.flatMap((entry) =>
+                entry.kind === SynthKind.Fluid
+                    ? [
+                          {
+                              SetSoundFontProgram: {
+                                  instrument: entry.id,
+                                  program: { ...entry.synth.program }
+                              }
+                          }
+                      ]
+                    : []
+            )
+        ];
     }
 
     function synthColor(id: number | null) {
@@ -120,9 +185,15 @@
         if (activatingPreset !== null || togglingInstrument !== null || creatingPreset) {
             return;
         }
+        clearTimeout(activationAnimationTimer);
+        activationAnimationPreset = null;
         activatingPreset = index;
         try {
             await activateUserPreset(index);
+            activationAnimationPreset = index;
+            activationAnimationTimer = setTimeout(() => {
+                activationAnimationPreset = null;
+            }, ACTIVATION_GLOW_DURATION + 30);
         } catch (error) {
             notify.error(error instanceof Error ? error.message : String(error), {
                 title: `Activate ${userPresets().entries[index]?.name ?? 'preset'}`
@@ -133,12 +204,7 @@
     }
 
     async function createPreset() {
-        if (
-            creatingPreset ||
-            activatingPreset !== null ||
-            togglingInstrument !== null ||
-            activePresetIndex !== -1
-        ) {
+        if (creatingPreset || activatingPreset !== null || togglingInstrument !== null) {
             return;
         }
         creatingPreset = true;
@@ -147,7 +213,7 @@
             const updated = cloneUserPresets(userPresets());
             updated.entries.push({
                 name: `Preset ${nextPresetNumber}`,
-                instruments: [...enabledInstrumentIds]
+                actions: currentStateActions()
             });
             await saveUserPresets(updated);
         } catch (error) {
@@ -214,17 +280,12 @@
                     <button
                         class="border-border-strong bg-surface-button text-foreground hover:bg-surface-hover grid size-8.5 cursor-pointer place-items-center rounded-lg border transition-colors disabled:cursor-not-allowed disabled:opacity-50"
                         type="button"
-                        aria-label={activePresetIndex !== -1
-                            ? 'Current selection already matches a preset'
-                            : 'Create preset from enabled instruments'}
-                        title={activePresetIndex !== -1
-                            ? 'Current selection already matches a preset'
-                            : 'Create preset from enabled instruments'}
+                        aria-label="Create preset from current state"
+                        title="Create preset from current state"
                         disabled={loading ||
                             creatingPreset ||
                             activatingPreset !== null ||
-                            togglingInstrument !== null ||
-                            activePresetIndex !== -1}
+                            togglingInstrument !== null}
                         onclick={() => void createPreset()}>
                         <Icon
                             icon={creatingPreset ? 'lucide:loader-circle' : 'lucide:plus'}
@@ -245,35 +306,40 @@
                 <div class="grid grid-cols-2 gap-1.75 p-2.25 min-[37.5rem]:grid-cols-4">
                     {#each userPresets().entries as preset, index}
                         <button
-                            class={`bg-surface-item relative grid min-h-18.75 cursor-pointer grid-cols-[1.375rem_minmax(0,1fr)] content-center items-start gap-1.75 overflow-hidden rounded-lg border px-2.25 py-2.75 text-left transition-colors disabled:cursor-wait ${activePresetIndex === index ? 'border-accent/50 bg-accent/9 shadow-[inset_0.1875rem_0_0_var(--accent)]' : 'border-border-strong hover:border-accent/30'}`}
+                            class="bg-surface-item border-border-strong hover:border-accent/30 relative grid min-h-18.75 cursor-pointer grid-cols-[1.375rem_minmax(0,1fr)] content-center items-start gap-1.75 rounded-lg border px-2.25 py-2.75 text-left transition-colors disabled:cursor-wait"
                             type="button"
                             disabled={activatingPreset !== null ||
                                 togglingInstrument !== null ||
                                 creatingPreset}
                             onclick={() => void applyPreset(index)}>
+                            {#if activationAnimationPreset === index}
+                                <span
+                                    use:activationGlow
+                                    class="border-accent bg-accent/12 pointer-events-none absolute -inset-px z-10 rounded-lg border-2"
+                                    aria-hidden="true">
+                                </span>
+                            {/if}
                             <small
-                                class={`font-mono text-xs min-[56.25rem]:text-sm ${activePresetIndex === index ? 'text-accent' : 'text-foreground-index'}`}>
+                                class="text-foreground-index font-mono text-xs min-[56.25rem]:text-sm">
                                 {String(index + 1).padStart(2, '0')}
                             </small>
                             <span class="min-w-0">
                                 <strong
-                                    class={`block overflow-hidden text-sm text-ellipsis whitespace-nowrap min-[56.25rem]:text-sm ${preset.name.trim() ? (activePresetIndex === index ? 'text-accent' : 'text-foreground') : 'text-foreground-muted italic'}`}>
+                                    class={`block overflow-hidden text-sm text-ellipsis whitespace-nowrap min-[56.25rem]:text-sm ${preset.name.trim() ? 'text-foreground' : 'text-foreground-muted italic'}`}>
                                     {presetName(index, preset.name)}
                                 </strong>
                                 <em
                                     class="text-foreground-muted mt-1 block overflow-hidden text-xs text-ellipsis whitespace-nowrap not-italic min-[56.25rem]:text-sm">
-                                    {preset.instruments.length}
-                                    {preset.instruments.length === 1 ? 'instrument' : 'instruments'}
+                                    {preset.actions.length}
+                                    {preset.actions.length === 1 ? 'action' : 'actions'}
                                 </em>
                             </span>
                             {#if activatingPreset === index}
                                 <Icon
-                                    icon="lucide:loader-circle"
-                                    width="0.875rem"
+                                    icon="lucide:rotate-cw"
+                                    width="0.9375rem"
                                     class="text-accent absolute right-2 bottom-2 animate-spin" />
-                            {:else}<i
-                                    class={`absolute right-2 bottom-2 size-1.25 rounded-full ${activePresetIndex === index ? 'bg-accent shadow-[0_0_0.4375rem_var(--accent-glow)]' : 'bg-indicator-off'}`}>
-                                </i>{/if}
+                            {/if}
                         </button>
                     {/each}
                 </div>
@@ -292,7 +358,7 @@
                 </div>
                 <b
                     class="bg-surface-badge text-foreground-strong grid h-5.75 min-w-0! place-items-center rounded-md px-1.5 text-center font-sans! text-xs leading-none font-semibold tabular-nums min-[56.25rem]:text-sm">
-                    <span>{enabledInstrumentIds.length} / {instruments.length}</span>
+                    <span>{enabledControllerCount} / {instruments.length}</span>
                 </b>
             </header>
             {#if loading}
@@ -307,6 +373,7 @@
                 <div class="bg-border grid gap-px">
                     {#each instruments as instrument (instrument.id)}
                         {@const assignedSynth = synthEntry(instrument.instrument_id)}
+                        {@const programName = soundFontProgramName(assignedSynth)}
                         <button
                             class={`grid min-h-14.5 cursor-pointer grid-cols-[0.1875rem_minmax(0,1fr)_2.125rem] items-center gap-2.5 border-0 px-2.5 py-1.75 text-left transition-[filter] enabled:hover:brightness-110 disabled:cursor-wait min-[56.25rem]:min-h-15.5 min-[56.25rem]:px-3.25 ${instrument.controller.data.enabled ? 'bg-surface-item-active' : 'bg-surface-disabled'}`}
                             type="button"
@@ -329,6 +396,9 @@
                                 <small
                                     class="text-foreground-caption mt-1 block overflow-hidden text-xs text-ellipsis whitespace-nowrap min-[56.25rem]:text-sm">
                                     {synthName(assignedSynth)}
+                                    {#if programName}
+                                        <span class="text-foreground-muted">· {programName}</span>
+                                    {/if}
                                 </small>
                             </span>
                             <b

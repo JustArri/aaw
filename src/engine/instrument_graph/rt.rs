@@ -291,6 +291,37 @@ impl RtInstrumentGraph {
         }
     }
 
+    pub fn set_drum_machine_enabled(
+        &mut self,
+        address: crate::engine::graph::ControllerAddress,
+        enabled: bool,
+    ) -> bool {
+        let Some(instrument) = self.instruments.get_mut(address.instrument_id) else {
+            return false;
+        };
+        let Some(slot) = instrument.drum_machines.get_mut(address.controller_id) else {
+            return false;
+        };
+        let mut found = false;
+        if let Some(machine) = &mut slot.active {
+            machine.set_enabled(enabled);
+            found = true;
+        }
+        if let Some(machine) = &mut slot.pending {
+            machine.set_enabled(enabled);
+            found = true;
+        }
+        if !found {
+            return false;
+        }
+        if !enabled {
+            let notes = slot.active_notes;
+            slot.active_notes.fill(0);
+            release_owned_notes(instrument, notes);
+        }
+        true
+    }
+
     pub fn append_controller_slot(&mut self, instrument_id: InstrumentId) -> bool {
         let Some(instrument) = self.instruments.get_mut(instrument_id) else {
             return false;
