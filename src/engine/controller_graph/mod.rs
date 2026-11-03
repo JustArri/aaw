@@ -32,6 +32,7 @@ fn prepare_midi_input(
 ) -> (CtrMidiInputController, RtMidiInputController) {
     let rt = RtMidiInputController {
         enabled: stored.enabled,
+        source_mask: stored.source_filter.as_u128(),
         ignore_key_transform: stored.ignore_key_transform,
         key_transform: stored.key_transform.compile(),
         ignore_velocity_transform: stored.ignore_velocity_transform,
@@ -46,6 +47,7 @@ fn prepare_midi_input(
     };
     let ctr = CtrMidiInputController {
         enabled: stored.enabled,
+        source_filter: stored.source_filter,
         ignore_key_transform: stored.ignore_key_transform,
         key_transform: stored.key_transform,
         ignore_velocity_transform: stored.ignore_velocity_transform,

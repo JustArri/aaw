@@ -29,7 +29,7 @@
 </script>
 
 <aside
-    class="pointer-events-none fixed right-3 bottom-24 left-3 z-50 flex flex-col-reverse items-stretch gap-2 min-[37.5rem]:left-auto min-[37.5rem]:w-92 min-[56.25rem]:top-20 min-[56.25rem]:right-5 min-[56.25rem]:bottom-auto min-[56.25rem]:flex-col"
+    class="pointer-events-none fixed right-3 bottom-[max(0.75rem,env(safe-area-inset-bottom))] left-3 z-50 flex flex-col-reverse items-stretch gap-2 min-[37.5rem]:left-auto min-[37.5rem]:w-92 min-[56.25rem]:top-20 min-[56.25rem]:right-5 min-[56.25rem]:bottom-auto min-[56.25rem]:flex-col"
     aria-label="Notifications"
     aria-live="polite">
     {#each notifications as notification (notification.id)}

@@ -18,10 +18,22 @@
         { type: 'item', label: 'Live', href: '/', icon: 'lucide:activity' },
         { type: 'item', label: 'Instruments', href: '/synths', icon: 'lucide:grid-2x2' },
         { type: 'item', label: 'User Presets', href: '/user-presets', icon: 'lucide:list-music' },
+        {
+            type: 'item',
+            label: 'MIDI App Controls',
+            href: '/project-midi-app-controls',
+            icon: 'lucide:sliders-horizontal'
+        },
         { type: 'title', label: 'Engine' },
         { type: 'item', label: 'MIDI Inputs', href: '/midi-inputs', icon: 'lucide:cable' },
         { type: 'item', label: 'Keyboard', href: '/keyboard', icon: 'lucide:keyboard' },
         { type: 'item', label: 'MIDI Events', href: '/midi-events', icon: 'lucide:piano' },
+        {
+            type: 'item',
+            label: 'MIDI App Controls',
+            href: '/midi-app-controls',
+            icon: 'lucide:sliders-horizontal'
+        },
         { type: 'item', label: 'Audio', href: '/audio', icon: 'lucide:audio-lines' },
         { type: 'item', label: 'System', href: '/system', icon: 'lucide:power' },
         { type: 'title', label: 'Files' },
@@ -31,24 +43,39 @@
     ];
 
     const routeLabels: Record<string, string> = {
-        '/': 'Live',
+        ...Object.fromEntries(
+            navigation.flatMap((entry) =>
+                entry.type === 'item' ? [[entry.href, entry.label]] : []
+            )
+        ),
         '/live': 'Live',
         '/instruments': 'Controllers',
         '/controllers': 'Instrument controllers',
-        '/user-presets': 'User Presets',
-        '/synths': 'Instruments',
-        '/midi-inputs': 'MIDI Inputs',
-        '/keyboard': 'Keyboard',
-        '/midi-events': 'MIDI Events',
-        '/audio': 'Audio',
-        '/system': 'System',
-        '/projects': 'Projects',
-        '/assets': 'Assets',
-        '/recordings': 'Recordings',
         '/settings': 'Settings'
+    };
+    const navigationAliases: Record<string, string> = {
+        '/live': '/',
+        '/instruments': '/synths',
+        '/controllers': '/synths'
     };
 
     let activeLabel = $derived(routeLabels[page.url.pathname] ?? '');
+    let activeHref = $derived(navigationAliases[page.url.pathname] ?? page.url.pathname);
+    let navigationOpen = $state(false);
+
+    function openNavigation() {
+        navigationOpen = true;
+    }
+
+    function closeNavigation() {
+        navigationOpen = false;
+    }
+
+    function onWindowKeydown(event: KeyboardEvent) {
+        if (event.key === 'Escape') {
+            closeNavigation();
+        }
+    }
 
     autoloadTheme();
     autoloadMidiEventLogSize();
@@ -58,21 +85,22 @@
     autoUpdateActiveProject();
 </script>
 
+<svelte:window onkeydown={onWindowKeydown} />
+
 <svelte:head>
     <title>AAW Control</title>
     <meta name="description" content="Control surface for the AAW real-time audio engine" />
 </svelte:head>
 
 <div
-    class="bg-app-background text-foreground min-h-screen min-w-[20rem] font-sans antialiased min-[56.25rem]:grid min-[56.25rem]:h-dvh min-[56.25rem]:min-h-0 min-[56.25rem]:grid-cols-[13.875rem_minmax(0,1fr)] min-[56.25rem]:overflow-hidden">
-    <Navigation items={navigation} {activeLabel} />
+    class="bg-app-background text-foreground grid h-dvh min-h-0 min-w-0 grid-cols-[minmax(0,1fr)] overflow-hidden font-sans antialiased min-[56.25rem]:grid-cols-[13.875rem_minmax(0,1fr)]">
+    <Navigation items={navigation} {activeHref} open={navigationOpen} onClose={closeNavigation} />
 
-    <section
-        class="min-w-0 min-[56.25rem]:grid min-[56.25rem]:min-h-0 min-[56.25rem]:grid-rows-[auto_minmax(0,1fr)]">
-        <TopBar {activeLabel} />
+    <section class="grid min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)]">
+        <TopBar {activeLabel} onMenuOpen={openNavigation} />
 
         <main
-            class="min-w-0 overflow-x-clip px-3 pt-3 pb-23.5 min-[37.5rem]:px-5 min-[56.25rem]:mx-auto min-[56.25rem]:h-full min-[56.25rem]:min-h-0 min-[56.25rem]:w-full min-[56.25rem]:max-w-360 min-[56.25rem]:overflow-y-auto min-[56.25rem]:px-7.5 min-[56.25rem]:pt-4 min-[56.25rem]:pb-10">
+            class="h-full min-h-0 min-w-0 overflow-x-clip overflow-y-auto px-3 pt-3 pb-6 min-[37.5rem]:px-5 min-[56.25rem]:mx-auto min-[56.25rem]:w-full min-[56.25rem]:max-w-360 min-[56.25rem]:px-7.5 min-[56.25rem]:pt-4 min-[56.25rem]:pb-10">
             {@render children()}
         </main>
     </section>

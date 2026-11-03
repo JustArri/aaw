@@ -20,12 +20,14 @@ import {
     updateSynthParameters
 } from '$lib/state/synths.svelte';
 import { fetchUserPresets } from '$lib/state/user-presets.svelte';
+import { updateEngineMidiAppControls } from '$lib/state/midi-app-controls.svelte';
 import { unreachable } from '$lib/util';
 import { gatewayOnline, reportGatewayOffline } from './gateway.svelte';
 import {
     fetchActiveProject,
     updateActiveProjectGlobalEffects,
     updateActiveProjectGlobalGain,
+    updateActiveProjectMidiAppControls,
     updateActiveProjectName,
     updateActiveProjectStorage,
     updateActiveProjectTransport,
@@ -78,6 +80,9 @@ function handleServerNotification(notification: Notification) {
             break;
         case 'ProjectChange':
             handleProjectChange(notification.data);
+            break;
+        case 'EngineMidiAppControls':
+            updateEngineMidiAppControls(notification.data);
             break;
         default:
             unreachable(type);
@@ -145,6 +150,14 @@ async function handleProjectChange(change: ProjectChange) {
                 enabled: change.data.flag
             });
             break;
+        case 'ControllerSourceFilter':
+            updateInstrumentSlot(controllerStateId(change.data.address), {
+                source_filter: change.data.filter
+            });
+            updateSynthInstrumentSlot(controllerStateId(change.data.address), {
+                source_filter: change.data.filter
+            });
+            break;
         case 'ControllerIgnoreKeyTransform':
             updateInstrumentSlot(controllerStateId(change.data.address), {
                 ignore_key_transform: change.data.flag
@@ -210,6 +223,9 @@ async function handleProjectChange(change: ProjectChange) {
             break;
         case 'UserPresets':
             await fetchUserPresets();
+            break;
+        case 'MidiAppControls':
+            updateActiveProjectMidiAppControls(change.data.controls);
             break;
         case 'Transport':
             updateActiveProjectTransport(change.data.transport);

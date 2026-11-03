@@ -1,4 +1,9 @@
-import type { Effects, MusicalTransport, Project } from '$lib/generated/models';
+import type {
+    CtrMidiProjectControls,
+    Effects,
+    MusicalTransport,
+    Project
+} from '$lib/generated/models';
 import * as api from '$lib/generated/api';
 import { gatewayErrorByStatus, gatewayNotResponding } from '$lib/error';
 import { untrack } from 'svelte';
@@ -140,6 +145,12 @@ export function updateActiveProjectGlobalGain(gain: number) {
 export function updateActiveProjectTransport(transport: MusicalTransport) {
     if (projectState) {
         projectState.transport = transport;
+    }
+}
+
+export function updateActiveProjectMidiAppControls(controls: CtrMidiProjectControls) {
+    if (projectState) {
+        projectState.midi_app_controls = controls;
     }
 }
 

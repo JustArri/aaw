@@ -6,6 +6,7 @@ use utoipa::ToSchema;
 const LOAD_SCALE: u64 = 1_000_000;
 const MAX_MONITORED_INSTRUMENTS: usize = 1_024;
 const DEADLINE_MISS_HISTORY_SIZE: usize = 32;
+const PERFORMANCE_HISTORY_SIZE: usize = 120;
 const NO_INSTRUMENT: u64 = u64::MAX;
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -46,6 +47,18 @@ struct DeadlineMissSlot {
     midi_event: AtomicU64,
     slowest_instrument_id: AtomicU64,
     slowest_instrument_ns: AtomicU64,
+}
+
+#[derive(Default)]
+struct PerformanceHistorySlot {
+    sequence: AtomicU64,
+    callback_index: AtomicU64,
+    average_load_scaled: AtomicU64,
+    peak_load_scaled: AtomicU64,
+    average_render_time_ns: AtomicU64,
+    max_render_time_ns: AtomicU64,
+    average_budget_ns: AtomicU64,
+    deadline_miss_count: AtomicU64,
 }
 
 #[derive(Default)]
@@ -167,6 +180,54 @@ impl DeadlineMissSlot {
     }
 }
 
+impl PerformanceHistorySlot {
+    fn write(
+        &self,
+        sequence: u64,
+        callback_index: u64,
+        render_time_ns: u64,
+        budget_ns: u64,
+        peak_load_scaled: u64,
+        max_render_time_ns: u64,
+        callback_count: u64,
+        deadline_miss_count: u64,
+    ) {
+        self.sequence.store(0, Ordering::Release);
+        self.callback_index.store(callback_index, Ordering::Relaxed);
+        self.average_load_scaled
+            .store(render_time_ns.saturating_mul(LOAD_SCALE) / budget_ns.max(1), Ordering::Relaxed);
+        self.peak_load_scaled.store(peak_load_scaled, Ordering::Relaxed);
+        self.average_render_time_ns
+            .store(render_time_ns.checked_div(callback_count).unwrap_or(0), Ordering::Relaxed);
+        self.max_render_time_ns.store(max_render_time_ns, Ordering::Relaxed);
+        self.average_budget_ns
+            .store(budget_ns.checked_div(callback_count).unwrap_or(0), Ordering::Relaxed);
+        self.deadline_miss_count.store(deadline_miss_count, Ordering::Relaxed);
+        self.sequence.store(sequence, Ordering::Release);
+    }
+
+    fn snapshot(&self) -> Option<(u64, AudioPerformanceHistorySample)> {
+        let sequence = self.sequence.load(Ordering::Acquire);
+        if sequence == 0 {
+            return None;
+        }
+
+        let snapshot = AudioPerformanceHistorySample {
+            callback_index: self.callback_index.load(Ordering::Relaxed),
+            average_load_percent: scaled_percent(self.average_load_scaled.load(Ordering::Relaxed)),
+            peak_load_percent: scaled_percent(self.peak_load_scaled.load(Ordering::Relaxed)),
+            average_render_time_us: nanos_to_micros(
+                self.average_render_time_ns.load(Ordering::Relaxed),
+            ),
+            max_render_time_us: nanos_to_micros(self.max_render_time_ns.load(Ordering::Relaxed)),
+            average_budget_time_us: nanos_to_micros(self.average_budget_ns.load(Ordering::Relaxed)),
+            deadline_miss_count: self.deadline_miss_count.load(Ordering::Relaxed),
+        };
+
+        (self.sequence.load(Ordering::Acquire) == sequence).then_some((sequence, snapshot))
+    }
+}
+
 pub struct AudioMetrics {
     active: AtomicBool,
     callback_count: AtomicU64,
@@ -191,6 +252,15 @@ pub struct AudioMetrics {
     instrument_metrics: Box<[TimingMetric]>,
     deadline_miss_write_index: AtomicU64,
     deadline_miss_history: Box<[DeadlineMissSlot]>,
+    performance_history_write_index: AtomicU64,
+    performance_history: Box<[PerformanceHistorySlot]>,
+    performance_interval_frames: AtomicU64,
+    performance_interval_render_time_ns: AtomicU64,
+    performance_interval_budget_ns: AtomicU64,
+    performance_interval_peak_load_scaled: AtomicU64,
+    performance_interval_max_render_time_ns: AtomicU64,
+    performance_interval_callback_count: AtomicU64,
+    performance_interval_deadline_miss_count: AtomicU64,
     realtime_scheduling_status: AtomicU64,
     transport_tick_bits: AtomicU64,
 }
@@ -225,6 +295,17 @@ impl Default for AudioMetrics {
             deadline_miss_history: (0..DEADLINE_MISS_HISTORY_SIZE)
                 .map(|_| DeadlineMissSlot::default())
                 .collect(),
+            performance_history_write_index: AtomicU64::default(),
+            performance_history: (0..PERFORMANCE_HISTORY_SIZE)
+                .map(|_| PerformanceHistorySlot::default())
+                .collect(),
+            performance_interval_frames: AtomicU64::default(),
+            performance_interval_render_time_ns: AtomicU64::default(),
+            performance_interval_budget_ns: AtomicU64::default(),
+            performance_interval_peak_load_scaled: AtomicU64::default(),
+            performance_interval_max_render_time_ns: AtomicU64::default(),
+            performance_interval_callback_count: AtomicU64::default(),
+            performance_interval_deadline_miss_count: AtomicU64::default(),
             realtime_scheduling_status: AtomicU64::default(),
             transport_tick_bits: AtomicU64::default(),
         }
@@ -287,6 +368,17 @@ pub struct DeadlineMissSnapshot {
     pub slowest_instrument_time_us: f64,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, ToSchema)]
+pub struct AudioPerformanceHistorySample {
+    pub callback_index: u64,
+    pub average_load_percent: f64,
+    pub peak_load_percent: f64,
+    pub average_render_time_us: f64,
+    pub max_render_time_us: f64,
+    pub average_budget_time_us: f64,
+    pub deadline_miss_count: u64,
+}
+
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct AudioMetricsSnapshot {
     pub active: bool,
@@ -305,6 +397,7 @@ pub struct AudioMetricsSnapshot {
     pub phases: AudioPhaseMetricsSnapshot,
     pub instruments: Vec<InstrumentMetricsSnapshot>,
     pub deadline_misses: Vec<DeadlineMissSnapshot>,
+    pub performance_history: Vec<AudioPerformanceHistorySample>,
     pub realtime_scheduling: RealtimeSchedulingStatus,
 }
 
@@ -344,6 +437,17 @@ impl AudioMetrics {
         for miss in &self.deadline_miss_history {
             miss.sequence.store(0, Ordering::Relaxed);
         }
+        self.performance_history_write_index.store(0, Ordering::Relaxed);
+        for sample in &self.performance_history {
+            sample.sequence.store(0, Ordering::Relaxed);
+        }
+        self.performance_interval_frames.store(0, Ordering::Relaxed);
+        self.performance_interval_render_time_ns.store(0, Ordering::Relaxed);
+        self.performance_interval_budget_ns.store(0, Ordering::Relaxed);
+        self.performance_interval_peak_load_scaled.store(0, Ordering::Relaxed);
+        self.performance_interval_max_render_time_ns.store(0, Ordering::Relaxed);
+        self.performance_interval_callback_count.store(0, Ordering::Relaxed);
+        self.performance_interval_deadline_miss_count.store(0, Ordering::Relaxed);
         self.realtime_scheduling_status.store(0, Ordering::Relaxed);
         self.transport_tick_bits.store(0, Ordering::Relaxed);
     }
@@ -374,12 +478,53 @@ impl AudioMetrics {
         self.last_load_scaled.store(load_scaled, Ordering::Relaxed);
         self.peak_load_scaled.fetch_max(load_scaled, Ordering::Relaxed);
 
-        if render_time_ns > budget_ns {
+        let missed_deadline = render_time_ns > budget_ns;
+        if missed_deadline {
             self.deadline_miss_count.fetch_add(1, Ordering::Relaxed);
             let write_index = self.deadline_miss_write_index.fetch_add(1, Ordering::Relaxed);
             let slot = &self.deadline_miss_history
                 [write_index as usize % self.deadline_miss_history.len()];
             slot.write(write_index + 1, callback_index, frames, budget_ns, render_time_ns, details);
+        }
+
+        self.performance_interval_render_time_ns.fetch_add(render_time_ns, Ordering::Relaxed);
+        self.performance_interval_budget_ns.fetch_add(budget_ns, Ordering::Relaxed);
+        self.performance_interval_peak_load_scaled.fetch_max(load_scaled, Ordering::Relaxed);
+        self.performance_interval_max_render_time_ns.fetch_max(render_time_ns, Ordering::Relaxed);
+        self.performance_interval_callback_count.fetch_add(1, Ordering::Relaxed);
+        if missed_deadline {
+            self.performance_interval_deadline_miss_count.fetch_add(1, Ordering::Relaxed);
+        }
+
+        let interval_frames =
+            self.performance_interval_frames.fetch_add(frames, Ordering::Relaxed) + frames;
+        if interval_frames >= u64::from(sample_rate.max(1)) {
+            let render_time_ns =
+                self.performance_interval_render_time_ns.swap(0, Ordering::Relaxed);
+            let budget_ns = self.performance_interval_budget_ns.swap(0, Ordering::Relaxed);
+            let peak_load_scaled =
+                self.performance_interval_peak_load_scaled.swap(0, Ordering::Relaxed);
+            let max_render_time_ns =
+                self.performance_interval_max_render_time_ns.swap(0, Ordering::Relaxed);
+            let callback_count =
+                self.performance_interval_callback_count.swap(0, Ordering::Relaxed);
+            let deadline_miss_count =
+                self.performance_interval_deadline_miss_count.swap(0, Ordering::Relaxed);
+            self.performance_interval_frames.store(0, Ordering::Relaxed);
+
+            let write_index = self.performance_history_write_index.fetch_add(1, Ordering::Relaxed);
+            let slot =
+                &self.performance_history[write_index as usize % self.performance_history.len()];
+            slot.write(
+                write_index + 1,
+                callback_index,
+                render_time_ns,
+                budget_ns,
+                peak_load_scaled,
+                max_render_time_ns,
+                callback_count,
+                deadline_miss_count,
+            );
         }
     }
 
@@ -460,6 +605,11 @@ impl AudioMetrics {
             self.deadline_miss_history.iter().filter_map(DeadlineMissSlot::snapshot).collect();
         deadline_misses.sort_unstable_by_key(|(sequence, _)| *sequence);
         let deadline_misses = deadline_misses.into_iter().map(|(_, miss)| miss).collect();
+        let mut performance_history: Vec<_> =
+            self.performance_history.iter().filter_map(PerformanceHistorySlot::snapshot).collect();
+        performance_history.sort_unstable_by_key(|(sequence, _)| *sequence);
+        let performance_history =
+            performance_history.into_iter().map(|(_, sample)| sample).collect();
 
         AudioMetricsSnapshot {
             active: self.active.load(Ordering::Relaxed),
@@ -485,6 +635,7 @@ impl AudioMetrics {
             },
             instruments,
             deadline_misses,
+            performance_history,
             realtime_scheduling: match self.realtime_scheduling_status.load(Ordering::Relaxed) {
                 1 => RealtimeSchedulingStatus::Enabled,
                 2 => RealtimeSchedulingStatus::Failed,
@@ -576,5 +727,24 @@ mod tests {
         assert_eq!(decoded.slot, event.slot);
         assert_eq!(decoded.channel, event.channel);
         assert!(matches!(decoded.kind, MidiEventKind::PitchBend { value: -4_096 }));
+    }
+
+    #[test]
+    fn records_one_second_performance_history_samples() {
+        let metrics = AudioMetrics::default();
+        for _ in 0..100 {
+            metrics.record_callback(480, 48_000, 5_000_000, CallbackDetails::default());
+        }
+
+        let snapshot = metrics.snapshot();
+        assert_eq!(snapshot.performance_history.len(), 1);
+        let sample = snapshot.performance_history[0];
+        assert_eq!(sample.callback_index, 100);
+        assert_eq!(sample.average_load_percent, 50.0);
+        assert_eq!(sample.peak_load_percent, 50.0);
+        assert_eq!(sample.average_render_time_us, 5_000.0);
+        assert_eq!(sample.max_render_time_us, 5_000.0);
+        assert_eq!(sample.average_budget_time_us, 10_000.0);
+        assert_eq!(sample.deadline_miss_count, 0);
     }
 }

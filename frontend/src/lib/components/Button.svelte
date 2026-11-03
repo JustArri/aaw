@@ -41,7 +41,7 @@
         ghost: 'border-transparent bg-transparent text-foreground-muted enabled:hover:bg-surface-hover enabled:hover:text-foreground',
         accent: 'border-transparent bg-transparent text-accent enabled:hover:bg-accent/10',
         'accent-outline': 'border-accent/40 bg-accent/10 text-accent enabled:hover:bg-accent/15',
-        danger: 'border-transparent bg-danger text-white enabled:hover:bg-danger/85',
+        danger: 'border-transparent bg-danger-fill text-white enabled:hover:bg-danger-fill/85',
         'danger-soft': 'border-danger/40 bg-danger/8 text-danger enabled:hover:bg-danger/15',
         'danger-ghost': 'border-transparent bg-transparent text-danger enabled:hover:bg-danger/10',
         'danger-outline':

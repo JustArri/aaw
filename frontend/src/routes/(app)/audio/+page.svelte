@@ -3,6 +3,9 @@
     import Icon from '@iconify/svelte';
     import Button from '$lib/components/Button.svelte';
     import SelectDropdown from '$lib/components/SelectDropdown.svelte';
+    import TimeSeriesChart, {
+        type TimeSeriesChartSeries
+    } from '$lib/components/TimeSeriesChart.svelte';
     import { notify } from '$lib/push-notifications.svelte';
     import type {
         OutputStreamLatency,
@@ -58,6 +61,41 @@
     let activeOutput = $derived(
         activeHost?.outputs.find((output) => output.id === stream?.output_id)
     );
+    let loadHistory = $derived.by<TimeSeriesChartSeries[]>(() => {
+        const history = metrics?.performance_history ?? [];
+        return [
+            {
+                label: 'Average',
+                color: 'var(--accent)',
+                values: history.map((sample) => sample.average_load_percent)
+            },
+            {
+                label: 'Peak',
+                color: 'var(--danger)',
+                values: history.map((sample) => sample.peak_load_percent)
+            }
+        ];
+    });
+    let renderHistory = $derived.by<TimeSeriesChartSeries[]>(() => {
+        const history = metrics?.performance_history ?? [];
+        return [
+            {
+                label: 'Average',
+                color: 'var(--accent)',
+                values: history.map((sample) => sample.average_render_time_us)
+            },
+            {
+                label: 'Maximum',
+                color: 'var(--danger)',
+                values: history.map((sample) => sample.max_render_time_us)
+            },
+            {
+                label: 'Budget',
+                color: 'var(--success)',
+                values: history.map((sample) => sample.average_budget_time_us)
+            }
+        ];
+    });
 
     function phaseRows(): { name: string; timing: TimingMetricSnapshot }[] {
         if (!metrics) {
@@ -504,45 +542,62 @@
             </Button>
         </header>
 
-        <div
-            class="bg-border grid grid-cols-2 gap-px min-[37.5rem]:grid-cols-4 min-[75rem]:grid-cols-6">
-            <div class="bg-surface-card p-3.75 min-[56.25rem]:p-5">
-                <div class="text-foreground-muted text-xs uppercase">Current load</div>
-                <strong class="mt-1 block font-mono text-xl tabular-nums">
-                    {percent(metrics?.last_load_percent)}
-                </strong>
+        <div class="border-border grid border-b min-[75rem]:grid-cols-2">
+            <div class="min-w-0 p-3.75 min-[56.25rem]:p-5 min-[75rem]:border-r">
+                <div class="mb-3 flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                        <h3 class="text-foreground m-0 text-sm font-semibold">Callback load</h3>
+                        <p class="text-foreground-muted mt-1 mb-0 text-xs">
+                            One-second averages and peaks · up to two minutes
+                        </p>
+                    </div>
+                    <div class="flex gap-4 text-right">
+                        <div>
+                            <div class="text-foreground-muted text-xs uppercase">Current</div>
+                            <strong class="font-mono text-sm tabular-nums">
+                                {percent(metrics?.last_load_percent)}
+                            </strong>
+                        </div>
+                        <div>
+                            <div class="text-foreground-muted text-xs uppercase">Misses</div>
+                            <strong
+                                class={`font-mono text-sm tabular-nums ${(metrics?.deadline_miss_count ?? 0) > 0 ? 'text-danger' : ''}`}>
+                                {metrics?.deadline_miss_count.toLocaleString() ?? '0'}
+                            </strong>
+                        </div>
+                    </div>
+                </div>
+                <TimeSeriesChart
+                    series={loadHistory}
+                    minimumMaximum={100}
+                    formatValue={(value) => `${Math.round(value)}%`} />
             </div>
-            <div class="bg-surface-card p-3.75 min-[56.25rem]:p-5">
-                <div class="text-foreground-muted text-xs uppercase">Average load</div>
-                <strong class="mt-1 block font-mono text-xl tabular-nums">
-                    {percent(metrics?.average_load_percent)}
-                </strong>
-            </div>
-            <div class="bg-surface-card p-3.75 min-[56.25rem]:p-5">
-                <div class="text-foreground-muted text-xs uppercase">Peak load</div>
-                <strong
-                    class={`mt-1 block font-mono text-xl tabular-nums ${(metrics?.peak_load_percent ?? 0) >= 100 ? 'text-danger' : ''}`}>
-                    {percent(metrics?.peak_load_percent)}
-                </strong>
-            </div>
-            <div class="bg-surface-card p-3.75 min-[56.25rem]:p-5">
-                <div class="text-foreground-muted text-xs uppercase">Deadline misses</div>
-                <strong
-                    class={`mt-1 block font-mono text-xl tabular-nums ${(metrics?.deadline_miss_count ?? 0) > 0 ? 'text-danger' : ''}`}>
-                    {metrics?.deadline_miss_count.toLocaleString() ?? '0'}
-                </strong>
-            </div>
-            <div class="bg-surface-card p-3.75 min-[56.25rem]:p-5">
-                <div class="text-foreground-muted text-xs uppercase">Last render</div>
-                <strong class="mt-1 block font-mono text-xl tabular-nums">
-                    {duration(metrics?.last_render_time_us)}
-                </strong>
-            </div>
-            <div class="bg-surface-card p-3.75 min-[56.25rem]:p-5">
-                <div class="text-foreground-muted text-xs uppercase">Longest render</div>
-                <strong class="mt-1 block font-mono text-xl tabular-nums">
-                    {duration(metrics?.max_render_time_us)}
-                </strong>
+
+            <div
+                class="border-border min-w-0 border-t p-3.75 min-[56.25rem]:p-5 min-[75rem]:border-t-0">
+                <div class="mb-3 flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                        <h3 class="text-foreground m-0 text-sm font-semibold">Render timing</h3>
+                        <p class="text-foreground-muted mt-1 mb-0 text-xs">
+                            Callback render time compared with its deadline budget
+                        </p>
+                    </div>
+                    <div class="flex gap-4 text-right">
+                        <div>
+                            <div class="text-foreground-muted text-xs uppercase">Current</div>
+                            <strong class="font-mono text-sm tabular-nums">
+                                {duration(metrics?.last_render_time_us)}
+                            </strong>
+                        </div>
+                        <div>
+                            <div class="text-foreground-muted text-xs uppercase">Longest</div>
+                            <strong class="font-mono text-sm tabular-nums">
+                                {duration(metrics?.max_render_time_us)}
+                            </strong>
+                        </div>
+                    </div>
+                </div>
+                <TimeSeriesChart series={renderHistory} formatValue={(value) => duration(value)} />
             </div>
         </div>
 

@@ -17,7 +17,7 @@
     import { saveActiveProject } from '$lib/state/projects.svelte';
     import { AudioRecordingState } from '$lib/generated/models';
 
-    let { activeLabel }: { activeLabel: string } = $props();
+    let { activeLabel, onMenuOpen }: { activeLabel: string; onMenuOpen: () => void } = $props();
 
     const projectName = $derived(activeProject()?.name.trim() || 'Untitled project');
     const recording = $derived(audioRecording());
@@ -140,22 +140,37 @@
 
 <header
     class="border-border bg-app-background/94 sticky top-0 z-30 grid h-15.5 grid-cols-[minmax(0,1fr)_auto] items-center gap-2 border-b px-3 backdrop-blur-md min-[37.5rem]:px-5 min-[56.25rem]:h-17 min-[56.25rem]:px-7.5">
-    <a
-        class="flex min-w-0 cursor-pointer items-center gap-2 border-0 bg-transparent p-1 text-left"
-        href="/"
-        aria-label={`Open live controls for ${projectName}`}>
-        <span
-            class="bg-accent/10 text-accent grid size-7.75 shrink-0 place-items-center rounded-lg">
-            <Icon icon="lucide:folder-open" width="0.9375rem" />
-        </span>
-        <span class="min-w-0">
-            <small class="text-accent block truncate text-xs font-semibold">{activeLabel}</small>
-            <strong class="block truncate text-sm font-semibold">{projectName}</strong>
-        </span>
-        <span class="text-foreground-icon shrink-0">
-            <Icon icon={icons.chevron} width="0.9375rem" />
-        </span>
-    </a>
+    <div class="flex min-w-0 items-center gap-2">
+        <Button
+            variant="ghost"
+            size="sm"
+            square
+            class="size-8.5 min-[56.25rem]:hidden"
+            type="button"
+            aria-label="Open navigation"
+            title="Open navigation"
+            onclick={onMenuOpen}>
+            <Icon icon="lucide:menu" width="1.125rem" />
+        </Button>
+        <a
+            class="hidden min-w-0 cursor-pointer items-center gap-2 border-0 bg-transparent p-1 text-left min-[37.5rem]:flex"
+            href="/"
+            aria-label={`Open live controls for ${projectName}`}>
+            <span
+                class="bg-accent/10 text-accent grid size-7.75 shrink-0 place-items-center rounded-lg">
+                <Icon icon="lucide:folder-open" width="0.9375rem" />
+            </span>
+            <span class="min-w-0">
+                <small class="text-accent block truncate text-xs font-semibold">
+                    {activeLabel}
+                </small>
+                <strong class="block truncate text-sm font-semibold">{projectName}</strong>
+            </span>
+            <span class="text-foreground-icon shrink-0">
+                <Icon icon={icons.chevron} width="0.9375rem" />
+            </span>
+        </a>
+    </div>
     <div class="flex items-center gap-1.5">
         <Button
             variant={activeProject()?.transport.playing ? 'danger-soft' : 'accent-outline'}

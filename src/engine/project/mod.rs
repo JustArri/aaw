@@ -2,6 +2,7 @@ use crate::{
     engine::{
         effects::EffectsContext,
         instrument_graph::{self, InstrumentGraphContext, InstrumentGraphError},
+        midi_app_controls::{self, RtMidiProjectControls},
         user_presets,
     },
     server::api::audio::AudioOutputStreamConfig,
@@ -45,7 +46,12 @@ pub async fn prepare<'a>(
     mut asset: ProjectAsset,
     ctx: ProjectContext<'a>,
 ) -> Result<
-    (CtrProject, RtProject, crate::engine::controller_graph::RtControllerGraph),
+    (
+        CtrProject,
+        RtProject,
+        crate::engine::controller_graph::RtControllerGraph,
+        RtMidiProjectControls,
+    ),
     InstrumentGraphError,
 > {
     asset.project.instrument_graph.resize_drum_machines_to_bar(asset.project.transport);
@@ -60,6 +66,8 @@ pub async fn prepare<'a>(
             },
         )?,
     };
+    let (ctr_midi_app_controls, rt_midi_app_controls) =
+        midi_app_controls::prepare_project(asset.project.midi_app_controls);
 
     let ctr_project = CtrProject {
         storage: asset.storage,
@@ -67,6 +75,7 @@ pub async fn prepare<'a>(
         name: asset.project.name,
         instrument_graph: ctr_instrument_graph,
         user_presets: user_presets::prepare(asset.project.user_presets),
+        midi_app_controls: ctr_midi_app_controls,
         transport: asset.project.transport,
     };
 
@@ -80,5 +89,5 @@ pub async fn prepare<'a>(
         },
     };
 
-    Ok((ctr_project, rt_project, rt_controller_graph))
+    Ok((ctr_project, rt_project, rt_controller_graph, rt_midi_app_controls))
 }

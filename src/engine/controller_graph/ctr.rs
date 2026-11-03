@@ -7,6 +7,7 @@ use utoipa::ToSchema;
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "type", content = "data")]
+#[allow(clippy::large_enum_variant)]
 pub enum CtrController {
     MidiInput(CtrMidiInputController),
     DrumMachine(DrumMachineController),
@@ -19,6 +20,13 @@ impl Default for CtrController {
 }
 
 impl CtrController {
+    pub fn enabled(&self) -> bool {
+        match self {
+            Self::MidiInput(controller) => controller.enabled,
+            Self::DrumMachine(controller) => controller.enabled,
+        }
+    }
+
     pub fn midi_input(&self) -> Option<&CtrMidiInputController> {
         match self {
             Self::MidiInput(controller) => Some(controller),
@@ -44,6 +52,7 @@ impl CtrController {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CtrMidiInputController {
     pub enabled: bool,
+    pub source_filter: MidiFilter,
     pub ignore_key_transform: bool,
     pub key_transform: MidiKeyTransform,
     pub ignore_velocity_transform: bool,
@@ -62,6 +71,7 @@ impl Default for CtrMidiInputController {
     fn default() -> Self {
         Self {
             enabled: true,
+            source_filter: Default::default(),
             ignore_key_transform: false,
             key_transform: Default::default(),
             ignore_velocity_transform: false,
