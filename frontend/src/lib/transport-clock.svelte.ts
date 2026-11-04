@@ -1,9 +1,16 @@
 import { onDestroy, onMount } from 'svelte';
-import * as api from '$lib/generated/api';
 import { activeProject } from '$lib/state/active-project.svelte';
 import { audioOutputStream } from '$lib/state/audio.svelte';
 
 const ticksPerQuarterNote = 960;
+type TransportPositionListener = (tick: number, receivedAt: number) => void;
+
+const transportPositionListeners = new Set<TransportPositionListener>();
+
+export function updateTransportPosition(tick: number) {
+    const receivedAt = performance.now();
+    for (const listener of transportPositionListeners) listener(tick, receivedAt);
+}
 
 export class TransportClock {
     tick = $state(0);
@@ -13,19 +20,23 @@ export class TransportClock {
     private anchorTime = 0;
     private previousPlaying = false;
     private previousTempo = 120;
-    private syncing = false;
     private animationFrame: number | undefined;
-    private syncInterval: ReturnType<typeof setInterval> | undefined;
+    private readonly positionListener: TransportPositionListener = (tick, receivedAt) => {
+        if (!activeProject()?.transport.playing) return;
+        this.anchorTick = tick;
+        this.anchorTime = receivedAt;
+        this.synchronized = true;
+    };
 
     constructor() {
         onMount(() => {
             this.anchorTime = performance.now();
+            transportPositionListeners.add(this.positionListener);
             this.animationFrame = requestAnimationFrame((now) => this.update(now));
-            this.syncInterval = setInterval(() => void this.sync(), 500);
         });
         onDestroy(() => {
             if (this.animationFrame !== undefined) cancelAnimationFrame(this.animationFrame);
-            clearInterval(this.syncInterval);
+            transportPositionListeners.delete(this.positionListener);
         });
     }
 
@@ -49,7 +60,6 @@ export class TransportClock {
                 this.anchorTick = 0;
                 this.anchorTime = now;
                 this.synchronized = false;
-                void this.sync();
             } else if (transport.tempo_bpm !== this.previousTempo) {
                 this.anchorTick = this.estimate(now, this.previousTempo);
                 this.anchorTime = now;
@@ -62,24 +72,5 @@ export class TransportClock {
         this.previousPlaying = transport?.playing ?? false;
         this.previousTempo = transport?.tempo_bpm ?? this.previousTempo;
         this.animationFrame = requestAnimationFrame((nextNow) => this.update(nextNow));
-    }
-
-    private async sync() {
-        if (!activeProject()?.transport.playing || this.syncing) return;
-        this.syncing = true;
-        const requestStarted = performance.now();
-        try {
-            const response = await api.transportPosition();
-            const responseReceived = performance.now();
-            if (response.status === 200) {
-                this.anchorTick = response.data;
-                this.anchorTime = (requestStarted + responseReceived) / 2;
-                this.synchronized = true;
-            }
-        } catch {
-            // Retry while continuing from the last synchronized position.
-        } finally {
-            this.syncing = false;
-        }
     }
 }

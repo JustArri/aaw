@@ -214,6 +214,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
 
     let (project_change_tx, _) = broadcast::channel(args.project_change_bc_capacity);
     let (midi_app_controls_change_tx, _) = broadcast::channel(args.project_change_bc_capacity);
+    let (transport_position_tx, _) = broadcast::channel(args.project_change_bc_capacity);
     let (engine, engine_handle, engine_runtime) = engine::create_engine(
         ProjectAsset { project, storage: project_storage },
         EngineContext {
@@ -261,6 +262,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
 
     let root_router = aaw::server::router(assets_dir.clone()).with_state(AppState {
         midi_tx: midi_bc_tx.clone(),
+        transport_position_tx: transport_position_tx.clone(),
         midi_runtime: Arc::clone(&midi_runtime),
         midi_event_senders,
         engine,
@@ -269,7 +271,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
         min_instruments: args.min_instruments,
         min_controllers: args.min_controllers,
         stream_error: Arc::clone(&stream_error),
-        engine_metrics,
+        engine_metrics: Arc::clone(&engine_metrics),
         aaw_root_dir: aaw_root_dir.into(),
         projects: Arc::new(RwLock::new(
             Projects::new(projects_dir).await.context("failed to load projects")?,
@@ -284,6 +286,12 @@ async fn run(args: Args) -> anyhow::Result<()> {
     });
 
     let stop = CancellationToken::new();
+    let transport_position_handle = aaw::server::api::notifications::spawn_transport_position_task(
+        stop.clone(),
+        engine_handle.clone(),
+        engine_metrics,
+        transport_position_tx,
+    );
     let relay_handle = aaw::spawn_midi_relay_task(
         stop.clone(),
         engine_handle.clone(),
@@ -308,6 +316,7 @@ async fn run(args: Args) -> anyhow::Result<()> {
     info!("stopping...");
 
     relay_handle.await?;
+    transport_position_handle.await?;
     let _ = server_handle.await?;
     midi_rt_handle.await?;
     let _ = engine_rt_handle.await?;

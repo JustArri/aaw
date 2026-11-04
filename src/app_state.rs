@@ -27,6 +27,7 @@ use utoipa::ToSchema;
 #[derive(Clone)]
 pub struct AppState {
     pub midi_tx: broadcast::Sender<Arc<MidiEvent>>,
+    pub transport_position_tx: broadcast::Sender<f64>,
     pub midi_runtime: Arc<Mutex<MidiRuntime>>,
     pub midi_event_senders: Arc<[NotifiedRtSharedProducer<MidiEvent>]>,
     pub engine: Arc<Mutex<Engine>>,

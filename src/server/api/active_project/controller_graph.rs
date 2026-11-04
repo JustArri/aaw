@@ -23,7 +23,6 @@ pub fn router() -> OpenApiRouter<AppState> {
         .routes(routes!(drum_machine_append))
         .routes(routes!(controller, controller_replace, controller_remove))
         .routes(routes!(transport, set_transport))
-        .routes(routes!(transport_position))
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, IntoParams)]
@@ -127,15 +126,6 @@ async fn drum_machine_append(
 )]
 async fn transport(State(app_state): State<AppState>) -> Json<MusicalTransport> {
     Json(app_state.engine_handle.project().await.transport)
-}
-
-#[utoipa::path(
-    get,
-    path = "/transport-position",
-    responses((status = OK, body = f64, content_type = "application/json", description = "Current musical transport tick"))
-)]
-async fn transport_position(State(app_state): State<AppState>) -> Json<f64> {
-    Json(app_state.engine_metrics.transport_tick())
 }
 
 #[utoipa::path(

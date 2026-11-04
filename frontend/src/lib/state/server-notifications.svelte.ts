@@ -2,6 +2,7 @@ import type { ControllerAddress, Notification, ProjectChange } from '$lib/genera
 import * as api from '$lib/generated/api';
 import { notificationStream } from '$lib/notification-stream';
 import { clearActiveMidiNotes, recordMidiEvent } from '$lib/state/midi-events.svelte';
+import { updateTransportPosition } from '$lib/transport-clock.svelte';
 import {
     fetchInstrumentSlots,
     updateInstrumentGlobalTransposition,
@@ -83,6 +84,9 @@ function handleServerNotification(notification: Notification) {
             break;
         case 'EngineMidiAppControls':
             updateEngineMidiAppControls(notification.data);
+            break;
+        case 'TransportPosition':
+            updateTransportPosition(notification.data);
             break;
         default:
             unreachable(type);
