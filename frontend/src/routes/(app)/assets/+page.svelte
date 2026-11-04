@@ -1,47 +1,8 @@
 <script lang="ts">
-    import { getAssetsWebDavUrl } from '$lib/generated/api';
     import Icon from '@iconify/svelte';
+    import { AssetsSection } from '$lib/sections/assets.svelte';
 
-    let copied = $state(false);
-
-    const url = makeDavUrl();
-
-    function makeDavUrl() {
-        const resolved = new URL(getAssetsWebDavUrl(), window.location.href);
-        const url = resolved.href.replace(/^https?:/, (protocol) =>
-            protocol === 'https:' ? 'davs:' : 'dav:'
-        );
-        return url;
-    }
-
-    async function copyUrl() {
-        try {
-            if (navigator.clipboard?.writeText) {
-                await navigator.clipboard.writeText(url);
-            } else {
-                const textarea = document.createElement('textarea');
-                textarea.value = url;
-                textarea.style.position = 'fixed';
-                textarea.style.opacity = '0';
-
-                document.body.appendChild(textarea);
-                textarea.focus();
-                textarea.select();
-
-                const success = document.execCommand('copy');
-                textarea.remove();
-
-                if (!success) {
-                    throw new Error('Copy command failed');
-                }
-            }
-
-            copied = true;
-            setTimeout(() => (copied = false), 2000);
-        } catch (error) {
-            console.error('Failed to copy URL:', error);
-        }
-    }
+    const section = new AssetsSection();
 </script>
 
 <section
@@ -54,11 +15,11 @@
         Currently only a DAV server is available at
         <button
             type="button"
-            onclick={copyUrl}
-            disabled={copied}
+            onclick={() => section.copyUrl()}
+            disabled={section.copied}
             class="enabled:hover:bg-accent/10 border-border-strong hover:border-accent disabled:border-border relative m-2 block cursor-pointer rounded-2xl border px-4 py-2 font-mono break-all transition-colors select-none">
-            <span class:invisible={copied}>{url}</span>
-            {#if copied}
+            <span class:invisible={section.copied}>{section.url}</span>
+            {#if section.copied}
                 <span
                     class="text-foreground-muted absolute inset-0 flex items-center justify-center gap-2">
                     <Icon icon="lucide:check" width="1rem" />

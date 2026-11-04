@@ -16,7 +16,7 @@
     const navigation: NavigationEntry[] = [
         { type: 'title', label: 'Active project' },
         { type: 'item', label: 'Live', href: '/', icon: 'lucide:activity' },
-        { type: 'item', label: 'Instruments', href: '/synths', icon: 'lucide:grid-2x2' },
+        { type: 'item', label: 'Instruments', href: '/instruments', icon: 'lucide:grid-2x2' },
         { type: 'item', label: 'User Presets', href: '/user-presets', icon: 'lucide:list-music' },
         {
             type: 'item',
@@ -61,14 +61,12 @@
             )
         ),
         '/live': 'Live',
-        '/instruments': 'Controllers',
         '/controllers': 'Instrument controllers',
         '/settings': 'Settings'
     };
     const navigationAliases: Record<string, string> = {
         '/live': '/',
-        '/instruments': '/synths',
-        '/controllers': '/synths'
+        '/controllers': '/instruments'
     };
 
     let activeLabel = $derived(routeLabels[page.url.pathname] ?? '');

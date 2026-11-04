@@ -12,6 +12,7 @@
         disabled?: boolean;
         wideValue?: boolean;
         compact?: boolean;
+        sectionLabel?: boolean;
         onchange?: (value: number) => void | number | Promise<void | number>;
     };
 
@@ -28,6 +29,7 @@
         disabled = false,
         wideValue = false,
         compact = false,
+        sectionLabel = false,
         onchange
     }: Props = $props();
 
@@ -80,7 +82,7 @@
         class={`flex items-center justify-between gap-2 ${compact ? 'mb-1.5 min-h-8' : 'mb-2 min-h-9'}`}>
         <div class="min-w-0">
             <label
-                class={`block ${compact ? 'text-foreground-muted text-sm font-normal' : 'text-foreground-strong text-sm font-bold tracking-[.06em] uppercase min-[56.25rem]:text-sm'}`}
+                class={`block ${compact ? 'text-foreground-muted text-sm font-normal' : sectionLabel ? 'text-foreground text-sm font-bold' : 'text-foreground-strong text-sm font-bold tracking-[.06em] uppercase min-[56.25rem]:text-sm'}`}
                 for={`${label}-numeric-input`}>
                 {label}
             </label>

@@ -537,6 +537,12 @@ impl Synth {
             return Err(Error::Native("FluidSynth could not disable dynamic sample loading"));
         }
 
+        // Disable effects
+        unsafe {
+            sys::fluid_settings_setint(settings.as_ptr(), c"synth.reverb.active".as_ptr(), 0);
+            sys::fluid_settings_setint(settings.as_ptr(), c"synth.chorus.active".as_ptr(), 0);
+        }
+
         let synth = match NonNull::new(unsafe { sys::new_fluid_synth(settings.as_ptr()) }) {
             Some(synth) => synth,
             None => {

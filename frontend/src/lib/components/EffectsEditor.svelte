@@ -3,6 +3,7 @@
     import { flip } from 'svelte/animate';
     import { onMount } from 'svelte';
     import Button from '$lib/components/Button.svelte';
+    import EffectNumberField from '$lib/components/EffectNumberField.svelte';
     import EqualizerEditor from '$lib/components/EqualizerEditor.svelte';
     import NumericControl from '$lib/components/NumericControl.svelte';
     import type { Effect, Effects } from '$lib/generated/models';
@@ -499,46 +500,30 @@
                             {:else if effect.type === 'LowPassFilter'}
                                 <div
                                     class="border-border grid gap-3 border-t p-4 min-[37.5rem]:grid-cols-2">
-                                    <label class="grid gap-1.5 text-sm">
-                                        <span class="text-foreground-muted">Frequency · Hz</span>
-                                        <input
-                                            class="border-border-strong bg-surface-inset h-10 min-w-0 rounded-lg border px-3 font-mono text-sm"
-                                            type="number"
-                                            min="0.01"
-                                            step="1"
-                                            bind:value={effect.data.frequency} />
-                                    </label>
-                                    <label class="grid gap-1.5 text-sm">
-                                        <span class="text-foreground-muted">Resonance · Q</span>
-                                        <input
-                                            class="border-border-strong bg-surface-inset h-10 min-w-0 rounded-lg border px-3 font-mono text-sm"
-                                            type="number"
-                                            min="0.001"
-                                            step="0.01"
-                                            bind:value={effect.data.resonance} />
-                                    </label>
+                                    <EffectNumberField
+                                        label="Frequency · Hz"
+                                        min={0.01}
+                                        step={1}
+                                        bind:value={effect.data.frequency} />
+                                    <EffectNumberField
+                                        label="Resonance · Q"
+                                        min={0.001}
+                                        step={0.01}
+                                        bind:value={effect.data.resonance} />
                                 </div>
                             {:else if effect.type === 'HighPassFilter'}
                                 <div
                                     class="border-border grid gap-3 border-t p-4 min-[37.5rem]:grid-cols-2">
-                                    <label class="grid gap-1.5 text-sm">
-                                        <span class="text-foreground-muted">Frequency · Hz</span>
-                                        <input
-                                            class="border-border-strong bg-surface-inset h-10 min-w-0 rounded-lg border px-3 font-mono text-sm"
-                                            type="number"
-                                            min="0.01"
-                                            step="1"
-                                            bind:value={effect.data.frequency} />
-                                    </label>
-                                    <label class="grid gap-1.5 text-sm">
-                                        <span class="text-foreground-muted">Resonance · Q</span>
-                                        <input
-                                            class="border-border-strong bg-surface-inset h-10 min-w-0 rounded-lg border px-3 font-mono text-sm"
-                                            type="number"
-                                            min="0.001"
-                                            step="0.01"
-                                            bind:value={effect.data.resonance} />
-                                    </label>
+                                    <EffectNumberField
+                                        label="Frequency · Hz"
+                                        min={0.01}
+                                        step={1}
+                                        bind:value={effect.data.frequency} />
+                                    <EffectNumberField
+                                        label="Resonance · Q"
+                                        min={0.001}
+                                        step={0.01}
+                                        bind:value={effect.data.resonance} />
                                 </div>
                             {:else if effect.type === 'Equalizer'}
                                 <EqualizerEditor
@@ -548,234 +533,139 @@
                             {:else if effect.type === 'Compressor'}
                                 <div
                                     class="border-border grid gap-3 border-t p-4 min-[37.5rem]:grid-cols-2 min-[56.25rem]:grid-cols-5">
-                                    <label class="grid gap-1.5 text-sm">
-                                        <span class="text-foreground-muted">Threshold · dB</span>
-                                        <input
-                                            class="border-border-strong bg-surface-inset h-10 min-w-0 rounded-lg border px-3 font-mono text-sm"
-                                            type="number"
-                                            max="0"
-                                            step="0.5"
-                                            bind:value={effect.data.threshold_db} />
-                                    </label>
-                                    <label class="grid gap-1.5 text-sm">
-                                        <span class="text-foreground-muted">Ratio · :1</span>
-                                        <input
-                                            class="border-border-strong bg-surface-inset h-10 min-w-0 rounded-lg border px-3 font-mono text-sm"
-                                            type="number"
-                                            min="1"
-                                            step="0.1"
-                                            bind:value={effect.data.ratio} />
-                                    </label>
-                                    <label class="grid gap-1.5 text-sm">
-                                        <span class="text-foreground-muted">Attack · ms</span>
-                                        <input
-                                            class="border-border-strong bg-surface-inset h-10 min-w-0 rounded-lg border px-3 font-mono text-sm"
-                                            type="number"
-                                            min="0.01"
-                                            step="0.1"
-                                            bind:value={effect.data.attack_ms} />
-                                    </label>
-                                    <label class="grid gap-1.5 text-sm">
-                                        <span class="text-foreground-muted">Release · ms</span>
-                                        <input
-                                            class="border-border-strong bg-surface-inset h-10 min-w-0 rounded-lg border px-3 font-mono text-sm"
-                                            type="number"
-                                            min="0.01"
-                                            step="1"
-                                            bind:value={effect.data.release_ms} />
-                                    </label>
-                                    <label class="grid gap-1.5 text-sm">
-                                        <span class="text-foreground-muted">Makeup · dB</span>
-                                        <input
-                                            class="border-border-strong bg-surface-inset h-10 min-w-0 rounded-lg border px-3 font-mono text-sm"
-                                            type="number"
-                                            step="0.5"
-                                            bind:value={effect.data.makeup_gain_db} />
-                                    </label>
+                                    <EffectNumberField
+                                        label="Threshold · dB"
+                                        max={0}
+                                        step={0.5}
+                                        bind:value={effect.data.threshold_db} />
+                                    <EffectNumberField
+                                        label="Ratio · :1"
+                                        min={1}
+                                        step={0.1}
+                                        bind:value={effect.data.ratio} />
+                                    <EffectNumberField
+                                        label="Attack · ms"
+                                        min={0.01}
+                                        step={0.1}
+                                        bind:value={effect.data.attack_ms} />
+                                    <EffectNumberField
+                                        label="Release · ms"
+                                        min={0.01}
+                                        step={1}
+                                        bind:value={effect.data.release_ms} />
+                                    <EffectNumberField
+                                        label="Makeup · dB"
+                                        step={0.5}
+                                        bind:value={effect.data.makeup_gain_db} />
                                 </div>
                             {:else if effect.type === 'Limiter'}
                                 <div
                                     class="border-border grid gap-3 border-t p-4 min-[37.5rem]:grid-cols-2">
-                                    <label class="grid gap-1.5 text-sm">
-                                        <span class="text-foreground-muted">Ceiling · dB</span>
-                                        <input
-                                            class="border-border-strong bg-surface-inset h-10 min-w-0 rounded-lg border px-3 font-mono text-sm"
-                                            type="number"
-                                            max="0"
-                                            step="0.1"
-                                            bind:value={effect.data.threshold_db} />
-                                    </label>
-                                    <label class="grid gap-1.5 text-sm">
-                                        <span class="text-foreground-muted">Release · ms</span>
-                                        <input
-                                            class="border-border-strong bg-surface-inset h-10 min-w-0 rounded-lg border px-3 font-mono text-sm"
-                                            type="number"
-                                            min="0.01"
-                                            step="1"
-                                            bind:value={effect.data.release_ms} />
-                                    </label>
+                                    <EffectNumberField
+                                        label="Ceiling · dB"
+                                        max={0}
+                                        step={0.1}
+                                        bind:value={effect.data.threshold_db} />
+                                    <EffectNumberField
+                                        label="Release · ms"
+                                        min={0.01}
+                                        step={1}
+                                        bind:value={effect.data.release_ms} />
                                 </div>
                             {:else if effect.type === 'Delay'}
                                 <div
                                     class="border-border grid gap-3 border-t p-4 min-[37.5rem]:grid-cols-3">
-                                    <label class="grid gap-1.5 text-sm">
-                                        <span class="text-foreground-muted">Time · ms</span>
-                                        <input
-                                            class="border-border-strong bg-surface-inset h-10 min-w-0 rounded-lg border px-3 font-mono text-sm"
-                                            type="number"
-                                            min="1"
-                                            max={effectsTuning()?.max_delay_ms ?? 5000}
-                                            step="1"
-                                            bind:value={effect.data.time_ms} />
-                                    </label>
-                                    <label class="grid gap-1.5 text-sm">
-                                        <span class="text-foreground-muted">Feedback · %</span>
-                                        <input
-                                            class="border-border-strong bg-surface-inset h-10 min-w-0 rounded-lg border px-3 font-mono text-sm"
-                                            type="number"
-                                            min="0"
-                                            max="99"
-                                            step="1"
-                                            value={percent(effect.data.feedback)}
-                                            onchange={(event) => {
-                                                effect.data.feedback =
-                                                    event.currentTarget.valueAsNumber / 100;
-                                            }} />
-                                    </label>
-                                    <label class="grid gap-1.5 text-sm">
-                                        <span class="text-foreground-muted">Wet mix · %</span>
-                                        <input
-                                            class="border-border-strong bg-surface-inset h-10 min-w-0 rounded-lg border px-3 font-mono text-sm"
-                                            type="number"
-                                            min="0"
-                                            max="100"
-                                            step="1"
-                                            value={percent(effect.data.mix)}
-                                            onchange={(event) => {
-                                                effect.data.mix =
-                                                    event.currentTarget.valueAsNumber / 100;
-                                            }} />
-                                    </label>
+                                    <EffectNumberField
+                                        label="Time · ms"
+                                        min={1}
+                                        max={effectsTuning()?.max_delay_ms ?? 5000}
+                                        step={1}
+                                        bind:value={effect.data.time_ms} />
+                                    <EffectNumberField
+                                        label="Feedback · %"
+                                        min={0}
+                                        max={99}
+                                        step={1}
+                                        value={percent(effect.data.feedback)}
+                                        onchange={(value) =>
+                                            (effect.data.feedback = value / 100)} />
+                                    <EffectNumberField
+                                        label="Wet mix · %"
+                                        min={0}
+                                        max={100}
+                                        step={1}
+                                        value={percent(effect.data.mix)}
+                                        onchange={(value) => (effect.data.mix = value / 100)} />
                                 </div>
                             {:else if effect.type === 'Reverb'}
                                 <div
                                     class="border-border grid gap-3 border-t p-4 min-[37.5rem]:grid-cols-3">
-                                    <label class="grid gap-1.5 text-sm">
-                                        <span class="text-foreground-muted">Room size · %</span>
-                                        <input
-                                            class="border-border-strong bg-surface-inset h-10 min-w-0 rounded-lg border px-3 font-mono text-sm"
-                                            type="number"
-                                            min="0"
-                                            max="100"
-                                            step="1"
-                                            value={percent(effect.data.room_size)}
-                                            onchange={(event) => {
-                                                effect.data.room_size =
-                                                    event.currentTarget.valueAsNumber / 100;
-                                            }} />
-                                    </label>
-                                    <label class="grid gap-1.5 text-sm">
-                                        <span class="text-foreground-muted">Damping · %</span>
-                                        <input
-                                            class="border-border-strong bg-surface-inset h-10 min-w-0 rounded-lg border px-3 font-mono text-sm"
-                                            type="number"
-                                            min="0"
-                                            max="100"
-                                            step="1"
-                                            value={percent(effect.data.damping)}
-                                            onchange={(event) => {
-                                                effect.data.damping =
-                                                    event.currentTarget.valueAsNumber / 100;
-                                            }} />
-                                    </label>
-                                    <label class="grid gap-1.5 text-sm">
-                                        <span class="text-foreground-muted">Wet mix · %</span>
-                                        <input
-                                            class="border-border-strong bg-surface-inset h-10 min-w-0 rounded-lg border px-3 font-mono text-sm"
-                                            type="number"
-                                            min="0"
-                                            max="100"
-                                            step="1"
-                                            value={percent(effect.data.mix)}
-                                            onchange={(event) => {
-                                                effect.data.mix =
-                                                    event.currentTarget.valueAsNumber / 100;
-                                            }} />
-                                    </label>
+                                    <EffectNumberField
+                                        label="Room size · %"
+                                        min={0}
+                                        max={100}
+                                        step={1}
+                                        value={percent(effect.data.room_size)}
+                                        onchange={(value) =>
+                                            (effect.data.room_size = value / 100)} />
+                                    <EffectNumberField
+                                        label="Damping · %"
+                                        min={0}
+                                        max={100}
+                                        step={1}
+                                        value={percent(effect.data.damping)}
+                                        onchange={(value) => (effect.data.damping = value / 100)} />
+                                    <EffectNumberField
+                                        label="Wet mix · %"
+                                        min={0}
+                                        max={100}
+                                        step={1}
+                                        value={percent(effect.data.mix)}
+                                        onchange={(value) => (effect.data.mix = value / 100)} />
                                 </div>
                             {:else if effect.type === 'Chorus'}
                                 <div
                                     class="border-border grid gap-3 border-t p-4 min-[37.5rem]:grid-cols-2 min-[56.25rem]:grid-cols-4">
-                                    <label class="grid gap-1.5 text-sm">
-                                        <span class="text-foreground-muted">Rate · Hz</span>
-                                        <input
-                                            class="border-border-strong bg-surface-inset h-10 min-w-0 rounded-lg border px-3 font-mono text-sm"
-                                            type="number"
-                                            min="0.01"
-                                            step="0.1"
-                                            bind:value={effect.data.rate_hz} />
-                                    </label>
-                                    <label class="grid gap-1.5 text-sm">
-                                        <span class="text-foreground-muted">Depth · ms</span>
-                                        <input
-                                            class="border-border-strong bg-surface-inset h-10 min-w-0 rounded-lg border px-3 font-mono text-sm"
-                                            type="number"
-                                            min="0"
-                                            max={effectsTuning()?.max_chorus_delay_ms ?? 50}
-                                            step="0.1"
-                                            bind:value={effect.data.depth_ms} />
-                                    </label>
-                                    <label class="grid gap-1.5 text-sm">
-                                        <span class="text-foreground-muted">Delay · ms</span>
-                                        <input
-                                            class="border-border-strong bg-surface-inset h-10 min-w-0 rounded-lg border px-3 font-mono text-sm"
-                                            type="number"
-                                            min="0.1"
-                                            max={effectsTuning()?.max_chorus_delay_ms ?? 50}
-                                            step="0.1"
-                                            bind:value={effect.data.delay_ms} />
-                                    </label>
-                                    <label class="grid gap-1.5 text-sm">
-                                        <span class="text-foreground-muted">Wet mix · %</span>
-                                        <input
-                                            class="border-border-strong bg-surface-inset h-10 min-w-0 rounded-lg border px-3 font-mono text-sm"
-                                            type="number"
-                                            min="0"
-                                            max="100"
-                                            step="1"
-                                            value={percent(effect.data.mix)}
-                                            onchange={(event) => {
-                                                effect.data.mix =
-                                                    event.currentTarget.valueAsNumber / 100;
-                                            }} />
-                                    </label>
+                                    <EffectNumberField
+                                        label="Rate · Hz"
+                                        min={0.01}
+                                        step={0.1}
+                                        bind:value={effect.data.rate_hz} />
+                                    <EffectNumberField
+                                        label="Depth · ms"
+                                        min={0}
+                                        max={effectsTuning()?.max_chorus_delay_ms ?? 50}
+                                        step={0.1}
+                                        bind:value={effect.data.depth_ms} />
+                                    <EffectNumberField
+                                        label="Delay · ms"
+                                        min={0.1}
+                                        max={effectsTuning()?.max_chorus_delay_ms ?? 50}
+                                        step={0.1}
+                                        bind:value={effect.data.delay_ms} />
+                                    <EffectNumberField
+                                        label="Wet mix · %"
+                                        min={0}
+                                        max={100}
+                                        step={1}
+                                        value={percent(effect.data.mix)}
+                                        onchange={(value) => (effect.data.mix = value / 100)} />
                                 </div>
                             {:else if effect.type === 'Distortion'}
                                 <div
                                     class="border-border grid gap-3 border-t p-4 min-[37.5rem]:grid-cols-2">
-                                    <label class="grid gap-1.5 text-sm">
-                                        <span class="text-foreground-muted">Drive · dB</span>
-                                        <input
-                                            class="border-border-strong bg-surface-inset h-10 min-w-0 rounded-lg border px-3 font-mono text-sm"
-                                            type="number"
-                                            min="0"
-                                            step="0.5"
-                                            bind:value={effect.data.drive_db} />
-                                    </label>
-                                    <label class="grid gap-1.5 text-sm">
-                                        <span class="text-foreground-muted">Wet mix · %</span>
-                                        <input
-                                            class="border-border-strong bg-surface-inset h-10 min-w-0 rounded-lg border px-3 font-mono text-sm"
-                                            type="number"
-                                            min="0"
-                                            max="100"
-                                            step="1"
-                                            value={percent(effect.data.mix)}
-                                            onchange={(event) => {
-                                                effect.data.mix =
-                                                    event.currentTarget.valueAsNumber / 100;
-                                            }} />
-                                    </label>
+                                    <EffectNumberField
+                                        label="Drive · dB"
+                                        min={0}
+                                        step={0.5}
+                                        bind:value={effect.data.drive_db} />
+                                    <EffectNumberField
+                                        label="Wet mix · %"
+                                        min={0}
+                                        max={100}
+                                        step={1}
+                                        value={percent(effect.data.mix)}
+                                        onchange={(value) => (effect.data.mix = value / 100)} />
                                 </div>
                             {:else if effect.type === 'LoadFailed'}
                                 <p

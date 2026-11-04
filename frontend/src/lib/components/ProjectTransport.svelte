@@ -8,12 +8,23 @@
     import Button from './Button.svelte';
     import NumericControl from './NumericControl.svelte';
     import SegmentedControl from './SegmentedControl.svelte';
+    import TransportBeatVisualizer from './TransportBeatVisualizer.svelte';
 
     let {
         class: className = '',
+        title = 'Project transport',
+        subtitle = 'Quarter-note tempo · shared clock',
+        showBeatVisualizer = false,
+        showConfiguration = true,
         onchange
-    }: { class?: string; onchange?: (transport: MusicalTransport) => void | Promise<void> } =
-        $props();
+    }: {
+        class?: string;
+        title?: string;
+        subtitle?: string;
+        showBeatVisualizer?: boolean;
+        showConfiguration?: boolean;
+        onchange?: (transport: MusicalTransport) => void | Promise<void>;
+    } = $props();
 
     const fallback: MusicalTransport = {
         tempo_bpm: 120,
@@ -55,67 +66,87 @@
 
 <section
     class={`border-border bg-surface-card grid gap-3 rounded-xl border p-3 ${className}`}
-    aria-label="Project transport">
-    <div class="flex items-center gap-2">
-        <div class="mr-auto">
-            <h3 class="text-foreground m-0 text-sm font-semibold">Project transport</h3>
-            <p class="text-foreground-muted m-0 text-xs">Quarter-note tempo · shared clock</p>
+    aria-label="Beat">
+    <div class="flex items-center justify-between gap-3">
+        <div class={showBeatVisualizer ? 'shrink-0' : 'mr-auto'}>
+            <h3 class="text-foreground m-0 text-sm font-semibold whitespace-nowrap">
+                {title}
+            </h3>
+            {#if subtitle}
+                <p
+                    class={`text-foreground-muted m-0 text-xs ${showBeatVisualizer ? 'hidden min-[31.25rem]:block' : ''}`}>
+                    {subtitle}
+                </p>
+            {/if}
         </div>
+        {#if showBeatVisualizer}
+            <TransportBeatVisualizer {transport} />
+        {/if}
         <Button
             variant={transport.playing ? 'danger-soft' : 'primary'}
+            size="md"
+            class="size-8! min-h-8! px-0! min-[31.25rem]:h-auto! min-[31.25rem]:min-h-10! min-[31.25rem]:w-auto! min-[31.25rem]:px-3.5!"
+            aria-label={transport.playing ? 'Stop transport' : 'Start transport'}
+            title={transport.playing ? 'Stop transport' : 'Start transport'}
             onclick={() => update({ playing: !transport.playing })}>
-            <Icon icon={transport.playing ? 'lucide:square' : 'lucide:play'} width="1rem" />
-            {transport.playing ? 'Stop' : 'Play'}
+            <Icon
+                icon={transport.playing ? 'lucide:square' : 'lucide:play'}
+                class="size-5! min-[31.25rem]:size-4!" />
+            <span class="hidden min-[31.25rem]:inline">
+                {transport.playing ? 'Stop' : 'Play'}
+            </span>
         </Button>
     </div>
-    <div class="grid gap-3 min-[37.5rem]:grid-cols-2 min-[56.25rem]:grid-cols-3">
-        <NumericControl
-            compact
-            label="Tempo"
-            value={transport.tempo_bpm}
-            unit="BPM"
-            smallStep={0.1}
-            largeStep={10}
-            resetValue={120}
-            min={20}
-            max={400}
-            precision={1}
-            onchange={async (value) => {
-                await update({ tempo_bpm: value });
-                return transport.tempo_bpm;
-            }} />
-        <NumericControl
-            compact
-            label="Beats per bar"
-            value={transport.beats_per_bar}
-            unit="beats"
-            smallStep={1}
-            largeStep={4}
-            resetValue={4}
-            min={1}
-            max={32}
-            onchange={async (value) => {
-                await update({ beats_per_bar: value });
-                return transport.beats_per_bar;
-            }} />
-        <section>
-            <header class="mb-1.5 flex min-h-8 items-center justify-between gap-2">
-                <span class="text-foreground-muted text-sm">Beat unit</span>
-                <span
-                    class="border-border-strong bg-surface-control text-foreground flex h-9 w-37 items-center rounded-lg border px-2.5 font-mono text-sm font-semibold">
-                    1/{transport.beat_unit}
-                </span>
-            </header>
-            <SegmentedControl
+    {#if showConfiguration}
+        <div class="grid gap-3 min-[37.5rem]:grid-cols-2 min-[56.25rem]:grid-cols-3">
+            <NumericControl
                 compact
-                name="transport-beat-unit"
-                ariaLabel="Beat unit"
-                value={String(transport.beat_unit)}
-                options={[1, 2, 4, 8, 16].map((unit) => ({
-                    value: String(unit),
-                    label: String(unit)
-                }))}
-                onchange={(value) => update({ beat_unit: Number(value) })} />
-        </section>
-    </div>
+                label="Tempo"
+                value={transport.tempo_bpm}
+                unit="BPM"
+                smallStep={0.1}
+                largeStep={10}
+                resetValue={120}
+                min={20}
+                max={400}
+                precision={1}
+                onchange={async (value) => {
+                    await update({ tempo_bpm: value });
+                    return transport.tempo_bpm;
+                }} />
+            <NumericControl
+                compact
+                label="Beats per bar"
+                value={transport.beats_per_bar}
+                unit="beats"
+                smallStep={1}
+                largeStep={4}
+                resetValue={4}
+                min={1}
+                max={32}
+                onchange={async (value) => {
+                    await update({ beats_per_bar: value });
+                    return transport.beats_per_bar;
+                }} />
+            <section>
+                <header class="mb-1.5 flex min-h-8 items-center justify-between gap-2">
+                    <span class="text-foreground-muted text-sm">Beat unit</span>
+                    <span
+                        class="border-border-strong bg-surface-control text-foreground flex h-9 w-37 items-center rounded-lg border px-2.5 font-mono text-sm font-semibold">
+                        1/{transport.beat_unit}
+                    </span>
+                </header>
+                <SegmentedControl
+                    compact
+                    name="transport-beat-unit"
+                    ariaLabel="Beat unit"
+                    value={String(transport.beat_unit)}
+                    options={[1, 2, 4, 8, 16].map((unit) => ({
+                        value: String(unit),
+                        label: String(unit)
+                    }))}
+                    onchange={(value) => update({ beat_unit: Number(value) })} />
+            </section>
+        </div>
+    {/if}
 </section>

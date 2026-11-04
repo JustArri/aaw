@@ -13,10 +13,10 @@
 </script>
 
 <label
-    class="text-foreground-muted has-focus-visible:outline-accent flex cursor-pointer items-center gap-2 rounded-md text-xs font-medium has-focus-visible:outline-2 has-focus-visible:outline-offset-2">
+    class="text-foreground-muted has-focus-visible:outline-accent relative flex cursor-pointer items-center gap-2 rounded-md text-xs font-medium has-focus-visible:outline-2 has-focus-visible:outline-offset-2">
     <span>Bypass</span>
     <input
-        class="sr-only"
+        class="absolute inset-0 size-full cursor-pointer appearance-none opacity-0 disabled:cursor-not-allowed"
         type="checkbox"
         bind:checked
         disabled={saving}
