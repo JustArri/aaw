@@ -5,6 +5,7 @@ import { clearActiveMidiNotes, recordMidiEvent } from '$lib/state/midi-events.sv
 import { updateTransportPosition } from '$lib/transport-clock.svelte';
 import {
     fetchInstrumentSlots,
+    fetchInstruments,
     updateInstrumentGlobalTransposition,
     updateInstrumentSlot
 } from '$lib/state/instruments.svelte';
@@ -21,7 +22,10 @@ import {
     updateSynthParameters
 } from '$lib/state/synths.svelte';
 import { fetchUserPresets } from '$lib/state/user-presets.svelte';
-import { updateEngineMidiAppControls } from '$lib/state/midi-app-controls.svelte';
+import {
+    fetchEngineMidiAppControls,
+    updateEngineMidiAppControls
+} from '$lib/state/midi-app-controls.svelte';
 import { unreachable } from '$lib/util';
 import { gatewayOnline, reportGatewayOffline } from './gateway.svelte';
 import {
@@ -57,7 +61,17 @@ export function autoSubscribeServerNotifications() {
 async function receiveAndHandleServerNotifications(abortSignal: AbortSignal) {
     try {
         for await (const notification of subscribeServerNotifications(abortSignal)) {
-            await handleServerNotification(notification);
+            if (notification === null) {
+                await Promise.all([
+                    fetchActiveProject(),
+                    fetchInstruments(),
+                    fetchSynths(true),
+                    fetchUserPresets(),
+                    fetchEngineMidiAppControls()
+                ]);
+            } else {
+                await handleServerNotification(notification);
+            }
         }
     } catch (e) {
         clearActiveMidiNotes();
@@ -68,7 +82,6 @@ async function receiveAndHandleServerNotifications(abortSignal: AbortSignal) {
 
 function subscribeServerNotifications(signal?: AbortSignal) {
     const url = new URL(api.getNotificationsUrl(), window.location.href);
-    url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
     return notificationStream(url, signal);
 }
 

@@ -3,13 +3,13 @@ import type { Notification } from './generated/models';
 export async function* notificationStream(
     url: URL,
     signal?: AbortSignal
-): AsyncGenerator<Notification, void, unknown> {
+): AsyncGenerator<Notification | null, void, unknown> {
     if (signal?.aborted) {
         return;
     }
 
-    const socket = new WebSocket(url);
-    const messages: Notification[] = [];
+    const source = new EventSource(url);
+    const messages: (Notification | null)[] = [];
     let finished = false;
     let failure: unknown;
     let wake: (() => void) | undefined;
@@ -36,18 +36,14 @@ export async function* notificationStream(
         }
     }
 
-    function close(event: CloseEvent) {
-        if (!finished) {
-            finish(
-                event.wasClean
-                    ? undefined
-                    : new Error('Notification connection closed unexpectedly')
-            );
-        }
+    function open() {
+        messages.push(null);
+        wake?.();
     }
 
     function error() {
         if (!finished) {
+            source.close();
             finish(new Error('Notification connection failed'));
         }
     }
@@ -57,9 +53,9 @@ export async function* notificationStream(
         finish();
     }
 
-    socket.addEventListener('message', receive);
-    socket.addEventListener('close', close);
-    socket.addEventListener('error', error);
+    source.addEventListener('open', open);
+    source.addEventListener('message', receive);
+    source.addEventListener('error', error);
     signal?.addEventListener('abort', abort, { once: true });
 
     try {
@@ -79,10 +75,10 @@ export async function* notificationStream(
             }
         }
     } finally {
-        socket.removeEventListener('message', receive);
-        socket.removeEventListener('close', close);
-        socket.removeEventListener('error', error);
+        source.removeEventListener('open', open);
+        source.removeEventListener('message', receive);
+        source.removeEventListener('error', error);
         signal?.removeEventListener('abort', abort);
-        socket.close();
+        source.close();
     }
 }

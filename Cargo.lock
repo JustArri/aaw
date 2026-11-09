@@ -18,6 +18,7 @@ dependencies = [
  "cmake",
  "cpal",
  "dav-server",
+ "futures-util",
  "hound",
  "http-body",
  "libc",

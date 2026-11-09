@@ -11,19 +11,15 @@ use crate::{
         project::CtrProjectStorage,
     },
     midi::{MidiEvent, MidiFilter, MidiKeyTransform, MidiVelocityTransform},
-    server::WsHandlerAction,
     synths::SoundFontProgram,
 };
 use axum::{
-    extract::{
-        State, WebSocketUpgrade,
-        ws::{Message, WebSocket},
-    },
-    http::StatusCode,
-    response::Response,
+    extract::State,
+    response::sse::{Event, KeepAlive, Sse},
 };
+use futures_util::stream::{self, Stream};
 use serde::Serialize;
-use std::{sync::Arc, time::Duration};
+use std::{convert::Infallible, sync::Arc, time::Duration};
 use tokio::{
     sync::broadcast::{self, error::RecvError},
     task::JoinHandle,
@@ -121,172 +117,152 @@ pub fn spawn_transport_position_task(
     get,
     path = "/notifications",
     operation_id = "notifications",
-    description =
-        "Upgrades the HTTP connection to a WebSocket. \
-         WebSocket messages are JSON serialized Notification model.",
+    description = "Server-sent events. Each event's data is a JSON serialized [Notification](#/components/schemas/Notification). Events are not replayed after a disconnect.",
     responses(
-        (status = SWITCHING_PROTOCOLS, description = "WebSocket connection established"),
-        (status = INTERNAL_SERVER_ERROR, description = "Internal Server Error"),
+        (status = OK, body = String, content_type = "text/event-stream", description = "Stream of JSON Notification events"),
     )
 )]
 pub async fn handler(
-    ws: WebSocketUpgrade,
     State(state): State<AppState>,
-) -> Result<Response, StatusCode> {
-    Ok(ws.on_upgrade(move |socket| handle_socket(socket, state)))
-}
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let midi_rx = state.midi_tx.subscribe();
+    let project_change_rx = state.engine_handle.subscribe_project_changes();
+    let midi_app_controls_change_rx = state.engine_handle.subscribe_midi_app_controls_changes();
+    let transport_position_rx = state.transport_position_tx.subscribe();
+    let transport_playing = state.engine_handle.project().await.transport.playing;
 
-//--------------------------------------------------------------------------------------------------
-
-async fn handle_socket(mut socket: WebSocket, state: AppState) {
-    let mut midi_rx = state.midi_tx.subscribe();
-    let mut project_change_rx = state.engine_handle.subscribe_project_changes();
-    let mut midi_app_controls_change_rx = state.engine_handle.subscribe_midi_app_controls_changes();
-    let mut transport_position_rx = state.transport_position_tx.subscribe();
-    let mut transport_playing = state.engine_handle.project().await.transport.playing;
-
-    if transport_playing
-        && matches!(
-            send_transport_position(&mut socket, state.engine_metrics.transport_tick()).await,
-            WsHandlerAction::Exit
-        )
-    {
-        return;
-    }
-
-    loop {
-        let action = tokio::select! {
-            rx_result = midi_rx.recv() => {
-                handle_broadcast_rx_result(rx_result, &mut socket, |event| {
-                    Notification::MidiEvent(event)
-                })
-                .await
-            }
-            rx_result = project_change_rx.recv() => {
-                handle_project_change_rx_result(
-                    rx_result,
-                    &mut socket,
-                    &state,
-                    &mut transport_playing,
-                ).await
-            }
-            rx_result = midi_app_controls_change_rx.recv() => {
-                handle_broadcast_rx_result(rx_result, &mut socket, |controls| {
-                    Notification::EngineMidiAppControls(controls)
-                })
-                .await
-            }
-            rx_result = transport_position_rx.recv() => {
-                match rx_result {
-                    Ok(tick) => send_transport_position(&mut socket, tick).await,
-                    Err(RecvError::Lagged(count)) => {
-                        tracing::warn!(target: "web", count, "transport position websocket receiver lagged");
-                        WsHandlerAction::Continue
-                    }
-                    Err(RecvError::Closed) => WsHandlerAction::Exit,
+    let stream_state = NotificationStream {
+        state,
+        midi_rx,
+        project_change_rx,
+        midi_app_controls_change_rx,
+        transport_position_rx,
+        transport_playing,
+        pending_position: transport_playing,
+    };
+    let stream = stream::unfold(stream_state, |mut stream| async move {
+        loop {
+            if stream.pending_position {
+                stream.pending_position = false;
+                let notification =
+                    Notification::TransportPosition(stream.state.engine_metrics.transport_tick());
+                if let Some(event) = notification_event(notification) {
+                    return Some((Ok(event), stream));
                 }
             }
-            message = socket.recv() => {
-                handle_socket_rx_result(message)
+
+            let event = tokio::select! {
+                result = stream.midi_rx.recv() => {
+                    notification_from_broadcast(result, |event| Notification::MidiEvent(event))
+                }
+                result = stream.midi_app_controls_change_rx.recv() => {
+                    notification_from_broadcast(result, |controls| {
+                        Notification::EngineMidiAppControls(controls)
+                    })
+                }
+                result = stream.transport_position_rx.recv() => {
+                    match result {
+                        Ok(tick) => Some(notification_event(Notification::TransportPosition(tick))),
+                        Err(error) => broadcast_error(error),
+                    }
+                }
+                result = stream.project_change_rx.recv() => {
+                    match result {
+                        Ok(change) => {
+                            let was_playing = stream.transport_playing;
+                            match &change.kind {
+                                ProjectChangeKind::Transport { transport } => {
+                                    stream.transport_playing = transport.playing;
+                                }
+                                ProjectChangeKind::Full => {
+                                    stream.transport_playing = stream
+                                        .state
+                                        .engine_handle
+                                        .project()
+                                        .await
+                                        .transport
+                                        .playing;
+                                }
+                                _ => {}
+                            }
+                            stream.pending_position = !was_playing && stream.transport_playing;
+                            Some(notification_event(Notification::ProjectChange(&change)))
+                        }
+                        Err(error) => broadcast_error(error),
+                    }
+                }
+            };
+
+            match event {
+                Some(Some(event)) => return Some((Ok(event), stream)),
+                Some(None) => continue,
+                None => return None,
             }
-        };
+        }
+    });
 
-        if matches!(action, WsHandlerAction::Exit) {
-            break;
+    Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
+struct NotificationStream {
+    state: AppState,
+    midi_rx: broadcast::Receiver<Arc<MidiEvent>>,
+    project_change_rx: broadcast::Receiver<Arc<ProjectChange>>,
+    midi_app_controls_change_rx: broadcast::Receiver<Arc<CtrMidiEngineControls>>,
+    transport_position_rx: broadcast::Receiver<f64>,
+    transport_playing: bool,
+    pending_position: bool,
+}
+
+fn notification_from_broadcast<T>(
+    result: Result<Arc<T>, RecvError>,
+    to_notification: impl for<'a> FnOnce(&'a T) -> Notification<'a>,
+) -> Option<Option<Event>> {
+    match result {
+        Ok(data) => Some(notification_event(to_notification(&data))),
+        Err(error) => broadcast_error(error),
+    }
+}
+
+fn broadcast_error(error: RecvError) -> Option<Option<Event>> {
+    if let RecvError::Lagged(count) = error {
+        tracing::warn!(target: "web", count, "notification stream receiver lagged; disconnecting");
+    }
+    None
+}
+
+fn notification_event(notification: Notification<'_>) -> Option<Event> {
+    tracing::trace!(target: "notif", ?notification);
+    match serde_json::to_string(&notification) {
+        Ok(json) => Some(Event::default().data(json)),
+        Err(error) => {
+            tracing::error!(target: "web", ?error, "failed to serialize notification");
+            None
         }
     }
 }
 
-async fn handle_project_change_rx_result(
-    rx_result: Result<Arc<ProjectChange>, RecvError>,
-    socket: &mut WebSocket,
-    state: &AppState,
-    transport_playing: &mut bool,
-) -> WsHandlerAction {
-    let change = match rx_result {
-        Ok(change) => change,
-        Err(RecvError::Lagged(count)) => {
-            tracing::warn!(target: "web", count, "notification websocket receiver lagged");
-            return WsHandlerAction::Continue;
-        }
-        Err(RecvError::Closed) => return WsHandlerAction::Exit,
-    };
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::response::IntoResponse;
+    use futures_util::StreamExt;
 
-    let was_playing = *transport_playing;
-    match &change.kind {
-        ProjectChangeKind::Transport { transport } => {
-            *transport_playing = transport.playing;
-        }
-        ProjectChangeKind::Full => {
-            *transport_playing = state.engine_handle.project().await.transport.playing;
-        }
-        _ => {}
+    #[tokio::test]
+    async fn notification_is_framed_as_an_sse_event() {
+        let event = notification_event(Notification::TransportPosition(42.0)).unwrap();
+        let response = Sse::new(stream::iter([Ok::<_, Infallible>(event)])).into_response();
+        assert_eq!(response.headers()["content-type"], "text/event-stream");
+        let mut body = response.into_body().into_data_stream();
+        let bytes = body.next().await.unwrap().unwrap();
+        assert_eq!(&bytes[..], b"data: {\"type\":\"TransportPosition\",\"data\":42.0}\n\n");
     }
 
-    if matches!(
-        send_notification(socket, Notification::ProjectChange(&change)).await,
-        WsHandlerAction::Exit
-    ) {
-        return WsHandlerAction::Exit;
-    }
-
-    if !was_playing && *transport_playing {
-        send_transport_position(socket, state.engine_metrics.transport_tick()).await
-    } else {
-        WsHandlerAction::Continue
-    }
-}
-
-async fn handle_broadcast_rx_result<T, F>(
-    rx_result: Result<Arc<T>, RecvError>,
-    socket: &mut WebSocket,
-    to_notif: F,
-) -> WsHandlerAction
-where
-    F: for<'a> FnOnce(&'a T) -> Notification<'a>,
-{
-    match rx_result {
-        Ok(data) => {
-            let notif = to_notif(&data);
-            send_notification(socket, notif).await
-        }
-        Err(RecvError::Lagged(count)) => {
-            tracing::warn!(target: "web", count, "notification websocket receiver lagged");
-            WsHandlerAction::Continue
-        }
-        Err(RecvError::Closed) => WsHandlerAction::Exit,
-    }
-}
-
-async fn send_notification(socket: &mut WebSocket, notif: Notification<'_>) -> WsHandlerAction {
-    tracing::trace!(target: "notif", ?notif);
-    let json = match serde_json::to_string(&notif) {
-        Ok(json) => json,
-        Err(err) => {
-            tracing::error!(target: "web", ?err, "failed to serialize notification");
-            return WsHandlerAction::Continue;
-        }
-    };
-
-    if socket.send(Message::Text(json.into())).await.is_err() {
-        WsHandlerAction::Exit
-    } else {
-        WsHandlerAction::Continue
-    }
-}
-
-async fn send_transport_position(socket: &mut WebSocket, tick: f64) -> WsHandlerAction {
-    send_notification(socket, Notification::TransportPosition(tick)).await
-}
-
-fn handle_socket_rx_result(message: Option<Result<Message, axum::Error>>) -> WsHandlerAction {
-    match message {
-        Some(Ok(Message::Close(_))) => WsHandlerAction::Exit,
-        Some(Ok(_)) => WsHandlerAction::Continue,
-        Some(Err(err)) => {
-            tracing::error!(target: "web", ?err, "notification websocket error");
-            WsHandlerAction::Exit
-        }
-        None => WsHandlerAction::Exit,
+    #[test]
+    fn openapi_describes_notification_stream() {
+        let openapi = serde_json::to_value(crate::server::api_router(".").into_openapi()).unwrap();
+        let response = &openapi["paths"]["/api/notifications"]["get"]["responses"]["200"];
+        assert_eq!(response["content"]["text/event-stream"]["schema"]["type"], "string");
+        assert!(openapi["components"]["schemas"]["Notification"].is_object());
     }
 }
