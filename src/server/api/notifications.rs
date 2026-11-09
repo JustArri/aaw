@@ -17,7 +17,10 @@ use axum::{
     extract::State,
     response::sse::{Event, KeepAlive, Sse},
 };
-use futures_util::stream::{self, Stream};
+use futures_util::{
+    StreamExt,
+    stream::{self, Stream},
+};
 use serde::Serialize;
 use std::{convert::Infallible, sync::Arc, time::Duration};
 use tokio::{
@@ -131,6 +134,7 @@ pub async fn handler(
     let transport_position_rx = state.transport_position_tx.subscribe();
     let transport_playing = state.engine_handle.project().await.transport.playing;
 
+    let stop = state.stop.clone();
     let stream_state = NotificationStream {
         state,
         midi_rx,
@@ -201,7 +205,14 @@ pub async fn handler(
         }
     });
 
-    Sse::new(stream).keep_alive(KeepAlive::default())
+    Sse::new(stop_on_shutdown(stream, stop)).keep_alive(KeepAlive::default())
+}
+
+fn stop_on_shutdown<T>(
+    stream: impl Stream<Item = T>,
+    stop: CancellationToken,
+) -> impl Stream<Item = T> {
+    stream.take_until(stop.cancelled_owned())
 }
 
 struct NotificationStream {
@@ -246,7 +257,20 @@ fn notification_event(notification: Notification<'_>) -> Option<Event> {
 mod tests {
     use super::*;
     use axum::response::IntoResponse;
-    use futures_util::StreamExt;
+
+    #[tokio::test]
+    async fn shutdown_ends_an_active_sse_response() {
+        let stop = CancellationToken::new();
+        let event = notification_event(Notification::TransportPosition(42.0)).unwrap();
+        let events = stream::iter([Ok::<_, Infallible>(event)]).chain(stream::pending());
+        let response = Sse::new(stop_on_shutdown(events, stop.clone())).into_response();
+        let mut body = response.into_body().into_data_stream();
+
+        assert!(body.next().await.unwrap().is_ok());
+        assert!(tokio::time::timeout(Duration::from_millis(10), body.next()).await.is_err());
+        stop.cancel();
+        assert!(tokio::time::timeout(Duration::from_secs(1), body.next()).await.unwrap().is_none());
+    }
 
     #[tokio::test]
     async fn notification_is_framed_as_an_sse_event() {

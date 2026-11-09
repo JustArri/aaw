@@ -22,10 +22,12 @@ use std::{
     },
 };
 use tokio::sync::{Mutex, RwLock, broadcast};
+use tokio_util::sync::CancellationToken;
 use utoipa::ToSchema;
 
 #[derive(Clone)]
 pub struct AppState {
+    pub stop: CancellationToken,
     pub midi_tx: broadcast::Sender<Arc<MidiEvent>>,
     pub transport_position_tx: broadcast::Sender<f64>,
     pub midi_runtime: Arc<Mutex<MidiRuntime>>,

@@ -260,7 +260,9 @@ async fn run(args: Args) -> anyhow::Result<()> {
 
     let output_stream = Arc::new(Mutex::new(output_stream));
 
+    let stop = CancellationToken::new();
     let root_router = aaw::server::router(assets_dir.clone()).with_state(AppState {
+        stop: stop.clone(),
         midi_tx: midi_bc_tx.clone(),
         transport_position_tx: transport_position_tx.clone(),
         midi_runtime: Arc::clone(&midi_runtime),
@@ -285,7 +287,6 @@ async fn run(args: Args) -> anyhow::Result<()> {
         preferences: Arc::new(RwLock::new(preferences)),
     });
 
-    let stop = CancellationToken::new();
     let transport_position_handle = aaw::server::api::notifications::spawn_transport_position_task(
         stop.clone(),
         engine_handle.clone(),
